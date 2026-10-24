@@ -1,7 +1,8 @@
 """Get your data back out: everything in the catalogue as CSV files or one JSON file.
 
-The export has four tables: assets (tables, views, scripts…), columns, links
-(what reads/writes what) and notes. Keys are stable, so the files can be
+The export has five tables: assets (tables, views, scripts, data files…),
+columns, links (what reads/writes what), notes (including data issues) and
+profiles (value ranges per column). Keys are stable, so the files can be
 joined together or loaded into another catalogue later.
 """
 from __future__ import annotations
@@ -22,7 +23,11 @@ TABLES = {
                "ORDER BY asset_key, ordinal",
     "links": "SELECT src_key, relation, COALESCE(dst_key, dst_ref) AS dst, dst_key IS NOT NULL AS matched, "
              "source, evidence FROM links ORDER BY src_key, relation, dst",
-    "notes": "SELECT id, asset_key, body, tags, created_at, updated_at FROM notes ORDER BY asset_key, created_at",
+    "notes": "SELECT id, asset_key, note_type, status, body, tags, created_at, updated_at FROM notes "
+             "ORDER BY asset_key, created_at",
+    "profiles": "SELECT asset_key, ordinal, column_name, data_type, row_count, null_count, distinct_count, "
+                "min_value, max_value, mean_value, top_values, method, profiled_at FROM profiles "
+                "ORDER BY asset_key, ordinal",
 }
 
 
@@ -33,6 +38,9 @@ def export_data(cat: Catalogue) -> dict[str, list[dict[str, Any]]]:
         if name == "assets":
             for r in rows:
                 r["attrs"] = json.loads(r["attrs"])
+        if name == "profiles":
+            for r in rows:
+                r["top_values"] = json.loads(r["top_values"])
         if name == "links":
             for r in rows:
                 r["matched"] = bool(r["matched"])

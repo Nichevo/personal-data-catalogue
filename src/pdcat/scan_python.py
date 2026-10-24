@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .config import PythonSource
 from .sqlrefs import extract_refs, looks_like_sql
+from .scan_files import ingest_data_file, iter_data_files
 from .store import Catalogue
 
 SKIP_DIRS = {".git", ".hg", ".svn", "__pycache__", ".venv", "venv", "env", ".env", "site-packages",
@@ -40,7 +41,7 @@ def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
         raise FileNotFoundError(f"Python project folder not found: {root}")
     project_key = f"py://{src.name}"
     skip = SKIP_DIRS | set(src.exclude)
-    counts = {"files": 0, "links": 0, "errors": 0}
+    counts = {"files": 0, "data files": 0, "links": 0, "errors": 0}
 
     with cat.scan(src.name):
         readme = _readme_summary(root)
@@ -59,6 +60,12 @@ def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
                 counts["links"] += 1
             counts["files"] += 1
             counts["errors"] += bool(found.attrs.get("parse_error"))
+        if src.data_files:
+            for path in sorted(iter_data_files(root, skip=skip)):
+                rel = path.relative_to(root).as_posix()
+                error = ingest_data_file(cat, path, f"{project_key}/{rel}", rel, src.name, project_key, src.max_rows)
+                counts["data files"] += 1
+                counts["errors"] += bool(error)
     return counts
 
 

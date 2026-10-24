@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import fnmatch
 import sqlite3
 import uuid
 from collections import defaultdict
@@ -59,9 +60,37 @@ CREATE TABLE IF NOT EXISTS notes (
     body       TEXT NOT NULL,
     tags       TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    note_type  TEXT NOT NULL DEFAULT 'note',  -- note | issue | example
+    status     TEXT NOT NULL DEFAULT 'open'   -- issues: open | resolved
 );
 CREATE INDEX IF NOT EXISTS ix_notes_asset ON notes(asset_key);
+
+-- Value profiles: one row per column, from a SQL table or a data file.
+CREATE TABLE IF NOT EXISTS profiles (
+    asset_key   TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    ordinal     INTEGER,
+    data_type   TEXT,
+    row_count   INTEGER,
+    null_count  INTEGER,
+    distinct_count INTEGER,
+    min_value   TEXT,
+    max_value   TEXT,
+    mean_value  REAL,
+    top_values  TEXT NOT NULL DEFAULT '[]',  -- JSON [[value, count], ...]
+    method      TEXT,                        -- how it was measured, e.g. "full table" or "first 200000 rows"
+    profiled_at TEXT NOT NULL,
+    PRIMARY KEY (asset_key, column_name)
+);
+
+-- Folders of CSV/Parquet files added from the app (config folders live in config.toml).
+CREATE TABLE IF NOT EXISTS folders (
+    name      TEXT PRIMARY KEY,
+    path      TEXT NOT NULL,
+    recursive INTEGER NOT NULL DEFAULT 1,
+    added_at  TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS scans (
     id          INTEGER PRIMARY KEY,
@@ -74,6 +103,7 @@ CREATE TABLE IF NOT EXISTS scans (
 
 TABLE_KINDS = ("table", "view")
 MANUAL_SOURCE = "manual"  # SQL you paste in by hand; never touched by scans
+NOTE_TYPES = {"note": "Note", "issue": "Data issue", "example": "Example values"}
 
 
 def now() -> str:
@@ -93,10 +123,20 @@ class Catalogue:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.fts = self._create_search_index()
 
     def close(self) -> None:
         self.conn.close()
+
+    def _migrate(self) -> None:
+        """Bring catalogues made by older versions up to date."""
+        note_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(notes)")}
+        with self.conn:
+            if "note_type" not in note_cols:
+                self.conn.execute("ALTER TABLE notes ADD COLUMN note_type TEXT NOT NULL DEFAULT 'note'")
+            if "status" not in note_cols:
+                self.conn.execute("ALTER TABLE notes ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
 
     def _create_search_index(self) -> bool:
         try:
@@ -211,8 +251,47 @@ class Catalogue:
             if len(cands) > 1 and len(parts) == 1:
                 cands = [c for c in cands if c["schema"] == "dbo"] or cands
             updates.append((cands[0]["key"] if len(cands) == 1 else None, link["rowid"]))
+        updates += self._resolve_file_refs()
         with self.conn:
             self.conn.executemany("UPDATE links SET dst_key = ? WHERE rowid = ?", updates)
+
+    def _resolve_file_refs(self) -> list[tuple[str | None, int]]:
+        """Match "file:<path>" references from code to catalogued CSV/Parquet files.
+
+        Relative paths match files in the same project first, then in any folder
+        whose path ends the same way. f-string parts ("{}") act as wildcards, and
+        when several files match (e.g. dated extracts) the newest one wins.
+        """
+        files = []
+        for row in self.conn.execute(
+                "SELECT key, source, attrs FROM assets WHERE kind = 'data_file' AND status = 'active'"):
+            a = json.loads(row["attrs"])
+            files.append({"key": row["key"], "source": row["source"], "path": _norm_path(a.get("path", "")),
+                          "mtime": a.get("mtime") or 0})
+        if not files:
+            return [(None, r["rowid"]) for r in self.conn.execute("SELECT rowid FROM links WHERE dst_ref LIKE 'file:%'")]
+
+        updates = []
+        for link in self.conn.execute("SELECT rowid, dst_ref, source FROM links WHERE dst_ref LIKE 'file:%'"):
+            ref = _norm_path(link["dst_ref"][len("file:"):])
+            while ref.startswith("./"):
+                ref = ref[2:]
+            pattern = fnmatch.translate(ref.replace("{}", "*")).replace(".*", "[^/]*") if "{}" in ref else None
+            absolute = bool(re.match(r"^([a-z]:/|/)", ref))
+
+            def hit(f: dict) -> bool:
+                if absolute:
+                    target = f["path"]
+                else:  # compare the same number of trailing path segments
+                    target = "/".join(f["path"].split("/")[-(ref.count("/") + 1):])
+                return re.fullmatch(pattern, target) is not None if pattern else target == ref
+
+            matches = [f for f in files if hit(f)]
+            same_project = [f for f in matches if f["source"] == link["source"]]
+            matches = same_project or matches
+            best = max(matches, key=lambda f: f["mtime"])["key"] if matches else None
+            updates.append((best, link["rowid"]))
+        return updates
 
     # ---- search ---------------------------------------------------------
 
@@ -395,6 +474,29 @@ class Catalogue:
             self.conn.execute("DELETE FROM notes WHERE asset_key = ?", (key,))
         self.rebuild_search()
 
+    # ---- folders added from the app ---------------------------------------
+
+    def add_folder(self, name: str, path: str, recursive: bool = True) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO folders (name, path, recursive, added_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET path = excluded.path, recursive = excluded.recursive",
+                (name, path, int(recursive), now()))
+
+    def folders(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM folders ORDER BY name").fetchall()
+
+    def remove_folder(self, name: str) -> None:
+        """Forget a folder and everything scanned from it (notes are kept)."""
+        with self.conn:
+            self.conn.execute("DELETE FROM folders WHERE name = ?", (name,))
+            self.conn.execute("DELETE FROM profiles WHERE asset_key IN (SELECT key FROM assets WHERE source = ?)", (name,))
+            self.conn.execute("DELETE FROM columns WHERE asset_key IN (SELECT key FROM assets WHERE source = ?)", (name,))
+            self.conn.execute("DELETE FROM links WHERE source = ?", (name,))
+            self.conn.execute("DELETE FROM assets WHERE source = ?", (name,))
+        self.resolve_refs()
+        self.rebuild_search()
+
     def databases(self) -> list[str]:
         """Scanned databases as "<source>/<db>", for choosing where pasted SQL runs."""
         return [r[0] for r in self.conn.execute(
@@ -419,23 +521,78 @@ class Catalogue:
             (limit,),
         ).fetchall()
 
-    def add_note(self, asset_key: str, body: str, tags: str = "") -> int:
+    def add_note(self, asset_key: str, body: str, tags: str = "", note_type: str = "note") -> int:
+        if note_type not in NOTE_TYPES:
+            raise ValueError(f"note_type must be one of {', '.join(NOTE_TYPES)}")
         ts = now()
         with self.conn:
             cur = self.conn.execute(
-                "INSERT INTO notes (asset_key, body, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (asset_key, body.strip(), ", ".join(split_tags(tags)), ts, ts),
+                "INSERT INTO notes (asset_key, body, tags, created_at, updated_at, note_type) VALUES (?, ?, ?, ?, ?, ?)",
+                (asset_key, body.rstrip(), ", ".join(split_tags(tags)), ts, ts, note_type),
             )
         self.rebuild_search()
         return cur.lastrowid
 
-    def update_note(self, note_id: int, body: str, tags: str = "") -> None:
+    def update_note(self, note_id: int, body: str, tags: str = "", note_type: str | None = None) -> None:
         with self.conn:
             self.conn.execute(
-                "UPDATE notes SET body = ?, tags = ?, updated_at = ? WHERE id = ?",
-                (body.strip(), ", ".join(split_tags(tags)), now(), note_id),
+                "UPDATE notes SET body = ?, tags = ?, note_type = COALESCE(?, note_type), updated_at = ? WHERE id = ?",
+                (body.rstrip(), ", ".join(split_tags(tags)), note_type, now(), note_id),
             )
         self.rebuild_search()
+
+    def set_issue_status(self, note_id: int, status: str) -> None:
+        if status not in ("open", "resolved"):
+            raise ValueError("status must be 'open' or 'resolved'")
+        with self.conn:
+            self.conn.execute("UPDATE notes SET status = ?, updated_at = ? WHERE id = ?", (status, now(), note_id))
+
+    def open_issues(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT n.*, a.name AS asset_name, a.kind AS asset_kind FROM notes n
+               LEFT JOIN assets a ON a.key = CASE WHEN instr(n.asset_key, '#') > 0
+                    THEN substr(n.asset_key, 1, instr(n.asset_key, '#') - 1) ELSE n.asset_key END
+               WHERE n.note_type = 'issue' AND n.status = 'open' ORDER BY n.created_at DESC"""
+        ).fetchall()
+
+    # ---- profiles -------------------------------------------------------
+
+    def save_profile(self, asset_key: str, columns: list[dict[str, Any]], method: str) -> None:
+        """Replace the stored value profile of a table or file (one dict per column)."""
+        ts = now()
+        with self.conn:
+            self.conn.execute("DELETE FROM profiles WHERE asset_key = ?", (asset_key,))
+            self.conn.executemany(
+                """INSERT INTO profiles (asset_key, column_name, ordinal, data_type, row_count, null_count,
+                       distinct_count, min_value, max_value, mean_value, top_values, method, profiled_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [(asset_key, c["name"], c.get("ordinal", i + 1), c.get("data_type"), c.get("rows"), c.get("nulls"),
+                  c.get("distinct"), _text(c.get("min")), _text(c.get("max")), c.get("mean"),
+                  json.dumps(c.get("top") or [], default=str), method, ts)
+                 for i, c in enumerate(columns)],
+            )
+
+    def profile(self, key: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM profiles WHERE asset_key = ? ORDER BY ordinal, column_name", (key,)).fetchall()
+
+    def profiled_keys(self) -> set[str]:
+        return {r[0] for r in self.conn.execute("SELECT DISTINCT asset_key FROM profiles")}
+
+    def upstream(self, key: str, depth: int = 3) -> list[str]:
+        """Tables and files this item comes from: whatever wrote it, and what those writers read, a few steps back."""
+        found: list[str] = []
+        frontier = [key]
+        for _ in range(depth):
+            writers = [r[0] for f in frontier for r in self.conn.execute(
+                "SELECT src_key FROM links WHERE dst_key = ? AND relation = 'writes'", (f,))]
+            sources = [r[0] for w in writers for r in self.conn.execute(
+                "SELECT dst_key FROM links WHERE src_key = ? AND relation = 'reads' AND dst_key IS NOT NULL", (w,))]
+            frontier = [s for s in dict.fromkeys(sources) if s not in found and s != key]
+            found += frontier
+            if not frontier:
+                break
+        return found
 
     def delete_note(self, note_id: int) -> None:
         with self.conn:
@@ -449,6 +606,24 @@ def _matches_hint(candidate: dict[str, str], hint: str) -> bool:
         src, db = hint.split("/", 1)
         return candidate["source"] == src and candidate["database"] == db
     return candidate["database"] == hint
+
+
+def _text(v: Any) -> str | None:
+    """Store min/max values as readable text whatever their type (numbers, dates, numpy scalars)."""
+    if v is None:
+        return None
+    if hasattr(v, "isoformat"):
+        return v.isoformat()
+    if hasattr(v, "item"):  # numpy scalar
+        v = v.item()
+    if isinstance(v, float):
+        return str(int(v)) if v.is_integer() and abs(v) < 1e15 else f"{v:.10g}"
+    return str(v)
+
+
+def _norm_path(p: str) -> str:
+    """Compare paths the Windows way: forward slashes, case-insensitive."""
+    return p.replace("\\", "/").lower()
 
 
 def _searchable(text: str) -> str:

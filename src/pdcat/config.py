@@ -35,10 +35,21 @@ trust_server_certificate = true
 name = "forecasting"
 path = "C:/Users/you/code/forecasting"
 # Folder names to skip (virtual environments are skipped by default).
-exclude = ["data", "outputs"]
+exclude = ["archive"]
+# CSV and Parquet files in the project are catalogued and profiled too.
+# Big files are profiled from their first max_rows rows.
+data_files = true
+max_rows = 200000
 # Optional: which server/database bare table names in this project refer to,
 # written as "<sqlserver name>/<database>". Helps match "FROM Sales" to the right table.
 default_database = "warehouse/YourDatabase"
+
+# Extra folders of CSV / Parquet files to catalogue. You can also add folders
+# from the "Data folders" page in the app.
+# [[folder]]
+# name = "shared-extracts"
+# path = "C:/Users/you/data/extracts"
+# recursive = true
 '''
 
 
@@ -59,6 +70,16 @@ class PythonSource:
     path: Path
     exclude: list[str] = field(default_factory=list)
     default_database: str | None = None
+    data_files: bool = True
+    max_rows: int = 200_000
+
+
+@dataclass
+class FolderSource:
+    name: str
+    path: Path
+    recursive: bool = True
+    max_rows: int = 200_000
 
 
 @dataclass
@@ -67,9 +88,10 @@ class Config:
     db_path: Path
     sqlserver: list[SqlServerSource]
     python: list[PythonSource]
+    folders: list[FolderSource] = field(default_factory=list)
 
     def source_names(self) -> list[str]:
-        return [s.name for s in self.sqlserver] + [p.name for p in self.python]
+        return [s.name for s in self.sqlserver] + [p.name for p in self.python] + [f.name for f in self.folders]
 
 
 def find_config(explicit: str | None = None) -> Path:
@@ -112,13 +134,20 @@ def load_config(path: Path) -> Config:
             path=Path(item["path"]).expanduser(),
             exclude=list(item.get("exclude", [])),
             default_database=item.get("default_database"),
+            data_files=item.get("data_files", True),
+            max_rows=int(item.get("max_rows", 200_000)),
         ))
+
+    folders = [FolderSource(name=item["name"], path=Path(item["path"]).expanduser(),
+                            recursive=item.get("recursive", True), max_rows=int(item.get("max_rows", 200_000)))
+               for item in raw.get("folder", [])]
 
     cfg = Config(
         path=path,
         db_path=Path(raw.get("db_path", str(DEFAULT_HOME / "catalogue.db"))).expanduser(),
         sqlserver=sqlserver,
         python=python,
+        folders=folders,
     )
     names = cfg.source_names()
     if "manual" in names:

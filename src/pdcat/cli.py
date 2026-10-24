@@ -23,26 +23,31 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
+    from .scan_files import scan_folder
     from .scan_python import scan_project
     from .scan_sqlserver import scan_server
 
     cfg = load_config(find_config(args.config))
     wanted = set(args.source or [])
-    unknown = wanted - set(cfg.source_names())
+    unknown = wanted - set(cfg.source_names()) - {r["name"] for r in Catalogue(cfg.db_path).folders()}
     if unknown:
         print(f"Unknown source(s): {', '.join(sorted(unknown))}. Known: {', '.join(cfg.source_names())}")
         return 2
 
     cat = Catalogue(cfg.db_path)
     failures = 0
+    app_folders = [r for r in cat.folders() if r["name"] not in cfg.source_names()]
     # SQL Server first, so table names in code can be matched straight away.
-    jobs = [(s.name, scan_server, s) for s in cfg.sqlserver] + [(p.name, scan_project, p) for p in cfg.python]
-    for name, fn, src in jobs:
+    jobs = [(s.name, lambda s=s: scan_server(cat, s)) for s in cfg.sqlserver]
+    jobs += [(f.name, lambda f=f: scan_folder(cat, f.name, f.path, f.recursive, f.max_rows)) for f in cfg.folders]
+    jobs += [(r["name"], lambda r=r: scan_folder(cat, r["name"], r["path"], bool(r["recursive"]))) for r in app_folders]
+    jobs += [(p.name, lambda p=p: scan_project(cat, p)) for p in cfg.python]  # last, so file links can match
+    for name, run in jobs:
         if wanted and name not in wanted:
             continue
         print(f"Scanning {name} ...", flush=True)
         try:
-            counts = fn(cat, src)
+            counts = run()
         except Exception as e:  # keep going so one unreachable server doesn't block the rest
             failures += 1
             print(f"  failed: {type(e).__name__}: {e}")
@@ -54,6 +59,46 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"{len(unresolved)} table name(s) in code did not match a scanned table "
               "(see 'Unmatched tables' in the UI).")
     print(f"Catalogue: {cfg.db_path}")
+    cat.close()
+    return 1 if failures else 0
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    """Profile SQL tables: the ones named, or with --used, every table your code or pasted SQL uses."""
+    from .scan_sqlserver import profile_tables
+
+    cfg = load_config(find_config(args.config))
+    cat = Catalogue(cfg.db_path)
+    keys: list[str] = []
+    for name in args.tables:
+        matches = [r["key"] for r in cat.conn.execute(
+            "SELECT key FROM assets WHERE kind IN ('table', 'view') AND (lower(name) = lower(?) OR key = lower(?))",
+            (name, name))]
+        if not matches:
+            print(f"No scanned table called {name}")
+        keys += matches
+    if args.used:
+        keys += [r[0] for r in cat.conn.execute(
+            """SELECT DISTINCT l.dst_key FROM links l JOIN assets a ON a.key = l.dst_key
+               JOIN assets s ON s.key = l.src_key
+               WHERE a.kind IN ('table', 'view') AND s.kind NOT IN ('table', 'view', 'procedure')""")]
+    keys = list(dict.fromkeys(keys))
+    if not keys:
+        print("Nothing to profile. Name tables (e.g. dbo.SalesDaily) or use --used.")
+        return 2
+    failures = 0
+    for src in cfg.sqlserver:
+        if args.source and src.name not in args.source:
+            continue
+        mine = [k for k in keys if k.startswith(f"sql://{src.name.lower()}/")]
+        if not mine:
+            continue
+        print(f"Profiling {len(mine)} table(s) on {src.name} ...", flush=True)
+        try:
+            failures += len(profile_tables(cat, src, mine, sample_rows=args.sample_rows))
+        except Exception as e:
+            failures += 1
+            print(f"  failed: {type(e).__name__}: {e}")
     cat.close()
     return 1 if failures else 0
 
@@ -106,6 +151,13 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("scan", help="scan your databases and projects")
     s.add_argument("--source", action="append", help="only scan this source (repeatable)")
     s.set_defaults(fn=cmd_scan)
+
+    pr = sub.add_parser("profile", help="measure value ranges, nulls and common values of SQL tables (read-only)")
+    pr.add_argument("tables", nargs="*", help="table names like dbo.SalesDaily")
+    pr.add_argument("--used", action="store_true", help="every table your code or pasted SQL uses")
+    pr.add_argument("--source", action="append", help="only this SQL Server source")
+    pr.add_argument("--sample-rows", type=int, default=10_000, help="rows sampled for most-common values")
+    pr.set_defaults(fn=cmd_profile)
 
     q = sub.add_parser("search", help="search the catalogue from the terminal")
     q.add_argument("text")

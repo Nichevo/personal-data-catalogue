@@ -143,3 +143,51 @@ def _type_label(c: dict[str, Any]) -> str:
     if t in ("decimal", "numeric"):
         return f"{t}({c['precision']},{c['scale']})"
     return t
+
+
+def profile_tables(cat: Catalogue, src: SqlServerSource, keys: list[str], sample_rows: int = 10_000,
+                   timeout: int = 300, progress=print) -> dict[str, str]:
+    """Profile scanned tables/views on this server: whole-table counts and ranges, top values from a sample.
+
+    Read-only, and uses NOLOCK so it never blocks other work. Returns {key: error} for any that failed.
+    """
+    import pandas as pd
+    import pyodbc
+
+    from .profiling import combine_sql_profile, sql_profile_queries
+
+    by_db: dict[str, list[dict[str, Any]]] = {}
+    for key in keys:
+        asset = cat.get_asset(key)
+        if asset and asset["source"] == src.name and asset["kind"] in ("table", "view"):
+            by_db.setdefault(asset["attrs"]["database"], []).append(asset)
+
+    errors = {}
+    for database, assets in by_db.items():
+        conn = pyodbc.connect(connection_string(src, database), timeout=15, readonly=True)
+        conn.timeout = timeout
+        try:
+            cur = conn.cursor()
+            for asset in assets:
+                a = asset["attrs"]
+                progress(f"  profiling {database}.{asset['name']} ...")
+                columns = [dict(c) for c in cat.columns(asset["key"])]
+                try:
+                    agg_sql, sample_sql = sql_profile_queries(a["schema"], a["object"], columns, sample_rows)
+                    cur.execute(agg_sql)
+                    names = [d[0] for d in cur.description]
+                    agg = dict(zip(names, cur.fetchone()))
+                    cur.execute(sample_sql)
+                    names = [d[0] for d in cur.description]
+                    sample = pd.DataFrame.from_records([tuple(r) for r in cur.fetchall()], columns=names)
+                except pyodbc.Error as e:
+                    errors[asset["key"]] = str(e)
+                    progress(f"    failed: {e}")
+                    continue
+                profile = combine_sql_profile(columns, agg, sample)
+                cat.save_profile(asset["key"], profile,
+                                 f"whole table for counts and ranges; mean and top values from first {len(sample):,} rows")
+        finally:
+            conn.close()
+    cat.rebuild_search()
+    return errors
