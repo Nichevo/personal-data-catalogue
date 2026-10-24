@@ -1,0 +1,17 @@
+# Local settings and data: these hold your server names and catalogue contents,
+# so they must never be committed to this public repo.
+config.toml
+*.db
+*.db-wal
+*.db-shm
+.pdcat/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
