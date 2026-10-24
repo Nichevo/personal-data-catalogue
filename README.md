@@ -8,6 +8,27 @@ alongside it.
 Nothing leaves your machine. The catalogue is one SQLite file, and your server names
 and folder paths live only in a local `config.toml` that git ignores.
 
+## Screenshots
+
+All screenshots use made-up demo data (`python scripts/make_demo.py <folder>` builds it).
+
+**Search** across tables, columns, scripts, files, notes and tags:
+
+![Search page](docs/screenshots/search.png)
+
+**A table page**: notes, a data issue on a column, pasted example values, value ranges
+per column, and which scripts, procedures and pasted SQL use it:
+
+![Table page](docs/screenshots/table.png)
+
+**A CSV/Parquet file compared with the SQL table it came from**:
+
+![File page with comparison](docs/screenshots/compare.png)
+
+**Data folders**: point it at any folder of CSV/Parquet files:
+
+![Data folders page](docs/screenshots/folders.png)
+
 ## What it does
 
 - **Scans SQL Server** with your Windows login: tables, views and stored procedures,
@@ -130,6 +151,8 @@ Keys look like `sql://warehouse/yourdatabase/dbo.sales`,
 ```powershell
 pip install -e ".[dev]"
 pytest
+python scripts/make_demo.py C:\temp\pdcat-demo     # sample catalogue to try the app with
+streamlit run src/pdcat/app.py -- --db C:\temp\pdcat-demo\catalogue.db
 ```
 
 ## Ideas for later

@@ -19,6 +19,7 @@ from pdcat.store import MANUAL_SOURCE, NOTE_TYPES, Catalogue
 KIND_ICONS = {"table": "🗃️", "view": "👁️", "procedure": "⚙️", "database": "🛢️", "project": "📁",
               "script": "🐍", "notebook": "📓", "sql_script": "📜", "sql_snippet": "✍️", "note": "📝",
               "data_file": "📄", "folder": "🗂️"}
+KIND_LABELS = {"data_file": "data file", "sql_snippet": "pasted SQL", "sql_script": "SQL file"}
 NOTE_ICONS = {"note": "📝", "issue": "⚠️", "example": "🔢"}
 RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls"}
 
@@ -45,6 +46,10 @@ def go(key: str | None) -> None:
         st.query_params.pop("asset", None)
 
 
+def kind_label(kind: str) -> str:
+    return KIND_LABELS.get(kind, kind)
+
+
 def icon(kind: str) -> str:
     return KIND_ICONS.get(kind, "•")
 
@@ -64,7 +69,7 @@ def result_list(rows, prefix: str, extra=None) -> None:
             if r["description"]:
                 st.caption(r["description"].splitlines()[0][:200])
         with right:
-            bits = [r["kind"], r["source"]] if r["source"] else [r["kind"]]
+            bits = [kind_label(r["kind"]), r["source"]] if r["source"] else [kind_label(r["kind"])]
             if r["note_count"]:
                 bits.append(f"📝 {r['note_count']}")
             if r["status"] == "missing":
@@ -86,7 +91,7 @@ def home(cat: Catalogue) -> None:
         st.divider()
         kinds = stats["kinds"]
         if kinds:
-            st.caption(" · ".join(f"{icon(k)} {v} {k}" for k, v in sorted(kinds.items())))
+            st.caption(" · ".join(f"{icon(k)} {v} {kind_label(k)}" for k, v in sorted(kinds.items())))
         st.caption(f"📝 {stats['notes']} notes")
         for source, at in stats["last_scans"].items():
             st.caption(f"{source}: scanned {at[:16].replace('T', ' ')} UTC")
@@ -117,7 +122,8 @@ def home(cat: Catalogue) -> None:
         st.title("Search")
         c1, c2, c3 = st.columns([4, 1, 1])
         text = c1.text_input("Search", placeholder="table, column, script, note or tag…", label_visibility="collapsed")
-        kind = c2.selectbox("Kind", ["Any kind", *cat.kinds()], label_visibility="collapsed")
+        kind = c2.selectbox("Kind", ["Any kind", *cat.kinds()], label_visibility="collapsed",
+                            format_func=lambda k: k if k == "Any kind" else kind_label(k))
         source = c3.selectbox("Source", ["Any source", *cat.sources()], label_visibility="collapsed")
         rows = cat.search(text, kind=None if kind == "Any kind" else kind,
                           source=None if source == "Any source" else source)
@@ -182,7 +188,7 @@ def detail(cat: Catalogue, key: str) -> None:
 
     attrs = asset["attrs"]
     st.title(f"{icon(asset['kind'])} {asset['name']}")
-    meta = [asset["kind"], asset["source"]]
+    meta = [kind_label(asset["kind"]), asset["source"]]
     if attrs.get("database"):
         meta.append(attrs["database"])
     if attrs.get("row_count") is not None:
@@ -270,8 +276,8 @@ def profile_frame(profile, descriptions: dict | None = None) -> pd.DataFrame:
         row = {
             "column": p["column_name"], "type": p["data_type"],
             "nulls": f"{p['null_count']:,} ({p['null_count'] / n:.0%})" if n and p["null_count"] is not None else "",
-            "distinct": p["distinct_count"], "min": p["min_value"], "max": p["max_value"],
-            "mean": round(p["mean_value"], 3) if p["mean_value"] is not None else None,
+            "distinct": p["distinct_count"], "min": p["min_value"] or "", "max": p["max_value"] or "",
+            "mean": f"{p['mean_value']:,.3f}".rstrip("0").rstrip(".") if p["mean_value"] is not None else "",
             "most common": ", ".join(f"{v} ({c:,})" for v, c in json.loads(p["top_values"])),
         }
         if descriptions is not None:

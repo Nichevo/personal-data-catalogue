@@ -613,7 +613,8 @@ def _text(v: Any) -> str | None:
     if v is None:
         return None
     if hasattr(v, "isoformat"):
-        return v.isoformat()
+        text = v.isoformat()
+        return text[:10] if text.endswith("T00:00:00") else text
     if hasattr(v, "item"):  # numpy scalar
         v = v.item()
     if isinstance(v, float):
