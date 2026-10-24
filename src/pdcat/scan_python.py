@@ -1,0 +1,264 @@
+"""Scan a Python project folder: scripts, notebooks and .sql files.
+
+For each file it records the module docstring, functions and imports, then
+works out which tables and files the code reads and writes by looking at:
+  * SQL in string literals (and f-strings, with the dynamic bits ignored)
+  * pandas calls such as read_sql_table / to_sql / read_csv / to_parquet
+  * open(), joblib.dump/load and save_model/load_model with a literal path
+"""
+from __future__ import annotations
+
+import ast
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .config import PythonSource
+from .sqlrefs import extract_refs, looks_like_sql
+from .store import Catalogue
+
+SKIP_DIRS = {".git", ".hg", ".svn", "__pycache__", ".venv", "venv", "env", ".env", "site-packages",
+             "node_modules", ".ipynb_checkpoints", ".mypy_cache", ".pytest_cache", ".tox", "build", "dist"}
+
+FILE_READERS = {"read_csv", "read_parquet", "read_excel", "read_json", "read_feather", "read_pickle",
+                "read_table", "read_fwf", "read_hdf", "read_orc", "read_xml", "load_model"}
+FILE_WRITERS = {"to_csv", "to_parquet", "to_excel", "to_json", "to_feather", "to_pickle", "to_hdf",
+                "to_orc", "to_xml", "save_model", "savefig"}
+
+
+@dataclass
+class Found:
+    """What one file uses: (relation, dst_ref, line) tuples."""
+    refs: list[tuple[str, str, int]] = field(default_factory=list)
+    description: str | None = None
+    attrs: dict = field(default_factory=dict)
+
+
+def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
+    root = Path(src.path)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Python project folder not found: {root}")
+    project_key = f"py://{src.name}"
+    skip = SKIP_DIRS | set(src.exclude)
+    counts = {"files": 0, "links": 0, "errors": 0}
+
+    with cat.scan(src.name):
+        readme = _readme_summary(root)
+        cat.upsert_asset(project_key, "project", src.name, src.name, description=readme,
+                         attrs={"path": str(root)})
+        for path in sorted(_iter_files(root, skip)):
+            rel = path.relative_to(root).as_posix()
+            found = scan_file(path)
+            kind = {".py": "script", ".ipynb": "notebook", ".sql": "sql_script"}[path.suffix.lower()]
+            key = f"{project_key}/{rel}"
+            cat.upsert_asset(key, kind, rel, src.name, parent=project_key,
+                             description=found.description, attrs=found.attrs)
+            for relation, dst_ref, line in found.refs:
+                cat.add_link(key, relation, dst_ref, src.name, hint=src.default_database,
+                             evidence=f"{rel}:{line}" if line else rel)
+                counts["links"] += 1
+            counts["files"] += 1
+            counts["errors"] += bool(found.attrs.get("parse_error"))
+    return counts
+
+
+def _iter_files(root: Path, skip: set[str]):
+    for path in root.rglob("*"):
+        if path.suffix.lower() not in (".py", ".ipynb", ".sql") or not path.is_file():
+            continue
+        if any(part in skip for part in path.relative_to(root).parts[:-1]):
+            continue
+        yield path
+
+
+def _readme_summary(root: Path) -> str | None:
+    for name in ("README.md", "README.rst", "README.txt", "readme.md"):
+        p = root / name
+        if p.exists():
+            text = p.read_text(encoding="utf-8", errors="replace")
+            # Skip headings and badge lines; use the first paragraph of prose.
+            prose = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith(("#", "[![", "<", "=", "---")))
+            return _first_paragraph(prose, max_len=1000) or None
+    return None
+
+
+def scan_file(path: Path) -> Found:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    suffix = path.suffix.lower()
+    if suffix == ".sql":
+        found = Found(attrs={"lines": text.count("\n") + 1})
+        found.refs = [(r.relation, f"table:{r.name}", 0) for r in extract_refs(text)]
+        first = text.lstrip().splitlines()[0] if text.strip() else ""
+        if first.startswith("--"):
+            found.description = first.lstrip("- ").strip()
+        return found
+    if suffix == ".ipynb":
+        return _scan_notebook(text)
+    return scan_python_source(text)
+
+
+def _scan_notebook(text: str) -> Found:
+    found = Found()
+    try:
+        nb = json.loads(text)
+    except json.JSONDecodeError as e:
+        found.attrs["parse_error"] = f"Not valid notebook JSON: {e}"
+        return found
+    cells = nb.get("cells", [])
+    funcs, imports, errors = [], set(), []
+    for i, cell in enumerate(cells, start=1):
+        source = "".join(cell.get("source", []))
+        if cell.get("cell_type") == "markdown" and found.description is None and source.strip():
+            found.description = _markdown_summary(source)
+            continue
+        if cell.get("cell_type") != "code":
+            continue
+        if cell.get("source") and source.lstrip().lower().startswith(("%%sql", "%sql")):
+            found.refs += [(r.relation, f"table:{r.name}", 0) for r in extract_refs(source.split("\n", 1)[-1])]
+            continue
+        # Drop IPython magics and shell lines so the cell parses as Python.
+        code = "\n".join("" if ln.lstrip().startswith(("%", "!")) else ln for ln in source.splitlines())
+        cell_found = scan_python_source(code)
+        if cell_found.attrs.get("parse_error"):
+            errors.append(f"cell {i}")
+        found.refs += [(rel, ref, 0) for rel, ref, _ in cell_found.refs]
+        funcs += cell_found.attrs.get("functions", [])
+        imports.update(cell_found.attrs.get("imports", []))
+    found.refs = list(dict.fromkeys(found.refs))
+    found.attrs.update({"cells": len(cells), "functions": funcs, "imports": sorted(imports)})
+    if errors:
+        found.attrs["parse_error"] = "Could not parse " + ", ".join(errors)
+    return found
+
+
+def scan_python_source(text: str) -> Found:
+    found = Found(attrs={"lines": text.count("\n") + 1})
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as e:
+        found.attrs["parse_error"] = f"line {e.lineno}: {e.msg}"
+        return found
+
+    doc = ast.get_docstring(tree)
+    if doc:
+        found.description = _first_paragraph(doc)
+    found.attrs["functions"] = [n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    found.attrs["classes"] = [n.name for n in tree.body if isinstance(n, ast.ClassDef)]
+    imports = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            imports.add(node.module.split(".")[0])
+    found.attrs["imports"] = sorted(imports)
+
+    # Docstrings are prose, and the literal pieces inside an f-string are handled with the f-string.
+    skip = _docstring_nodes(tree) | {id(v) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for v in n.values}
+    consts = _module_constants(tree)
+    refs: dict[tuple[str, str], int] = {}
+
+    def add(relation: str, ref: str, line: int) -> None:
+        refs.setdefault((relation, ref), line)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Constant, ast.JoinedStr)) and id(node) not in skip:
+            s = _string_value(node, consts)
+            if s and looks_like_sql(s):
+                for r in extract_refs(s):
+                    add(r.relation, f"table:{r.name}", node.lineno)
+        elif isinstance(node, ast.Call):
+            for relation, ref in _call_refs(node):
+                add(relation, ref, node.lineno)
+    found.refs = [(rel, ref, line) for (rel, ref), line in refs.items()]
+    return found
+
+
+def _call_refs(call: ast.Call) -> list[tuple[str, str]]:
+    func = call.func
+    name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
+    if name is None:
+        return []
+    owner = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else None
+
+    def arg(pos: int, *kw: str) -> str | None:
+        for k in call.keywords:
+            if k.arg in kw:
+                return _string_value(k.value)
+        return _string_value(call.args[pos]) if len(call.args) > pos else None
+
+    if name in ("read_sql_table", "to_sql"):
+        table = arg(0, "table_name", "name")
+        if not table or "{" in table:
+            return []
+        schema = arg(99, "schema")
+        full = f"{schema}.{table}" if schema else table
+        return [("reads" if name == "read_sql_table" else "writes", f"table:{full.lower()}")]
+
+    if name == "open":
+        path = arg(0, "file")
+        mode = arg(1, "mode") or "r"
+        if path:
+            return [("writes" if any(c in mode for c in "wax+") else "reads", f"file:{path}")]
+        return []
+    if owner == "joblib" and name in ("dump", "load"):
+        path = arg(1, "filename") if name == "dump" else arg(0, "filename")
+        return [("writes" if name == "dump" else "reads", f"file:{path}")] if path else []
+    if name in FILE_READERS or name in FILE_WRITERS:
+        path = arg(0, "path", "path_or_buf", "filepath_or_buffer", "io", "excel_writer", "fname", "filename")
+        if path and _looks_like_path(path):
+            return [("reads" if name in FILE_READERS else "writes", f"file:{path}")]
+    return []
+
+
+def _string_value(node: ast.AST, consts: dict[str, str] | None = None) -> str | None:
+    """A string literal's value. In f-strings, names of module-level string constants are filled
+    in (so f"FROM {TABLE}" works) and any other expression becomes "{}"."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        out = []
+        for v in node.values:
+            if isinstance(v, ast.Constant):
+                out.append(str(v.value))
+            elif isinstance(v, ast.FormattedValue) and isinstance(v.value, ast.Name) and consts and v.value.id in consts:
+                out.append(consts[v.value.id])
+            else:
+                out.append("{}")
+        return "".join(out)
+    return None
+
+
+def _module_constants(tree: ast.Module) -> dict[str, str]:
+    consts = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+            consts[node.targets[0].id] = node.value.value
+    return consts
+
+
+def _looks_like_path(s: str) -> bool:
+    return "." in s.rsplit("/", 1)[-1] or "/" in s or "\\" in s
+
+
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    ids = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                ids.add(id(first.value))
+    return ids
+
+
+def _markdown_summary(md: str) -> str:
+    """'# Title\nSome text' -> 'Title: Some text'."""
+    lines = md.strip().splitlines()
+    title = lines[0].lstrip("# ").strip() if lines[0].startswith("#") else None
+    body = _first_paragraph("\n".join(lines[1:] if title else lines))
+    return ": ".join(p for p in (title, body) if p)
+
+
+def _first_paragraph(text: str, max_len: int = 500) -> str:
+    para = text.strip().split("\n\n", 1)[0].strip()
+    return para if len(para) <= max_len else para[: max_len - 1] + "…"
