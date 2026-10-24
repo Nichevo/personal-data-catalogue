@@ -41,3 +41,17 @@ def test_other_views_render(app):
     for view in ["Needs notes", "Recent notes", "Unmatched tables"]:
         app.sidebar.radio[0].set_value(view).run()
         assert not app.exception, view
+
+
+def test_add_sql_page_saves_and_opens_snippet(app, catalogue):
+    app.run()
+    app.sidebar.radio[0].set_value("Add SQL").run()
+    assert not app.exception
+    app.text_input[0].input("Store regions")
+    [t for t in app.text_area if t.label == "SQL"][0].input("SELECT Region FROM dbo.Store")
+    [b for b in app.button if b.label == "Save SQL"][0].click().run()
+    assert not app.exception
+    key = app.query_params["asset"]
+    key = key[0] if isinstance(key, list) else key
+    assert catalogue.get_asset(key)["name"] == "Store regions"
+    assert any("dbo.Store" in b.label for b in app.button)  # detail page shows the linked table

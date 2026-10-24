@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import uuid
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS scans (
 """
 
 TABLE_KINDS = ("table", "view")
+MANUAL_SOURCE = "manual"  # SQL you paste in by hand; never touched by scans
 
 
 def now() -> str:
@@ -228,7 +230,7 @@ class Catalogue:
         seen = set()
         for a in self.conn.execute("SELECT key, kind, source, name, description, attrs FROM assets"):
             attrs = json.loads(a["attrs"])
-            extra = " ".join(str(attrs.get(k, "")) for k in ("functions", "imports", "classes"))
+            extra = " ".join(str(attrs.get(k, "")) for k in ("functions", "imports", "classes", "sql", "tags"))
             body = " ".join([a["description"] or "", extra, " ".join(cols_by_key[a["key"]]),
                              " ".join(notes_by_key[a["key"]])])
             rows.append((a["key"], a["kind"], a["source"], _searchable(a["name"]), _searchable(body)))
@@ -361,6 +363,42 @@ class Catalogue:
 
     def kinds(self) -> list[str]:
         return [r[0] for r in self.conn.execute("SELECT DISTINCT kind FROM assets ORDER BY kind")]
+
+    # ---- pasted SQL -----------------------------------------------------
+
+    def save_snippet(self, title: str, sql: str, *, description: str = "", tags: str = "",
+                     database: str | None = None, key: str | None = None) -> str:
+        """Save a piece of SQL you pasted in, and link it to the tables it reads and writes.
+
+        `database` ("<source>/<db>") says where bare table names live. Pass `key`
+        to update an existing snippet.
+        """
+        from .sqlrefs import extract_refs
+
+        key = key or f"{MANUAL_SOURCE}://sql/{uuid.uuid4().hex[:12]}"
+        attrs = {"sql": sql.strip(), "database": database or "", "tags": ", ".join(split_tags(tags))}
+        with self.conn:
+            self.upsert_asset(key, "sql_snippet", title.strip() or "Untitled SQL", MANUAL_SOURCE,
+                              description=description.strip() or None, attrs=attrs)
+            self.conn.execute("DELETE FROM links WHERE src_key = ?", (key,))
+            for ref in extract_refs(sql):
+                self.add_link(key, ref.relation, f"table:{ref.name}", MANUAL_SOURCE,
+                              hint=database or None, evidence="pasted SQL")
+        self.resolve_refs()
+        self.rebuild_search()
+        return key
+
+    def delete_snippet(self, key: str) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM assets WHERE key = ? AND source = ?", (key, MANUAL_SOURCE))
+            self.conn.execute("DELETE FROM links WHERE src_key = ?", (key,))
+            self.conn.execute("DELETE FROM notes WHERE asset_key = ?", (key,))
+        self.rebuild_search()
+
+    def databases(self) -> list[str]:
+        """Scanned databases as "<source>/<db>", for choosing where pasted SQL runs."""
+        return [r[0] for r in self.conn.execute(
+            "SELECT name FROM assets WHERE kind = 'database' AND status = 'active' ORDER BY name")]
 
     # ---- notes ----------------------------------------------------------
 

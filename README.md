@@ -19,6 +19,9 @@ and folder paths live only in a local `config.toml` that git ignores.
   `read_csv` / `to_parquet` and friends, `open()`, `joblib.dump/load`, `save_model`.
 - **Matches table names in code to scanned tables**, so a table page shows "used by
   `features.py` (reads)" and a script page shows the tables it touches.
+- **Paste in SQL by hand** ("Add SQL" in the web page): give it a title and a note, and
+  it becomes a searchable item linked to the tables it reads and writes, so it shows
+  up under "Used by" on those tables. Pasted SQL is never touched by scans.
 - **Notes and tags** on any table, column, view, script or project. Notes are stored
   separately from scanned data, so re-scanning never touches them.
 - **Search** across names, columns, descriptions, notes and tags.
@@ -82,7 +85,7 @@ disappeared is marked "missing" rather than deleted, and its notes are kept.
 
 | File | One row per | Key columns |
 | --- | --- | --- |
-| `assets` | table, view, procedure, database, project, script, notebook | `key`, `kind`, `name`, `source`, `description`, `attrs` (JSON) |
+| `assets` | table, view, procedure, database, project, script, notebook, pasted SQL (`sql_snippet`, text in `attrs.sql`) | `key`, `kind`, `name`, `source`, `description`, `attrs` (JSON) |
 | `columns` | column of a table or view | `asset_key`, `name`, `data_type`, `description` |
 | `links` | "this reads/writes/calls that" | `src_key`, `relation`, `dst`, `matched`, `evidence` (file:line) |
 | `notes` | your note | `asset_key` (`<key>#<column>` for column notes), `body`, `tags` |

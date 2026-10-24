@@ -125,3 +125,35 @@ def test_export_round_trips_everything(catalogue, tmp_path):
 
     paths = write_export(catalogue, tmp_path / "out", "csv")
     assert {p.name for p in paths} == {"assets.csv", "columns.csv", "links.csv", "notes.csv"}
+
+
+def test_pasted_sql_is_linked_searchable_kept_and_exported(catalogue, project):
+    from pdcat.export import export_data
+
+    key = catalogue.save_snippet(
+        "Weekly units by region",
+        "SELECT st.Region, SUM(s.Units) FROM SalesDaily s JOIN dbo.Store st ON st.StoreId = s.StoreId GROUP BY st.Region",
+        description="Used for the regional forecast check.", tags="forecasting, adhoc",
+        database="warehouse/ForecastDB")
+    snippet = catalogue.get_asset(key)
+    assert snippet["kind"] == "sql_snippet" and snippet["source"] == "manual"
+    assert {l["dst_key"] for l in catalogue.links_from(key)} == {SALES, "sql://warehouse/forecastdb/dbo.store"}
+    assert key in {l["src_key"] for l in catalogue.links_to(SALES)}
+    assert catalogue.search("regional")[0]["key"] == key
+    assert catalogue.search("adhoc")[0]["key"] == key
+
+    # Rescanning other sources leaves it alone.
+    scan_project(catalogue, PythonSource(name="forecasting", path=project))
+    assert catalogue.get_asset(key)["status"] == "active"
+    assert len(catalogue.links_from(key)) == 2
+
+    # Editing replaces its links.
+    catalogue.save_snippet("Weekly units", "SELECT * FROM ml.ForecastOutput", key=key)
+    assert [l["dst_key"] for l in catalogue.links_from(key)] == [OUTPUT]
+
+    data = export_data(catalogue)
+    assert any(a["key"] == key and a["attrs"]["sql"] == "SELECT * FROM ml.ForecastOutput" for a in data["assets"])
+    assert any(l["src_key"] == key for l in data["links"])
+
+    catalogue.delete_snippet(key)
+    assert catalogue.get_asset(key) is None and catalogue.links_from(key) == []

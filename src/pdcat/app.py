@@ -15,7 +15,7 @@ from pdcat.export import rows_to_csv, to_csv_zip, to_json
 from pdcat.store import Catalogue
 
 KIND_ICONS = {"table": "🗃️", "view": "👁️", "procedure": "⚙️", "database": "🛢️", "project": "📁",
-              "script": "🐍", "notebook": "📓", "sql_script": "📜", "note": "📝"}
+              "script": "🐍", "notebook": "📓", "sql_script": "📜", "sql_snippet": "✍️", "note": "📝"}
 RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls"}
 
 
@@ -76,7 +76,7 @@ def home(cat: Catalogue) -> None:
     stats = cat.stats()
     with st.sidebar:
         st.header("Data catalogue")
-        view = st.radio("View", ["Search", "Needs notes", "Recent notes", "Unmatched tables"],
+        view = st.radio("View", ["Search", "Add SQL", "Needs notes", "Recent notes", "Unmatched tables"],
                         label_visibility="collapsed")
         st.divider()
         kinds = stats["kinds"]
@@ -92,6 +92,13 @@ def home(cat: Catalogue) -> None:
                                "application/zip", width="stretch")
             st.download_button("⬇️ JSON", to_json(cat), "catalogue-export.json",
                                "application/json", width="stretch")
+
+    if view == "Add SQL":
+        st.title("Add SQL")
+        st.caption("Paste a query or snippet you want to remember. It becomes searchable, and the tables it "
+                   "reads and writes are linked, so it shows up under \"Used by\" on those tables.")
+        snippet_form(cat)
+        return
 
     if not stats["kinds"]:
         st.title("Your catalogue is empty")
@@ -168,6 +175,12 @@ def detail(cat: Catalogue, key: str) -> None:
         st.warning(f"Couldn't fully read this file: {attrs['parse_error']}")
     if asset["description"]:
         st.markdown(asset["description"])
+    if asset["kind"] == "sql_snippet":
+        st.code(attrs.get("sql", ""), language="sql")
+        if attrs.get("tags"):
+            st.caption(" ".join(f"#{t.strip()}" for t in attrs["tags"].split(",") if t.strip()))
+        with st.expander("Edit or delete this SQL"):
+            snippet_form(cat, asset)
 
     columns = cat.columns(key)
     notes_section(cat, key, [c["name"] for c in columns])
@@ -201,6 +214,41 @@ def detail(cat: Catalogue, key: str) -> None:
                 if k not in ("definition", "imports", "functions", "classes") and v not in (None, "", [])}
         st.json(rest, expanded=False)
         st.caption(f"First seen {asset['first_seen'][:10]} · last seen {asset['last_seen'][:10]}")
+
+
+def snippet_form(cat: Catalogue, existing: dict | None = None) -> None:
+    attrs = existing["attrs"] if existing else {}
+    databases = cat.databases()
+    options = ["Not sure / any", *databases]
+    current = attrs.get("database") or ""
+    with st.form(f"snippet-{existing['key'] if existing else 'new'}", clear_on_submit=existing is None):
+        title = st.text_input("Title", value=existing["name"] if existing else "",
+                              placeholder="e.g. Weekly sales by store for the forecast")
+        sql = st.text_area("SQL", value=attrs.get("sql", ""), height=220,
+                           placeholder="SELECT ... FROM dbo.SalesDaily ...")
+        description = st.text_area("What it's for (optional)", value=(existing or {}).get("description") or "",
+                                   height=80, placeholder="Why it matters, when to use it, gotchas… (Markdown works)")
+        c1, c2 = st.columns(2)
+        database = c1.selectbox("Runs against", options,
+                                index=options.index(current) if current in options else 0,
+                                help="Where bare table names like \"Sales\" live, so they link to the right table.")
+        tags = c2.text_input("Tags", value=attrs.get("tags", ""), placeholder="comma separated")
+        save_col, delete_col = st.columns([1, 1])
+        saved = save_col.form_submit_button("Save SQL", type="primary")
+        deleted = delete_col.form_submit_button("Delete") if existing else False
+    if saved:
+        if not sql.strip():
+            st.warning("Paste some SQL first.")
+            return
+        key = cat.save_snippet(title, sql, description=description, tags=tags,
+                               database=None if database == options[0] else database,
+                               key=existing["key"] if existing else None)
+        go(key)
+        st.rerun()
+    if deleted:
+        cat.delete_snippet(existing["key"])
+        go(None)
+        st.rerun()
 
 
 def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:

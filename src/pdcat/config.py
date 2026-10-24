@@ -121,6 +121,8 @@ def load_config(path: Path) -> Config:
         python=python,
     )
     names = cfg.source_names()
+    if "manual" in names:
+        raise ValueError("'manual' is reserved for SQL you paste in; pick another source name")
     dupes = {n for n in names if names.count(n) > 1}
     if dupes:
         raise ValueError(f"Source names must be unique; repeated: {', '.join(sorted(dupes))}")
