@@ -16,6 +16,7 @@ from pathlib import Path
 from .config import PythonSource
 from .sqlrefs import extract_refs, looks_like_sql
 from .scan_files import ingest_data_file, iter_data_files
+from .envinfo import read_environment
 from .store import Catalogue
 
 SKIP_DIRS = {".git", ".hg", ".svn", "__pycache__", ".venv", "venv", "env", ".env", "site-packages",
@@ -46,7 +47,7 @@ def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
     with cat.scan(src.name):
         readme = _readme_summary(root)
         cat.upsert_asset(project_key, "project", src.name, src.name, description=readme,
-                         attrs={"path": str(root), "role": src.role})
+                         attrs={"path": str(root), "role": src.role, "environment": read_environment(root)})
         for path in sorted(_iter_files(root, skip)):
             rel = path.relative_to(root).as_posix()
             found = scan_file(path)
@@ -115,6 +116,7 @@ def _scan_notebook(text: str) -> Found:
         return found
     cells = nb.get("cells", [])
     funcs, imports, errors, import_details = [], set(), [], []
+    merged: dict[str, dict] = {"function_info": {}, "import_map": {}, "function_refs": {}}
     for i, cell in enumerate(cells, start=1):
         source = "".join(cell.get("source", []))
         if cell.get("cell_type") == "markdown" and found.description is None and source.strip():
@@ -134,9 +136,15 @@ def _scan_notebook(text: str) -> Found:
         funcs += cell_found.attrs.get("functions", [])
         imports.update(cell_found.attrs.get("imports", []))
         import_details += cell_found.attrs.get("import_details", [])
+        for name, value in merged.items():
+            for k, v in cell_found.attrs.get(name, {}).items():
+                if name == "function_info":
+                    v = {**v, "cell": i}
+                    k = f"(cell {i})" if k == "(script)" else k
+                value[k] = v
     found.refs = list(dict.fromkeys(found.refs))
     found.attrs.update({"cells": len(cells), "functions": funcs, "imports": sorted(imports),
-                        "import_details": import_details})
+                        "import_details": import_details, **{k: v for k, v in merged.items() if v}})
     if errors:
         found.attrs["parse_error"] = "Could not parse " + ", ".join(errors)
     return found
@@ -178,6 +186,8 @@ def scan_python_source(text: str) -> Found:
     if function_refs:
         found.attrs["function_refs"] = function_refs
     found.attrs["import_details"] = _import_details(tree)
+    found.attrs["import_map"] = _import_map(tree)
+    found.attrs["function_info"] = _function_info(tree)
     paths = _sys_path_additions(tree, consts)
     if paths:
         found.attrs["sys_path"] = paths
@@ -198,15 +208,123 @@ def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str]) -> dict
     return refs
 
 
-def _functions(tree: ast.Module):
-    """Top-level functions and class methods, as ("name", node) / ("Class.method", node)."""
-    for node in tree.body:
+def _functions(tree: ast.AST, prefix: str = ""):
+    """Every function, method and nested function, as ("name", node), ("Class.method", node)
+    or ("outer.inner", node)."""
+    for node in getattr(tree, "body", []):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            yield node.name, node
+            name = f"{prefix}{node.name}"
+            yield name, node
+            yield from _functions(node, f"{name}.")
         elif isinstance(node, ast.ClassDef):
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    yield f"{node.name}.{item.name}", item
+            yield from _functions(node, f"{prefix}{node.name}.")
+        elif isinstance(node, (ast.If, ast.Try, ast.With)) and not prefix:
+            yield from _functions(node, prefix)  # defs under if/try at module level
+
+
+def _own_nodes(fn: ast.AST):
+    """Nodes inside a function, not counting nested functions and classes (they get their own entry)."""
+    found, stack = [], list(ast.iter_child_nodes(fn))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        found.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    # In reading order, so calls and returns are listed the way the code reads.
+    return sorted(found, key=lambda n: (getattr(n, "lineno", 0), getattr(n, "col_offset", 0)))
+
+
+def _src(node: ast.AST | None, limit: int = 80) -> str:
+    if node is None:
+        return ""
+    try:
+        text = ast.unparse(node)
+    except Exception:  # very old or odd syntax
+        return "…"
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _call_name(call: ast.Call) -> str | None:
+    f = call.func
+    parts = []
+    while isinstance(f, ast.Attribute):
+        parts.append(f.attr)
+        f = f.value
+    if isinstance(f, ast.Name):
+        parts.append(f.id)
+        return ".".join(reversed(parts))
+    return None
+
+
+def _describe(fn: ast.AST, name: str) -> dict:
+    """Signature, docstring, what a function calls and what it returns."""
+    a = fn.args
+    params = []
+    positional = [*a.posonlyargs, *a.args]
+    defaults = [None] * (len(positional) - len(a.defaults)) + list(a.defaults)
+    for arg, default in zip(positional, defaults):
+        params.append({"name": arg.arg, "annotation": _src(arg.annotation), "default": _src(default)})
+    if a.vararg:
+        params.append({"name": f"*{a.vararg.arg}", "annotation": _src(a.vararg.annotation), "default": ""})
+    for arg, default in zip(a.kwonlyargs, a.kw_defaults):
+        params.append({"name": arg.arg, "annotation": _src(arg.annotation), "default": _src(default)})
+    if a.kwarg:
+        params.append({"name": f"**{a.kwarg.arg}", "annotation": _src(a.kwarg.annotation), "default": ""})
+    calls, returns, yields = [], [], False
+    for node in _own_nodes(fn):
+        if isinstance(node, ast.Call):
+            c = _call_name(node)
+            if c and c not in calls:
+                calls.append(c)
+        elif isinstance(node, ast.Return) and node.value is not None:
+            r = _src(node.value)
+            if r not in returns:
+                returns.append(r)
+        elif isinstance(node, (ast.Yield, ast.YieldFrom)):
+            yields = True
+    doc = ast.get_docstring(fn) or ""
+    return {
+        "params": params, "returns_annotation": _src(fn.returns), "returns": returns[:6], "yields": yields,
+        "calls": calls[:60], "doc": doc[:3000], "line": fn.lineno, "end_line": getattr(fn, "end_lineno", fn.lineno),
+        "is_async": isinstance(fn, ast.AsyncFunctionDef), "decorators": [_src(d, 40) for d in fn.decorator_list],
+    }
+
+
+def _function_info(tree: ast.Module) -> dict[str, dict]:
+    info = {name: _describe(node, name) for name, node in _functions(tree)}
+    # The script's own top-level code (e.g. under `if __name__ == "__main__":`) is its entry point.
+    module_calls = []
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom)):
+            continue
+        for node in [stmt, *_own_nodes(stmt)]:
+            if isinstance(node, ast.Call):
+                c = _call_name(node)
+                if c and c not in module_calls:
+                    module_calls.append(c)
+    if module_calls:
+        info["(script)"] = {"params": [], "returns_annotation": "", "returns": [], "yields": False,
+                            "calls": module_calls[:60], "doc": "Code that runs when the script itself is run.",
+                            "line": 1, "end_line": len(tree.body), "is_async": False, "decorators": []}
+    return info
+
+
+def _import_map(tree: ast.Module) -> dict[str, str]:
+    """Local name -> what it refers to: {"cc": "common.clean", "load_sales": "common.io.load_sales"}.
+    Relative imports keep their leading dots."""
+    out = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                out[a.asname or a.name.split(".")[0]] = a.name if a.asname else a.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom):
+            base = "." * node.level + (node.module or "")
+            for a in node.names:
+                if a.name != "*":
+                    out[a.asname or a.name] = f"{base}.{a.name}" if base and not base.endswith(".") else f"{base}{a.name}"
+    return out
 
 
 def _import_details(tree: ast.Module) -> list[dict]:

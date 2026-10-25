@@ -1,8 +1,10 @@
 """Get your data back out: everything in the catalogue as CSV files or one JSON file.
 
-The export has five tables: assets (tables, views, scripts, data files…),
-columns, links (what reads/writes what), notes (including data issues) and
-profiles (value ranges per column). Keys are stable, so the files can be
+The export has seven tables: assets (tables, views, scripts, data files…),
+columns, links (what reads/writes what), notes (including data issues),
+profiles (value ranges per column), functions (every function in your code with
+its docstring, calls and returns) and packages (what each project declares and
+imports). Keys are stable, so the files can be
 joined together or loaded into another catalogue later.
 """
 from __future__ import annotations
@@ -45,7 +47,32 @@ def export_data(cat: Catalogue) -> dict[str, list[dict[str, Any]]]:
             for r in rows:
                 r["matched"] = bool(r["matched"])
         data[name] = rows
+    data["functions"] = _functions(data["assets"])
+    data["packages"] = _packages(cat)
     return data
+
+
+def _functions(assets: list[dict]) -> list[dict[str, Any]]:
+    rows = []
+    for a in assets:
+        for fn, f in (a["attrs"].get("function_info") or {}).items():
+            rows.append({"asset_key": a["key"], "function": fn, "line": f.get("line"), "end_line": f.get("end_line"),
+                         "parameters": ", ".join(p["name"] for p in f.get("params", [])),
+                         "returns_annotation": f.get("returns_annotation", ""), "returns": f.get("returns", []),
+                         "calls": f.get("calls", []), "doc": f.get("doc", "")})
+    return rows
+
+
+def _packages(cat: Catalogue) -> list[dict[str, Any]]:
+    from .envinfo import project_environment
+    rows = []
+    for r in cat.conn.execute("SELECT source FROM assets WHERE kind = 'project' ORDER BY source"):
+        env = project_environment(cat, r["source"])
+        rows += [{"project": r["source"], "package": d["name"], "version": d["version"], "declared_in": d["file"],
+                  "status": "declared" if d not in env["unused"] else "declared, not imported"} for d in env["deps"]]
+        rows += [{"project": r["source"], "package": u["package"], "version": "", "declared_in": "",
+                  "status": "imported, not declared"} for u in env["undeclared"]]
+    return rows
 
 
 def to_json(cat: Catalogue) -> str:

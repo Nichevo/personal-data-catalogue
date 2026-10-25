@@ -1,0 +1,16 @@
+# Conda environment for the personal data catalogue.
+#   conda env create -f environment.yml
+#   conda activate pdcat
+#   pip install -e . --no-deps
+name: pdcat
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - streamlit>=1.46
+  - pandas>=2.0
+  - pyarrow>=14
+  - pyodbc>=5.0
+  - pyyaml>=6
+  - pytest>=8

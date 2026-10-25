@@ -310,6 +310,10 @@ def to_dot(g: Graph) -> str:
         "library": 'shape=component style=filled fillcolor="#f3e8fd" color="#8a4ac9"',
         "table": 'shape=cylinder style=filled fillcolor="#e6f4ea" color="#3b8a4e"',
         "file": 'shape=note style=filled fillcolor="#fef7e0" color="#b58a00"',
+        "function": 'shape=box style="rounded,filled" fillcolor="#e8f0fe" color="#4a73c9"',
+        "focus": 'shape=box style="rounded,filled,bold" fillcolor="#fde68a" color="#b45309" penwidth=2',
+        "libfn": 'shape=box style="rounded,filled" fillcolor="#f3e8fd" color="#8a4ac9"',
+        "external": 'shape=plain fontcolor="#666666"',
     }
     lines = ["digraph codemap {", '  rankdir=LR; graph [fontname="Helvetica" fontsize=11];',
              '  node [fontname="Helvetica" fontsize=10]; edge [fontname="Helvetica" fontsize=9 color="#666666"];']
@@ -328,13 +332,15 @@ def to_dot(g: Graph) -> str:
             lines.append("  }")
     for (a, b, rel), labels in sorted(g.edges.items()):
         attrs = []
-        text = ", ".join(sorted(labels)) if rel == "imports" else rel
+        text = ", ".join(sorted(labels)) if rel in ("imports", "call") else rel
         if text:
             attrs.append(f'label="{_q(_short(text))}"')
         if rel == "writes":
             attrs.append('color="#c5221f" fontcolor="#c5221f"')
         elif rel in ("reads", "calls"):
             attrs.append('style=dashed')
+        elif rel == "call":
+            attrs.append('color="#4a73c9"')
         else:
             attrs.append('penwidth=1.5 color="#4a73c9"')
         lines.append(f"  {ids[a]} -> {ids[b]} [{' '.join(attrs)}];")
@@ -345,7 +351,8 @@ def to_dot(g: Graph) -> str:
 def to_mermaid(g: Graph) -> str:
     ids = _ids(g)
     shape = {"code": ('["', '"]'), "project": ('["', '"]'), "library": ('[["', '"]]'),
-             "table": ('[("', '")]'), "file": ('>"', '"]')}
+             "table": ('[("', '")]'), "file": ('>"', '"]'), "function": ('("', '")'),
+             "focus": ('(["', '"])'), "libfn": ('("', '")'), "external": ('["', '"]')}
     lines = ["flowchart LR"]
     groups: dict[str | None, list[str]] = defaultdict(list)
     for k, n in g.nodes.items():
@@ -362,12 +369,13 @@ def to_mermaid(g: Graph) -> str:
         if group:
             lines.append("    end")
     for (a, b, rel), labels in sorted(g.edges.items()):
-        text = _short(", ".join(sorted(labels))) if rel == "imports" else rel
+        text = _short(", ".join(sorted(labels))) if rel in ("imports", "call") else rel
         arrow = "==>" if rel == "writes" else ("-.->" if rel in ("reads", "calls") else "-->")
         lines.append(f'    {ids[a]} {arrow}|"{_mq(text)}"| {ids[b]}' if text else f"    {ids[a]} {arrow} {ids[b]}")
     lines += ["    classDef table fill:#e6f4ea,stroke:#3b8a4e", "    classDef file fill:#fef7e0,stroke:#b58a00",
-              "    classDef library fill:#f3e8fd,stroke:#8a4ac9"]
-    for kind in ("table", "file", "library"):
+              "    classDef library fill:#f3e8fd,stroke:#8a4ac9", "    classDef libfn fill:#f3e8fd,stroke:#8a4ac9",
+              "    classDef focus fill:#fde68a,stroke:#b45309,stroke-width:2px"]
+    for kind in ("table", "file", "library", "libfn", "focus"):
         members = [ids[k] for k, n in g.nodes.items() if n["kind"] == kind]
         if members:
             lines.append(f"    class {','.join(members)} {kind}")
@@ -380,3 +388,150 @@ def _mq(text: str) -> str:
 
 def _short(text: str, limit: int = 40) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+# ---- inside one script: functions and what they call -------------------------
+
+_BUILTINS = set(dir(__import__("builtins")))
+
+
+class CodeIndex:
+    """Resolves the calls in a script's functions to functions in the same file or
+    in another catalogued file (through its imports)."""
+
+    def __init__(self, cat: Catalogue):
+        self.cat = cat
+        self.assets = {k: a for k, a in _assets(cat).items() if a["kind"] in CODE_KINDS and a["status"] == "active"}
+        self.modules: dict[str, str] = {}
+        for k, a in self.assets.items():
+            for name in a["attrs"].get("modules", []):
+                self.modules.setdefault(name, k)
+
+    def functions(self, key: str) -> dict[str, dict]:
+        return (self.assets.get(key) or {}).get("attrs", {}).get("function_info") or {}
+
+    def resolve(self, key: str, call: str, scope: str | None = None) -> tuple:
+        """("local", key, fn) | ("lib", key, fn) | ("other", call)."""
+        info = self.functions(key)
+        if scope and scope != "(script)":
+            # inner() inside outer -> outer.inner; self.m() inside Class.x -> Class.m
+            parts = scope.split(".")
+            for i in range(len(parts), 0, -1):
+                cand = ".".join([*parts[:i], call])
+                if cand in info and cand != scope:
+                    return ("local", key, cand)
+            if call.startswith(("self.", "cls.")) and len(parts) > 1:
+                cand = ".".join([*parts[:-1], call.split(".", 1)[1]])
+                if cand in info:
+                    return ("local", key, cand)
+        if call in info:
+            return ("local", key, call)
+        attrs = self.assets.get(key, {}).get("attrs", {})
+        head, _, rest = call.partition(".")
+        target = (attrs.get("import_map") or {}).get(head)
+        if target:
+            level = len(target) - len(target.lstrip("."))
+            own = (attrs.get("modules") or [""])[0]
+            absolute = _absolute(target.lstrip("."), level, own, key.endswith("/__init__.py")) if level else target
+            if absolute:
+                dotted = f"{absolute}.{rest}" if rest else absolute
+                parts = dotted.split(".")
+                for i in range(len(parts) - 1, 0, -1):
+                    mod_key = self.modules.get(".".join(parts[:i]))
+                    if mod_key:
+                        return ("lib", mod_key, ".".join(parts[i:]))
+        return ("other", call)
+
+    def calls(self, key: str, fn: str) -> list[tuple]:
+        return [self.resolve(key, c, fn) for c in self.functions(key).get(fn, {}).get("calls", [])]
+
+    def callers(self, key: str, fn: str) -> list[tuple[str, str]]:
+        """(key, function) pairs that call key::fn, in this file and in files that import it."""
+        importers = {key} | {r["src_key"] for r in self.cat.conn.execute(
+            "SELECT src_key FROM links WHERE relation = 'imports' AND dst_key = ?", (key,))}
+        out = []
+        for k in sorted(importers):
+            for name in self.functions(k):
+                if (k, name) != (key, fn) and any(r[1:] == (key, fn) for r in self.calls(k, name) if r[0] != "other"):
+                    out.append((k, name))
+        return out
+
+    def data(self, key: str, fn: str) -> list[dict]:
+        refs = (self.assets.get(key) or {}).get("attrs", {}).get("function_refs", {}).get(fn, [])
+        out = []
+        for relation, ref in refs:
+            dst = _resolve_ref(self.cat, key, relation, ref)
+            out.append({"relation": relation, "ref": ref, "key": dst})
+        return out
+
+
+def _fn_id(key: str, fn: str) -> str:
+    return f"{key}::{fn}"
+
+
+def function_graph(cat: Catalogue, key: str, focus: str | None = None, *, depth: int = 2,
+                   include_data: bool = True, include_other: bool = False,
+                   index: CodeIndex | None = None) -> Graph:
+    """Call graph inside one script.
+
+    focus=None: the whole script, every function in it and the library functions it calls.
+    focus="fn": that function, what it calls down to `depth` levels (following calls into
+    other catalogued files too), and what calls it.
+    """
+    idx = index or CodeIndex(cat)
+    assets = _assets(cat)
+    g = Graph()
+
+    def node(k: str, fn: str, *, is_focus: bool = False) -> str:
+        nid = _fn_id(k, fn)
+        a = idx.assets.get(k) or assets.get(k) or {"name": k, "source": ""}
+        group = a["name"] if k == key else f"{a['source']}: {a['name']}"
+        kind = "focus" if is_focus else ("function" if k == key else "libfn")
+        if nid not in g.nodes or is_focus:
+            g.nodes[nid] = {"label": fn, "kind": kind, "group": group}
+        return nid
+
+    def add_data(k: str, fn: str, nid: str) -> None:
+        for d in idx.data(k, fn):
+            dk = d["key"] or d["ref"]
+            da = assets.get(dk)
+            label = da["name"] if da else d["ref"].split(":", 1)[-1]
+            is_file = (da["kind"] == "data_file") if da else d["ref"].startswith("file:")
+            g.nodes[dk] = {"label": label, "kind": "file" if is_file else "table", "group": None}
+            g.edges[(nid, dk, d["relation"])]
+
+    def expand(k: str, fn: str, levels: int, seen: set) -> None:
+        nid = _fn_id(k, fn)
+        if include_data:
+            add_data(k, fn, nid)
+        if (k, fn) in seen:
+            return
+        seen.add((k, fn))
+        for r in idx.calls(k, fn):
+            if r[0] == "other":
+                name = r[1]
+                if include_other and name.split(".")[0] not in _BUILTINS:
+                    g.nodes[f"ext:{name}"] = {"label": name, "kind": "external", "group": None}
+                    g.edges[(nid, f"ext:{name}", "call")]
+                continue
+            _, tk, tfn = r
+            tid = node(tk, tfn)
+            g.edges[(nid, tid, "call")]
+            if levels > 1:
+                expand(tk, tfn, levels - 1, seen)
+            elif include_data:
+                add_data(tk, tfn, tid)
+
+    if focus is None:
+        seen: set = set()
+        for fn in idx.functions(key):
+            node(key, fn)
+        for fn in idx.functions(key):
+            expand(key, fn, 1, seen)
+    else:
+        fid = node(key, focus, is_focus=True)
+        expand(key, focus, max(depth, 1), set())
+        for ck, cfn in idx.callers(key, focus):
+            g.edges[(node(ck, cfn), fid, "call")]
+        g.nodes[fid]["kind"] = "focus"
+    return g

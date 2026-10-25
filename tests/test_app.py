@@ -125,3 +125,42 @@ def test_code_map_page_renders(app, catalogue):
     app.selectbox[0].set_value("forecasting").run()
     assert not app.exception
     assert any(b.label.startswith("⬇️ Mermaid") for b in app.get("download_button"))
+
+
+def test_script_page_zooms_into_a_function(app, catalogue):
+    key = "py://forecasting/src/features.py"
+    app.query_params["asset"] = key
+    app.run()
+    assert not app.exception
+    zoom = [s for s in app.selectbox if s.label == "Zoom"][0]
+    assert zoom.value == "(whole script)"
+    assert any(d.value.shape[0] == 2 for d in app.dataframe)          # load and save
+    zoom.set_value("load").run()
+    assert not app.exception
+    assert app.query_params["fn"] in ("load", ["load"])
+    assert any("def load(engine)" in c.value for c in app.code)
+    assert any("dbo.SalesDaily" in b.label for b in app.button)        # the table load reads
+    [b for b in app.button if b.label.startswith("🔭 Zoom out")][0].click().run()
+    assert not app.exception
+    assert [s for s in app.selectbox if s.label == "Zoom"][0].value == "(whole script)"
+
+
+def test_script_page_opens_at_function_from_link(app):
+    app.query_params["asset"] = "py://forecasting/src/features.py"
+    app.query_params["fn"] = "save"
+    app.run()
+    assert not app.exception
+    assert [s for s in app.selectbox if s.label == "Zoom"][0].value == "save"
+
+
+def test_project_page_shows_environment(app, catalogue, project):
+    from pdcat.config import PythonSource
+    from pdcat.scan_python import scan_project
+
+    (project / "requirements.txt").write_text("pandas>=2\nopenpyxl\n")
+    scan_project(catalogue, PythonSource(name="forecasting", path=project))
+    app.query_params["asset"] = "py://forecasting"
+    app.run()
+    assert not app.exception
+    assert any(s.value == "Environment and libraries" for s in app.subheader)
+    assert any(t.label.startswith("Declared, not imported (1)") for t in app.tabs)

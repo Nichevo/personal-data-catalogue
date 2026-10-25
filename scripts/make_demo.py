@@ -98,20 +98,72 @@ def save(features, engine):
 TRAIN_PY = '''
 """Train the LightGBM forecast model and write the weekly forecast."""
 import joblib
+import lightgbm as lgb
 import pandas as pd
 from forecast_core.calendar import add_holidays
 from forecast_core.metrics import wape
 
-def train(engine):
+FEATURES = ["Units_lag1", "Units_lag4", "PromoFlag", "IsHoliday"]
+
+
+def train(engine, weeks_back: int = 104) -> lgb.LGBMRegressor:
+    """Fit the weekly model on the saved features plus the retail holiday calendar.
+
+    Reads the feature file written by features.py, so run that first. The fitted model
+    is saved to models/lgbm_weekly.pkl as well as returned.
+    """
     features = pd.read_parquet("outputs/weekly_features.parquet")
     holidays = add_holidays(features, engine)
-    model = fit(features, holidays)
+    model = fit(holidays, weeks_back)
     joblib.dump(model, "models/lgbm_weekly.pkl")
     return model
 
-def publish(forecast, engine, week):
+
+def fit(df: pd.DataFrame, weeks_back: int) -> lgb.LGBMRegressor:
+    """Train on the last `weeks_back` weeks, holding out the final 8 to check accuracy."""
+
+    def split(frame):
+        """Last 8 weeks are the hold-out set."""
+        cutoff = frame["WeekStart"].max() - pd.Timedelta(weeks=8)
+        return frame[frame["WeekStart"] <= cutoff], frame[frame["WeekStart"] > cutoff]
+
+    train_df, test_df = split(df.tail(weeks_back * 7))
+    model = lgb.LGBMRegressor(n_estimators=400).fit(train_df[FEATURES], train_df["Units"])
+    print("hold-out WAPE", wape(test_df["Units"], model.predict(test_df[FEATURES])))
+    return model
+
+
+def publish(forecast: pd.DataFrame, engine, week: str) -> None:
+    """Write the forecast to a CSV for the planners and append it to ml.ForecastOutput."""
     forecast.to_csv(f"outputs/forecast_{week}.csv", index=False)
     forecast.to_sql("ForecastOutput", engine, schema="ml", if_exists="append")
+
+
+if __name__ == "__main__":
+    publish(train(None).predict(None), None, "latest")
+'''
+
+REQUIREMENTS_TXT = '''
+pandas>=2.1
+lightgbm==4.3.0
+joblib
+sqlalchemy>=2.0
+openpyxl
+-e ../forecast-core
+'''
+
+ENVIRONMENT_YML = '''
+name: forecasting
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pandas>=2.1
+  - lightgbm=4.3
+  - pyodbc
+  - pip
+  - pip:
+      - joblib
 '''
 
 
@@ -125,6 +177,7 @@ LIB_FILES = {
             return pd.read_sql(f"SELECT * FROM {name}", engine)
 
         def store_lookup(engine):
+            """StoreId to Region for every store."""
             return pd.read_sql("SELECT StoreId, Region FROM dbo.Store", engine)
     ''',
     "common-utils/src/common_utils/files.py": '''
@@ -141,6 +194,7 @@ LIB_FILES = {
         from common_utils.db import store_lookup
 
         def add_holidays(df, engine):
+            """Join public holidays and the retail calendar onto the features, by store region."""
             hol = pd.read_sql("SELECT * FROM ref.Holidays", engine)
             cal = pd.read_sql("SELECT * FROM ref.Calendar", engine)
             return df.merge(hol).merge(store_lookup(engine))
@@ -149,6 +203,7 @@ LIB_FILES = {
         """Forecast accuracy metrics."""
 
         def wape(actual, forecast):
+            """Weighted absolute percentage error: total absolute error over total actual."""
             return abs(actual - forecast).sum() / actual.sum()
     ''',
 }
@@ -162,6 +217,11 @@ def main(out: Path) -> None:
     (project / "README.md").write_text("# Forecasting\n\nWeekly store-level sales forecast for the planning team.\n")
     (project / "src" / "features.py").write_text(textwrap.dedent(FEATURES_PY))
     (project / "src" / "train.py").write_text(textwrap.dedent(TRAIN_PY))
+    (project / "requirements.txt").write_text(textwrap.dedent(REQUIREMENTS_TXT).lstrip())
+    (project / "environment.yml").write_text(textwrap.dedent(ENVIRONMENT_YML).lstrip())
+    (out / "forecast-core").mkdir(exist_ok=True)
+    (out / "forecast-core" / "pyproject.toml").write_text(
+        '[project]\nname = "forecast-core"\nrequires-python = ">=3.10"\ndependencies = ["pandas>=1.5", "holidays"]\n')
     (project / "src" / "regions.py").write_text(textwrap.dedent('''
         """Regional roll-up report."""
         from common_utils.db import store_lookup

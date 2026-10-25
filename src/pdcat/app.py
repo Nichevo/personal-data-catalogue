@@ -40,11 +40,17 @@ def open_catalogue() -> Catalogue:
     return Catalogue(db_path())
 
 
-def go(key: str | None) -> None:
+def go(key: str | None, fn: str | None = None) -> None:
     if key:
         st.query_params["asset"] = key
     else:
         st.query_params.pop("asset", None)
+    if fn:
+        st.query_params["fn"] = fn
+        st.session_state[f"zoom-{key}"] = fn
+    else:
+        st.query_params.pop("fn", None)
+        st.session_state.pop(f"zoom-{key}", None)
 
 
 def kind_label(kind: str) -> str:
@@ -256,7 +262,11 @@ def detail(cat: Catalogue, key: str) -> None:
 
     lineage_section(cat, key, asset)
 
+    if asset["kind"] in ("script", "notebook") and attrs.get("function_info"):
+        functions_section(cat, key, asset)
+
     if asset["kind"] == "project":
+        environment_section(cat, asset)
         with st.expander("Code map: how this connects to your libraries and data"):
             diagram_block(cat, asset["source"], f"proj-{key}")
 
@@ -271,8 +281,8 @@ def detail(cat: Catalogue, key: str) -> None:
         for label, field in (("Imports", "imports"), ("Functions", "functions"), ("Classes", "classes")):
             if attrs.get(field):
                 st.markdown(f"**{label}:** " + ", ".join(f"`{x}`" for x in attrs[field]))
-        rest = {k: v for k, v in attrs.items()
-                if k not in ("definition", "imports", "functions", "classes") and v not in (None, "", [])}
+        hidden = ("definition", "imports", "functions", "classes", "function_info", "import_map", "environment")
+        rest = {k: v for k, v in attrs.items() if k not in hidden and v not in (None, "", [])}
         st.json(rest, expanded=False)
         st.caption(f"First seen {asset['first_seen'][:10]} · last seen {asset['last_seen'][:10]}")
 
@@ -293,6 +303,15 @@ def code_map_page(cat: Catalogue) -> None:
                           format_func=lambda s: s if s == "Everything" else f"{'📚' if roles[s] == 'library' else '📁'} {s}")
     project = None if choice == "Everything" else choice
     diagram_block(cat, project, "codemap")
+    scripts = cat.conn.execute(
+        "SELECT key, name, source FROM assets WHERE kind IN ('script', 'notebook') AND status = 'active' "
+        + ("AND source = ? " if project else "") + "ORDER BY source, name", (project,) if project else ()).fetchall()
+    if scripts:
+        c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+        target = c1.selectbox("Zoom into a script's functions", [s["key"] for s in scripts], index=None,
+                              placeholder="Pick a script…", key="codemap-zoom",
+                              format_func={s["key"]: f"{s['source']} / {s['name']}" for s in scripts}.get)
+        c2.button("🔍 Open", disabled=target is None, on_click=go, args=(target,), key="codemap-open")
 
     if project:
         rows = reached_data(cat, f"py://{project}")
@@ -305,6 +324,19 @@ def code_map_page(cat: Catalogue) -> None:
                                        for r in rows]), hide_index=True, width="stretch")
         else:
             st.caption("None found.")
+
+    from pdcat.envinfo import libraries_overview
+    st.subheader("Packages across projects")
+    overview = libraries_overview(cat)
+    if overview:
+        st.caption("Third-party packages each project declares (requirements.txt, environment.yml, pyproject.toml…) "
+                   "with the version asked for, plus packages imported without being declared. Spot projects "
+                   "pinned to different versions of the same package.")
+        st.dataframe(pd.DataFrame(overview), hide_index=True, width="stretch")
+        st.download_button("⬇️ Packages (.csv)", rows_to_csv(overview), "packages.csv", "text/csv",
+                           key="codemap-packages")
+    else:
+        st.caption("No third-party packages found.")
 
     st.subheader("Home-built libraries not catalogued yet")
     missing = uncatalogued_libraries(cat)
@@ -387,6 +419,198 @@ def diagram_block(cat: Catalogue, project: str | None, key: str) -> None:
     d2.download_button("⬇️ Graphviz (.dot)", dot, f"codemap-{name}.dot", "text/plain", key=f"{key}-dot")
     with d3.popover("Copy Mermaid"):
         st.code(mermaid, language=None)
+
+
+WHOLE = "(whole script)"
+
+
+def _first_line(text: str) -> str:
+    return (text or "").strip().split("\n\n")[0].replace("\n", " ")
+
+
+def _signature(fn: str, info: dict) -> str:
+    params = []
+    for p in info.get("params", []):
+        text = p["name"] + (f": {p['annotation']}" if p["annotation"] else "")
+        if p["default"]:
+            text += f" = {p['default']}" if p["annotation"] else f"={p['default']}"
+        params.append(text)
+    ret = f" -> {info['returns_annotation']}" if info.get("returns_annotation") else ""
+    deco = "".join(f"@{d}\n" for d in info.get("decorators", []))
+    prefix = "async def" if info.get("is_async") else "def"
+    return f"{deco}{prefix} {fn.rsplit('.', 1)[-1]}({', '.join(params)}){ret}"
+
+
+def functions_section(cat: Catalogue, key: str, asset: dict) -> None:
+    """Zoomable view of the functions inside one script: the whole script, or one
+    function with what it calls, what it returns and what calls it."""
+    from pdcat.codemap import CodeIndex, function_graph, to_dot, to_mermaid
+
+    info = asset["attrs"]["function_info"]
+    zoom_key, table_key = f"zoom-{key}", f"{key}-fntable"
+    if st.session_state.get(zoom_key) not in [WHOLE, *info]:
+        wanted = st.query_params.get("fn")
+        st.session_state[zoom_key] = wanted if wanted in info else WHOLE
+
+    def sync() -> None:
+        fn = st.session_state[zoom_key]
+        if fn == WHOLE:
+            st.query_params.pop("fn", None)
+        else:
+            st.query_params["fn"] = fn
+
+    def focus(fn: str) -> None:
+        st.session_state[zoom_key] = fn
+        st.session_state.pop(table_key, None)
+        sync()
+
+    def picked() -> None:
+        sel = st.session_state[table_key].selection.rows
+        if sel:
+            focus(list(info)[sel[0]])
+
+    st.subheader("Inside this script")
+    c1, c2, c3, c4 = st.columns([3, 2, 1.4, 1.4])
+    options = [WHOLE, *info]
+    fn = c1.selectbox("Zoom", options, key=zoom_key, on_change=sync,
+                      format_func=lambda f: "🔭 Whole script" if f == WHOLE else f"🔍 {f}")
+    depth = c2.slider("Levels of sub-functions", 1, 5, 2, key=f"{key}-depth", disabled=fn == WHOLE,
+                      help="How far to follow calls from the chosen function, into your libraries too.")
+    include_data = c3.checkbox("Tables and files", value=True, key=f"{key}-fndata")
+    include_other = c4.checkbox("Other calls", value=False, key=f"{key}-fnother",
+                                help="Calls into packages like pandas, shown as plain text.")
+    idx = CodeIndex(cat)
+    focus_fn = None if fn == WHOLE else fn
+    g = function_graph(cat, key, focus_fn, depth=depth, include_data=include_data,
+                       include_other=include_other, index=idx)
+    if g.nodes:
+        dot = to_dot(g)
+        st.graphviz_chart(dot, width="stretch")
+        st.caption("Blue boxes are functions in this file, purple ones are in your other files and libraries"
+                   + (", the yellow one is the function you zoomed into" if focus_fn else "")
+                   + ". Arrows point from caller to called; dashed arrows read data, red arrows write it.")
+        d1, d2, d3 = st.columns([1, 1, 2])
+        stem = Path(asset["name"]).stem + (f"-{focus_fn}" if focus_fn else "")
+        d1.download_button("⬇️ Mermaid", to_mermaid(g), f"{stem}.mmd", "text/plain", key=f"{key}-fnmmd")
+        d2.download_button("⬇️ Graphviz", dot, f"{stem}.dot", "text/plain", key=f"{key}-fndot")
+        if focus_fn:
+            d3.button("🔭 Zoom out to the whole script", key=f"{key}-zoomout", on_click=focus, args=(WHOLE,))
+        elif asset["parent"]:
+            d3.button("🔭 Zoom out to the whole project", key=f"{key}-toproject", on_click=go,
+                      args=(asset["parent"],))
+
+    if focus_fn is None:
+        rows = [{"function": name, "line": f.get("line"), "parameters": ", ".join(p["name"] for p in f["params"]),
+                 "returns": f.get("returns_annotation") or ("yields" if f.get("yields") else
+                                                              "; ".join(f.get("returns", [])[:2])),
+                 "calls": len(f.get("calls", [])), "what it does": _first_line(f.get("doc", ""))}
+                for name, f in info.items()]
+        st.caption("Pick a row to zoom into that function.")
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", on_select=picked,
+                     selection_mode="single-row", key=table_key)
+        return
+
+    f = info[focus_fn]
+    with st.container(border=True):
+        where = f"cell {f['cell']}, " if f.get("cell") else ""
+        st.markdown(f"**{focus_fn}** · {where}lines {f['line']}–{f['end_line']}")
+        if focus_fn not in ("(script)",) and not focus_fn.startswith("(cell"):
+            st.code(_signature(focus_fn, f), language="python")
+        if f.get("doc"):
+            st.markdown(f["doc"])
+        else:
+            st.caption("No docstring.")
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Calls**")
+            others = []
+            for i, r in enumerate(idx.calls(key, focus_fn)):
+                if r[0] == "local":
+                    st.button(f"🔍 {r[2]}", key=f"{key}-call-{i}", type="tertiary", on_click=focus, args=(r[2],),
+                              help=_first_line(info.get(r[2], {}).get("doc", "")) or None)
+                elif r[0] == "lib":
+                    target = idx.assets.get(r[1], {})
+                    doc = _first_line(idx.functions(r[1]).get(r[2], {}).get("doc", ""))
+                    st.button(f"📚 {r[2]} · {target.get('source', '')}/{target.get('name', '')}",
+                              key=f"{key}-call-{i}", type="tertiary", on_click=go, args=(r[1], r[2]),
+                              help=doc or None)
+                else:
+                    others.append(r[1])
+            if others:
+                st.caption("Other: " + ", ".join(f"`{o}`" for o in others))
+            if not f.get("calls"):
+                st.caption("Calls nothing.")
+        with right:
+            st.markdown("**Returns**")
+            if f.get("returns_annotation"):
+                st.caption(f"Declared type: `{f['returns_annotation']}`")
+            if f.get("yields"):
+                st.caption("Yields values (a generator).")
+            for r in f.get("returns", []):
+                st.code(r, language="python")
+            if not (f.get("returns") or f.get("yields")):
+                st.caption("Nothing (returns None).")
+            data = idx.data(key, focus_fn)
+            if data:
+                st.markdown("**Data**")
+                for i, d in enumerate(data):
+                    name = d["ref"].split(":", 1)[-1]
+                    st.button(f"{'📄' if d['ref'].startswith('file:') else '🗃️'} {d['relation']} {name}",
+                              key=f"{key}-data-{i}", type="tertiary", on_click=go, args=(d["key"] or d["ref"],))
+            callers = idx.callers(key, focus_fn)
+            st.markdown("**Called by**")
+            if not callers:
+                st.caption("Nothing found in your catalogued code.")
+            for i, (ck, cfn) in enumerate(callers):
+                if ck == key:
+                    st.button(f"🔍 {cfn}", key=f"{key}-caller-{i}", type="tertiary", on_click=focus, args=(cfn,))
+                else:
+                    a = idx.assets.get(ck, {})
+                    st.button(f"🐍 {cfn} · {a.get('source', '')}/{a.get('name', '')}", key=f"{key}-caller-{i}",
+                              type="tertiary", on_click=go, args=(ck, cfn))
+
+
+def environment_section(cat: Catalogue, asset: dict) -> None:
+    from pdcat.envinfo import project_environment
+
+    env = project_environment(cat, asset["source"])
+    st.subheader("Environment and libraries")
+    if env["files"]:
+        st.caption("Read from " + ", ".join(f"`{f}`" for f in env["files"]))
+    else:
+        st.caption("No requirements.txt, environment.yml, pyproject.toml, setup.py or Pipfile found, "
+                   "so everything below comes from the imports in the code.")
+    facts = [f"Python {p['version']} ({p['file']})" for p in env["python"]]
+    facts += [f"conda env **{c['name'] or '?'}**" + (f" · channels {', '.join(c['channels'])}" if c["channels"] else "")
+              for c in env["conda_envs"]]
+    facts += [f"local install `{e}`" for e in env["editable"]]
+    if facts:
+        st.markdown("  \n".join(facts))
+    tabs = st.tabs([f"Declared ({len(env['deps'])})", f"Imported, not declared ({len(env['undeclared'])})",
+                    f"Declared, not imported ({len(env['unused'])})"])
+    with tabs[0]:
+        if env["deps"]:
+            st.dataframe(pd.DataFrame([{"package": d["name"], "version": d["version"], "from": d["file"],
+                                        "via": d["manager"], "group": d.get("group", "")} for d in env["deps"]]),
+                         hide_index=True, width="stretch")
+        else:
+            st.caption("Nothing declared.")
+    with tabs[1]:
+        if env["undeclared"]:
+            st.caption("Third-party imports with no matching entry in the environment files. Worth adding so the "
+                       "project can be rebuilt.")
+            st.dataframe(pd.DataFrame(env["undeclared"]).rename(columns={"examples": "imported in"}),
+                         hide_index=True, width="stretch")
+        else:
+            st.caption("Every third-party import is declared.")
+    with tabs[2]:
+        if env["unused"]:
+            st.caption("Declared but never imported in the code (tools like pytest are left out). Could be a "
+                       "leftover, or a plug-in that's loaded indirectly.")
+            st.dataframe(pd.DataFrame([{"package": d["name"], "version": d["version"], "from": d["file"]}
+                                       for d in env["unused"]]), hide_index=True, width="stretch")
+        else:
+            st.caption("Nothing unused.")
 
 
 def review_page(cat: Catalogue) -> None:
