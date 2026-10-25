@@ -46,10 +46,12 @@ def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
     with cat.scan(src.name):
         readme = _readme_summary(root)
         cat.upsert_asset(project_key, "project", src.name, src.name, description=readme,
-                         attrs={"path": str(root)})
+                         attrs={"path": str(root), "role": src.role})
         for path in sorted(_iter_files(root, skip)):
             rel = path.relative_to(root).as_posix()
             found = scan_file(path)
+            if path.suffix.lower() == ".py":
+                found.attrs["modules"] = module_names(rel, root)
             kind = {".py": "script", ".ipynb": "notebook", ".sql": "sql_script"}[path.suffix.lower()]
             key = f"{project_key}/{rel}"
             cat.upsert_asset(key, kind, rel, src.name, parent=project_key,
@@ -112,7 +114,7 @@ def _scan_notebook(text: str) -> Found:
         found.attrs["parse_error"] = f"Not valid notebook JSON: {e}"
         return found
     cells = nb.get("cells", [])
-    funcs, imports, errors = [], set(), []
+    funcs, imports, errors, import_details = [], set(), [], []
     for i, cell in enumerate(cells, start=1):
         source = "".join(cell.get("source", []))
         if cell.get("cell_type") == "markdown" and found.description is None and source.strip():
@@ -131,8 +133,10 @@ def _scan_notebook(text: str) -> Found:
         found.refs += [(rel, ref, 0) for rel, ref, _ in cell_found.refs]
         funcs += cell_found.attrs.get("functions", [])
         imports.update(cell_found.attrs.get("imports", []))
+        import_details += cell_found.attrs.get("import_details", [])
     found.refs = list(dict.fromkeys(found.refs))
-    found.attrs.update({"cells": len(cells), "functions": funcs, "imports": sorted(imports)})
+    found.attrs.update({"cells": len(cells), "functions": funcs, "imports": sorted(imports),
+                        "import_details": import_details})
     if errors:
         found.attrs["parse_error"] = "Could not parse " + ", ".join(errors)
     return found
@@ -162,22 +166,115 @@ def scan_python_source(text: str) -> Found:
     # Docstrings are prose, and the literal pieces inside an f-string are handled with the f-string.
     skip = _docstring_nodes(tree) | {id(v) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for v in n.values}
     consts = _module_constants(tree)
+    found.refs = [(rel, ref, line) for (rel, ref), line in _collect_refs(tree, skip, consts).items()]
+
+    # Which function touches which data, so a project calling one library function
+    # can be traced to exactly the tables and files that function uses.
+    function_refs = {}
+    for name, node in _functions(tree):
+        refs = sorted({(rel, ref) for (rel, ref) in _collect_refs(node, skip, consts)})
+        if refs:
+            function_refs[name] = [list(r) for r in refs]
+    if function_refs:
+        found.attrs["function_refs"] = function_refs
+    found.attrs["import_details"] = _import_details(tree)
+    paths = _sys_path_additions(tree, consts)
+    if paths:
+        found.attrs["sys_path"] = paths
+    return found
+
+
+def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str]) -> dict[tuple[str, str], int]:
     refs: dict[tuple[str, str], int] = {}
-
-    def add(relation: str, ref: str, line: int) -> None:
-        refs.setdefault((relation, ref), line)
-
-    for node in ast.walk(tree):
+    for node in ast.walk(root):
         if isinstance(node, (ast.Constant, ast.JoinedStr)) and id(node) not in skip:
             s = _string_value(node, consts)
             if s and looks_like_sql(s):
                 for r in extract_refs(s):
-                    add(r.relation, f"table:{r.name}", node.lineno)
+                    refs.setdefault((r.relation, f"table:{r.name}"), node.lineno)
         elif isinstance(node, ast.Call):
             for relation, ref in _call_refs(node):
-                add(relation, ref, node.lineno)
-    found.refs = [(rel, ref, line) for (rel, ref), line in refs.items()]
-    return found
+                refs.setdefault((relation, ref), node.lineno)
+    return refs
+
+
+def _functions(tree: ast.Module):
+    """Top-level functions and class methods, as ("name", node) / ("Class.method", node)."""
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node.name, node
+        elif isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    yield f"{node.name}.{item.name}", item
+
+
+def _import_details(tree: ast.Module) -> list[dict]:
+    """Every import with the names used from it.
+
+    `from lib.io import load` records "load"; for `import lib.io as lio` the
+    attributes called on it (lio.load(...)) are recorded instead.
+    """
+    details = []
+    aliases: dict[str, dict] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                d = {"module": a.name, "names": [], "level": 0, "line": node.lineno}
+                details.append(d)
+                aliases[a.asname or a.name] = d
+        elif isinstance(node, ast.ImportFrom):
+            details.append({"module": node.module or "", "names": [a.name for a in node.names if a.name != "*"],
+                            "level": node.level, "line": node.lineno})
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            # lio.load or lib.io.load → the dotted base must be an imported name
+            parts, base = [node.attr], node.value
+            while isinstance(base, ast.Attribute):
+                parts.append(base.attr)
+                base = base.value
+            if isinstance(base, ast.Name):
+                dotted = ".".join([base.id, *reversed(parts[1:])])
+                d = aliases.get(dotted)
+                if d is not None and parts[0] not in d["names"]:
+                    d["names"].append(parts[0])
+    for d in details:
+        d["names"] = sorted(d["names"])
+    return details
+
+
+def _sys_path_additions(tree: ast.Module, consts: dict[str, str]) -> list[str]:
+    """Folders added with sys.path.append/insert: a common way to use a home-built library."""
+    paths = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("append", "insert") and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "path" and isinstance(node.func.value.value, ast.Name)
+                and node.func.value.value.id == "sys" and node.args):
+            value = _string_value(node.args[-1], consts)
+            if value and "{" not in value:
+                paths.append(value)
+    return paths
+
+
+def module_names(rel: str, root: Path) -> list[str]:
+    """Import names a file can be reached by: the package-aware name (folders with
+    __init__.py), plus its path from the project root with any leading 'src.' dropped."""
+    parts = rel[:-3].split("/") if rel.endswith(".py") else []
+    if not parts:
+        return []
+    names = []
+    # Walk up while the parent folder is a package.
+    i = len(parts) - 1
+    while i > 0 and (root / "/".join(parts[:i]) / "__init__.py").exists():
+        i -= 1
+    for candidate in (parts[i:], parts[1:] if parts[0] == "src" else parts):
+        name = ".".join(candidate)
+        if name.endswith(".__init__"):
+            name = name[: -len(".__init__")]
+        if name and name != "__init__" and name not in names:
+            names.append(name)
+    return names
 
 
 def _call_refs(call: ast.Call) -> list[tuple[str, str]]:

@@ -34,6 +34,12 @@ Comment on an item (saved as a note), mark it done, snooze it or dismiss it:
 
 ![Issue hotspots page](docs/screenshots/hotspots.png)
 
+**Code map**: how your projects and home-built libraries connect, which library
+functions each one calls, and the tables and files they reach. Download as Mermaid
+(pastes into GitHub, Azure DevOps or Confluence) or Graphviz:
+
+![Code map page](docs/screenshots/codemap.png)
+
 **Data folders**: point it at any folder of CSV/Parquet files:
 
 ![Data folders page](docs/screenshots/folders.png)
@@ -77,6 +83,14 @@ Comment on an item (saved as a note), mark it done, snooze it or dismiss it:
   and problems that get fixed drop off by themselves. Also `pdcat review` in a terminal.
 - **Issue hotspots**: schemas, folders and items ranked by open data issues, automatic
   warnings, disappearances and missing documentation.
+- **Code map of your projects and home-built libraries**: every import is matched to
+  the file that provides it, across projects and libraries (including relative imports),
+  and labelled with the functions used. It records which tables and files each *function*
+  touches, so "Data reached through libraries" shows exactly what a project ends up
+  reading or writing via `common_utils.load_sales()` and further down the chain. Flow
+  diagrams at project or file level, on the Code map page and on each project's page.
+  Libraries you haven't added yet are spotted from editable installs and `sys.path`
+  additions and can be added with one click; `pdcat diagram` writes Mermaid or DOT.
 - **Search** across names, columns, descriptions, notes and tags.
 - **Needs notes** view: undocumented tables, the ones your code uses most first.
 - **Export everything** (tables, columns, links and notes) as CSV or JSON, from the
@@ -115,6 +129,11 @@ name = "forecasting"
 path = "C:/Users/you/code/forecasting"
 exclude = ["data", "outputs"]
 default_database = "warehouse/YourDatabase"   # where bare table names like "Sales" live
+
+[[python]]                         # a home-built library your projects import
+name = "common-utils"
+path = "C:/Users/you/code/common-utils"
+role = "library"
 ```
 
 If your server uses Azure AD sign-in instead of Windows login, add
@@ -129,6 +148,7 @@ pdcat ui                        # opens the catalogue in your browser
 pdcat profile dbo.SalesDaily    # measure value ranges of a table (read-only)
 pdcat profile --used            # ...or of every table your code or pasted SQL uses
 pdcat review --used             # what needs your attention, starting with what your code uses
+pdcat diagram --project forecasting --level projects --out map.mmd   # flow diagram as Mermaid
 pdcat search "store sales"      # quick search from the terminal
 pdcat export --format csv       # writes assets/columns/links/notes CSVs to .\catalogue-export
 pdcat export --format json --out C:\temp\catalogue

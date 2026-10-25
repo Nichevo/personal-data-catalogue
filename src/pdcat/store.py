@@ -99,6 +99,13 @@ CREATE TABLE IF NOT EXISTS review_tasks (
 );
 CREATE INDEX IF NOT EXISTS ix_review_asset ON review_tasks(asset_key);
 
+-- Home-built libraries added from the app (config libraries live in config.toml).
+CREATE TABLE IF NOT EXISTS libraries (
+    name     TEXT PRIMARY KEY,
+    path     TEXT NOT NULL,
+    added_at TEXT NOT NULL
+);
+
 -- Folders of CSV/Parquet files added from the app (config folders live in config.toml).
 CREATE TABLE IF NOT EXISTS folders (
     name      TEXT PRIMARY KEY,
@@ -195,6 +202,8 @@ class Catalogue:
                 (source, started, now(), json.dumps(counts)),
             )
         self.resolve_refs()
+        from .codemap import resolve_imports
+        resolve_imports(self)
         self.rebuild_search()
 
     def upsert_asset(self, key: str, kind: str, name: str, source: str, *, parent: str | None = None,
@@ -527,7 +536,22 @@ class Catalogue:
             self.conn.execute("DELETE FROM links WHERE source = ?", (name,))
             self.conn.execute("DELETE FROM assets WHERE source = ?", (name,))
         self.resolve_refs()
+        from .codemap import resolve_imports
+        resolve_imports(self)
         self.rebuild_search()
+
+    def add_library(self, name: str, path: str) -> None:
+        with self.conn:
+            self.conn.execute("INSERT INTO libraries (name, path, added_at) VALUES (?, ?, ?) "
+                              "ON CONFLICT(name) DO UPDATE SET path = excluded.path", (name, path, now()))
+
+    def libraries(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM libraries ORDER BY name").fetchall()
+
+    def remove_library(self, name: str) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM libraries WHERE name = ?", (name,))
+        self.remove_folder(name)  # same clean-up: forget everything scanned from it
 
     def databases(self) -> list[str]:
         """Scanned databases as "<source>/<db>", for choosing where pasted SQL runs."""

@@ -116,3 +116,12 @@ def test_hotspots_page_renders(app):
     app.sidebar.radio[0].set_value("Issue hotspots").run()
     assert not app.exception
     assert len(app.dataframe) == 1
+
+
+def test_code_map_page_renders(app, catalogue):
+    app.run()
+    app.sidebar.radio[0].set_value("Code map").run()
+    assert not app.exception
+    app.selectbox[0].set_value("forecasting").run()
+    assert not app.exception
+    assert any(b.label.startswith("⬇️ Mermaid") for b in app.get("download_button"))

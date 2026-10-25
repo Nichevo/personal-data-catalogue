@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .config import DEFAULT_HOME, EXAMPLE_CONFIG, find_config, load_config
+from .config import DEFAULT_HOME, EXAMPLE_CONFIG, PythonSource, find_config, load_config
 from .store import Catalogue
 
 
@@ -29,7 +29,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     cfg = load_config(find_config(args.config))
     wanted = set(args.source or [])
-    unknown = wanted - set(cfg.source_names()) - {r["name"] for r in Catalogue(cfg.db_path).folders()}
+    _cat = Catalogue(cfg.db_path)
+    unknown = wanted - set(cfg.source_names()) - {r["name"] for r in _cat.folders()} - {r["name"] for r in _cat.libraries()}
+    _cat.close()
     if unknown:
         print(f"Unknown source(s): {', '.join(sorted(unknown))}. Known: {', '.join(cfg.source_names())}")
         return 2
@@ -37,11 +39,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
     cat = Catalogue(cfg.db_path)
     failures = 0
     app_folders = [r for r in cat.folders() if r["name"] not in cfg.source_names()]
+    app_libraries = [PythonSource(name=r["name"], path=Path(r["path"]), role="library", data_files=False)
+                     for r in cat.libraries() if r["name"] not in cfg.source_names()]
     # SQL Server first, so table names in code can be matched straight away.
     jobs = [(s.name, lambda s=s: scan_server(cat, s)) for s in cfg.sqlserver]
     jobs += [(f.name, lambda f=f: scan_folder(cat, f.name, f.path, f.recursive, f.max_rows)) for f in cfg.folders]
     jobs += [(r["name"], lambda r=r: scan_folder(cat, r["name"], r["path"], bool(r["recursive"]))) for r in app_folders]
-    jobs += [(p.name, lambda p=p: scan_project(cat, p)) for p in cfg.python]  # last, so file links can match
+    jobs += [(p.name, lambda p=p: scan_project(cat, p)) for p in [*app_libraries, *cfg.python]]  # last, so file links can match
     for name, run in jobs:
         if wanted and name not in wanted:
             continue
@@ -59,6 +63,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
     review = refresh_tasks(cat)
     print(f"Review list: {review['open']} open ({review['new']} new, {review['closed']} closed automatically). "
           "See 'To review' in the app or run `pdcat review`.")
+    from .codemap import uncatalogued_libraries
+
+    for lib in uncatalogued_libraries(cat):
+        if lib["path"]:
+            print(f"Home-built library '{lib['name']}' (used by {lib['used_by']} file(s)) isn't catalogued. "
+                  f"It looks like it lives in {lib['path']} ({lib['how']}). Add it on the Code map page "
+                  "or as a [[python]] block with role = \"library\".")
     unresolved = cat.unresolved_refs()
     if unresolved:
         print(f"{len(unresolved)} table name(s) in code did not match a scanned table "
@@ -123,6 +134,22 @@ def cmd_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_diagram(args: argparse.Namespace) -> int:
+    from .codemap import build_graph, to_dot, to_mermaid
+
+    cfg = load_config(find_config(args.config))
+    cat = Catalogue(cfg.db_path)
+    g = build_graph(cat, args.project, level=args.level, include_data=not args.no_data)
+    text = to_mermaid(g) if args.format == "mermaid" else to_dot(g)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"Wrote {args.out} ({len(g.nodes)} nodes, {len(g.edges)} links)")
+    else:
+        print(text)
+    cat.close()
+    return 0
+
+
 def cmd_search(args: argparse.Namespace) -> int:
     cfg = load_config(find_config(args.config))
     cat = Catalogue(cfg.db_path)
@@ -183,6 +210,14 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--used", action="store_true", help="only items your code uses")
     r.add_argument("--limit", type=int, default=30)
     r.set_defaults(fn=cmd_review)
+
+    d = sub.add_parser("diagram", help="flow diagram of how your projects, libraries and data connect")
+    d.add_argument("--project", help="start from this project or library (default: everything)")
+    d.add_argument("--level", choices=["modules", "projects"], default="modules")
+    d.add_argument("--no-data", action="store_true", help="code only, without tables and files")
+    d.add_argument("--format", choices=["mermaid", "dot"], default="mermaid")
+    d.add_argument("--out", help="file to write (default: print)")
+    d.set_defaults(fn=cmd_diagram)
 
     q = sub.add_parser("search", help="search the catalogue from the terminal")
     q.add_argument("text")

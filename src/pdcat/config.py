@@ -44,6 +44,14 @@ max_rows = 200000
 # written as "<sqlserver name>/<database>". Helps match "FROM Sales" to the right table.
 default_database = "warehouse/YourDatabase"
 
+# Home-built libraries your projects import: add them like projects with
+# role = "library" (or from the "Code map" page in the app), and the catalogue
+# links projects to the library functions they call.
+# [[python]]
+# name = "common-utils"
+# path = "C:/Users/you/code/common-utils"
+# role = "library"
+
 # Extra folders of CSV / Parquet files to catalogue. You can also add folders
 # from the "Data folders" page in the app.
 # [[folder]]
@@ -72,6 +80,7 @@ class PythonSource:
     default_database: str | None = None
     data_files: bool = True
     max_rows: int = 200_000
+    role: str = "project"  # or "library" for a home-built package other projects import
 
 
 @dataclass
@@ -136,6 +145,7 @@ def load_config(path: Path) -> Config:
             default_database=item.get("default_database"),
             data_files=item.get("data_files", True),
             max_rows=int(item.get("max_rows", 200_000)),
+            role=item.get("role", "project"),
         ))
 
     folders = [FolderSource(name=item["name"], path=Path(item["path"]).expanduser(),
