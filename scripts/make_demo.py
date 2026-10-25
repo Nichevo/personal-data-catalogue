@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from pdcat.config import PythonSource, SqlServerSource  # noqa: E402
 from pdcat.scan_files import scan_folder  # noqa: E402
 from pdcat.scan_python import scan_project  # noqa: E402
+from pdcat.review import refresh_tasks  # noqa: E402
 from pdcat.scan_sqlserver import ingest  # noqa: E402
 from pdcat.store import Catalogue  # noqa: E402
 
@@ -27,7 +28,7 @@ SERVER = SqlServerSource(name="warehouse", server="DEMO-SQL01", databases=["Sale
 
 def table(schema, name, rows, description=None, kind="U ", definition=None):
     return {"schema_name": schema, "object_name": name, "object_type": kind, "row_count": rows,
-            "description": description, "definition": definition}
+            "description": description, "definition": definition, "modify_date": "2026-06-01 02:00:00"}
 
 
 def col(schema, obj, name, i, type_name, nullable=False, description=None, length=0, precision=0, scale=0):
@@ -146,6 +147,12 @@ def main(out: Path) -> None:
     cat = Catalogue(db)
     with cat.scan(SERVER.name):
         ingest(cat, SERVER, "SalesDW", FAKE_DB)
+    # A second scan a while later: one table changed, one appeared.
+    later = {"objects": [dict(o) for o in FAKE_DB["objects"]], "columns": FAKE_DB["columns"]}
+    later["objects"][0]["modify_date"] = "2026-10-20 06:12:00"
+    later["objects"].append(table("dbo", "PromoCalendar", 1_250))
+    with cat.scan(SERVER.name):
+        ingest(cat, SERVER, "SalesDW", later)
     cat.add_folder("extracts", str(extracts))
     scan_folder(cat, "extracts", extracts)
     scan_project(cat, PythonSource(name="forecasting", path=project, default_database="warehouse/SalesDW"))
@@ -180,6 +187,19 @@ def main(out: Path) -> None:
                      "WHERE s.SaleDate >= '2026-01-01'\nGROUP BY st.Region, DATEPART(week, s.SaleDate)",
                      description="Quick check that the forecast totals line up with actuals by region.",
                      tags="forecasting, check", database="warehouse/SalesDW")
+    cat.add_note("sql://warehouse/salesdw/ml.forecastoutput#ForecastUnits",
+                 "Run 212 wrote duplicate rows for 30 stores.", "dq", note_type="issue")
+    cat.save_profile("sql://warehouse/salesdw/ml.forecastoutput", [
+        {"name": "RunId", "data_type": "int", "rows": 1_480_000, "nulls": 0, "distinct": 12, "min": 201, "max": 212},
+        {"name": "WeekStart", "data_type": "date", "rows": 1_480_000, "nulls": 0, "distinct": 26,
+         "min": "2026-05-04", "max": "2099-12-28"},
+        {"name": "StoreId", "data_type": "int", "rows": 1_480_000, "nulls": 0, "distinct": 412, "min": 1, "max": 412},
+        {"name": "ProductId", "data_type": "int", "rows": 1_480_000, "nulls": 0, "distinct": 9_870, "min": 1000,
+         "max": 10870},
+        {"name": "ForecastUnits", "data_type": "decimal(18,2)", "rows": 1_480_000, "nulls": 820_000, "distinct": 5_200,
+         "min": 0, "max": 3_100},
+    ], "whole table for counts and ranges; mean and top values from first 10,000 rows")
+    refresh_tasks(cat)
     cat.close()
     print(f"Demo catalogue: {db}")
 
