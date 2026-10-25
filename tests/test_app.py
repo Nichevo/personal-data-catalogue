@@ -1,0 +1,94 @@
+"""Smoke tests that drive the Streamlit page headlessly."""
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("streamlit")
+from streamlit.testing.v1 import AppTest  # noqa: E402
+
+APP = str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py")
+SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
+
+
+@pytest.fixture
+def app(catalogue, monkeypatch):
+    monkeypatch.setenv("PDCAT_DB", str(catalogue.path))
+    return AppTest.from_file(APP, default_timeout=10)
+
+
+def test_search_page_lists_results(app):
+    app.run()
+    assert not app.exception
+    app.text_input[0].input("sales").run()
+    labels = [b.label for b in app.button]
+    assert any("dbo.SalesDaily" in label for label in labels)
+
+
+def test_detail_page_add_note(app, catalogue):
+    app.query_params["asset"] = SALES
+    app.run()
+    assert not app.exception
+    assert app.title[0].value.endswith("dbo.SalesDaily")
+    area = [t for t in app.text_area if t.label == "Add a note"][0]
+    area.input("Late on Mondays.")
+    [b for b in app.button if b.label == "Add note"][0].click().run()
+    assert not app.exception
+    assert [n["body"] for n in catalogue.notes(SALES)] == ["Late on Mondays."]
+
+
+def test_other_views_render(app):
+    app.run()
+    for view in ["Needs notes", "Recent notes", "Unmatched tables"]:
+        app.sidebar.radio[0].set_value(view).run()
+        assert not app.exception, view
+
+
+def test_add_sql_page_saves_and_opens_snippet(app, catalogue):
+    app.run()
+    app.sidebar.radio[0].set_value("Add SQL").run()
+    assert not app.exception
+    app.text_input[0].input("Store regions")
+    [t for t in app.text_area if t.label == "SQL"][0].input("SELECT Region FROM dbo.Store")
+    [b for b in app.button if b.label == "Save SQL"][0].click().run()
+    assert not app.exception
+    key = app.query_params["asset"]
+    key = key[0] if isinstance(key, list) else key
+    assert catalogue.get_asset(key)["name"] == "Store regions"
+    assert any("dbo.Store" in b.label for b in app.button)  # detail page shows the linked table
+
+
+def test_data_folder_page_adds_and_scans(app, catalogue, tmp_path):
+    import pandas as pd
+
+    folder = tmp_path / "extracts"
+    folder.mkdir()
+    pd.DataFrame({"StoreId": [1, 2], "Units": [3.0, 4.0]}).to_csv(folder / "sales.csv", index=False)
+    app.run()
+    app.sidebar.radio[0].set_value("Data folders").run()
+    [t for t in app.text_input if t.label == "Folder path"][0].input(f'"{folder}"')
+    [t for t in app.text_input if t.label == "Short name"][0].input("extracts")
+    [b for b in app.button if b.label == "Add and scan"][0].click().run()
+    assert not app.exception
+    assert catalogue.get_asset("files://extracts/sales.csv")["attrs"]["row_count"] == 2
+
+    # The file page shows its profile and can be compared with the SQL table.
+    catalogue.save_profile(SALES, [{"name": "StoreId", "rows": 1200, "nulls": 0, "min": 1, "max": 40},
+                                   {"name": "Units", "rows": 1200, "nulls": 5, "min": 0, "max": 99}], "test")
+    app.query_params["asset"] = "files://extracts/sales.csv"
+    app.run()
+    assert not app.exception
+    assert any("Compare with" in e.label for e in app.expander)
+    assert len(app.dataframe) >= 2  # profile + comparison
+
+
+def test_issue_note_shows_in_data_issues(app, catalogue):
+    app.query_params["asset"] = SALES
+    app.run()
+    type_radio = [r for r in app.radio if r.label == "Type"][-1]
+    type_radio.set_value("issue")
+    [t for t in app.text_area if t.label == "Add a note"][0].input("Duplicate rows for 2026-03-01.")
+    [b for b in app.button if b.label == "Add note"][0].click().run()
+    assert not app.exception
+    assert catalogue.open_issues()[0]["body"] == "Duplicate rows for 2026-03-01."
+    [b for b in app.button if b.label == "Mark resolved"][0].click().run()
+    assert not app.exception and catalogue.open_issues() == []
