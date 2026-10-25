@@ -12,6 +12,7 @@ dependencies = [
     "streamlit>=1.46",
     "pandas>=2.0",
     "pyodbc>=5.0",
+    "pyarrow>=14",
 ]
 
 [project.optional-dependencies]
