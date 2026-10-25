@@ -97,3 +97,16 @@ def test_scan_records_environment(catalogue, project):
     assert {d["name"] for d in env["unused"]} == {"lightgbm", "joblib", "sqlalchemy"}
     rows = {r["package"]: r for r in libraries_overview(catalogue)}
     assert rows["pandas"]["forecasting"] == ">=2.1"
+
+
+def test_conda_environment_file_matches_pyproject():
+    """environment.yml must install everything pyproject.toml needs, so `pip install -e . --no-deps` works."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    conda = parse_conda((root / "environment.yml").read_text(), "environment.yml")
+    project = parse_pyproject((root / "pyproject.toml").read_text(), "pyproject.toml")
+    in_conda = {envinfo.normalise(d["name"]) for d in conda["deps"]}
+    needed = {envinfo.normalise(d["name"]) for d in project["deps"]}
+    assert needed <= in_conda, needed - in_conda
+    assert conda["name"] == "pdcat" and conda["channels"] == ["conda-forge"]
