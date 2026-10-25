@@ -84,6 +84,21 @@ CREATE TABLE IF NOT EXISTS profiles (
     PRIMARY KEY (asset_key, column_name)
 );
 
+-- Things to look at, generated from the catalogue (see review.py). Your status survives regeneration.
+CREATE TABLE IF NOT EXISTS review_tasks (
+    id           TEXT PRIMARY KEY,           -- "<rule>:<asset key>[:<version>]"
+    rule         TEXT NOT NULL,
+    asset_key    TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    detail       TEXT,
+    priority     REAL NOT NULL DEFAULT 0,
+    status       TEXT NOT NULL DEFAULT 'open',  -- open | done | snoozed | dismissed | resolved (no longer applies)
+    snooze_until TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_review_asset ON review_tasks(asset_key);
+
 -- Folders of CSV/Parquet files added from the app (config folders live in config.toml).
 CREATE TABLE IF NOT EXISTS folders (
     name      TEXT PRIMARY KEY,
@@ -185,6 +200,23 @@ class Catalogue:
     def upsert_asset(self, key: str, kind: str, name: str, source: str, *, parent: str | None = None,
                      description: str | None = None, attrs: dict[str, Any] | None = None) -> None:
         ts = now()
+        attrs = dict(attrs or {})
+        old = self.conn.execute("SELECT attrs FROM assets WHERE key = ?", (key,)).fetchone()
+        if old:
+            # Remember when the object itself changed (SQL modify_date, file modified time),
+            # so the review list can flag it.
+            prev = json.loads(old["attrs"])
+            if attrs.get("modified") and prev.get("modified") and str(attrs["modified"]) != str(prev["modified"]):
+                attrs["changed_at"] = ts
+                attrs["previous_modified"] = prev["modified"]
+            else:
+                for k in ("changed_at", "previous_modified"):
+                    if k in prev and k not in attrs:
+                        attrs[k] = prev[k]
+            if prev.get("added_in_rescan"):
+                attrs["added_in_rescan"] = True
+        elif self.conn.execute("SELECT 1 FROM scans WHERE source = ? LIMIT 1", (source,)).fetchone():
+            attrs["added_in_rescan"] = True  # appeared after this source's first scan
         self.conn.execute(
             """
             INSERT INTO assets (key, kind, name, source, parent, description, attrs, status, first_seen, last_seen)
@@ -194,7 +226,7 @@ class Catalogue:
                 parent = excluded.parent, description = excluded.description,
                 attrs = excluded.attrs, status = 'active', last_seen = excluded.last_seen
             """,
-            (key, kind, name, source, parent, description, json.dumps(attrs or {}, default=str), ts, ts),
+            (key, kind, name, source, parent, description, json.dumps(attrs, default=str), ts, ts),
         )
 
     def set_columns(self, asset_key: str, columns: list[dict[str, Any]]) -> None:

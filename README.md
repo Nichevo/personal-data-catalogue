@@ -25,6 +25,15 @@ per column, and which scripts, procedures and pasted SQL use it:
 
 ![File page with comparison](docs/screenshots/compare.png)
 
+**To review**: a prioritised list of what needs your feedback, worked out after every scan.
+Comment on an item (saved as a note), mark it done, snooze it or dismiss it:
+
+![To review page](docs/screenshots/review.png)
+
+**Issue hotspots**: which schemas, folders and tables have the most problems:
+
+![Issue hotspots page](docs/screenshots/hotspots.png)
+
 **Data folders**: point it at any folder of CSV/Parquet files:
 
 ![Data folders page](docs/screenshots/folders.png)
@@ -58,6 +67,16 @@ per column, and which scripts, procedures and pasted SQL use it:
   project. Data issues stay open until you mark them resolved and are listed on their
   own page. Example values keep their layout, so you can paste sample rows or ranges.
   Notes are stored separately from scanned data, so re-scanning never touches them.
+- **To review list**: after every scan the catalogue works out what needs your eyes:
+  undocumented tables and columns, objects that are new, changed or have disappeared,
+  odd values (mostly empty or constant columns, negative quantities, future dates),
+  CSV/Parquet files whose values go outside their source table, files that look out of
+  date, and table names in code that match nothing. It's ordered for big databases:
+  things your own code uses, large tables, and tables with open issues come first, and
+  "Only items my code uses" narrows it further. Your done/snoozed/dismissed choices stick,
+  and problems that get fixed drop off by themselves. Also `pdcat review` in a terminal.
+- **Issue hotspots**: schemas, folders and items ranked by open data issues, automatic
+  warnings, disappearances and missing documentation.
 - **Search** across names, columns, descriptions, notes and tags.
 - **Needs notes** view: undocumented tables, the ones your code uses most first.
 - **Export everything** (tables, columns, links and notes) as CSV or JSON, from the
@@ -109,6 +128,7 @@ pdcat scan --source forecasting # or just one source
 pdcat ui                        # opens the catalogue in your browser
 pdcat profile dbo.SalesDaily    # measure value ranges of a table (read-only)
 pdcat profile --used            # ...or of every table your code or pasted SQL uses
+pdcat review --used             # what needs your attention, starting with what your code uses
 pdcat search "store sales"      # quick search from the terminal
 pdcat export --format csv       # writes assets/columns/links/notes CSVs to .\catalogue-export
 pdcat export --format json --out C:\temp\catalogue

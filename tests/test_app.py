@@ -92,3 +92,27 @@ def test_issue_note_shows_in_data_issues(app, catalogue):
     assert catalogue.open_issues()[0]["body"] == "Duplicate rows for 2026-03-01."
     [b for b in app.button if b.label == "Mark resolved"][0].click().run()
     assert not app.exception and catalogue.open_issues() == []
+
+
+def test_review_page_comment_marks_done(app, catalogue):
+    from pdcat.review import open_tasks, refresh_tasks
+
+    refresh_tasks(catalogue)
+    before = len(open_tasks(catalogue, limit=1000))
+    app.run()
+    app.sidebar.radio[0].set_value("To review").run()
+    assert not app.exception
+    [t for t in app.text_area if t.label == "Your comment"][0].input("Checked: this is the store master.")
+    [b for b in app.button if b.label == "Save"][0].click().run()
+    assert not app.exception
+    assert len(open_tasks(catalogue, limit=1000)) == before - 1
+    assert any(n["body"] == "Checked: this is the store master." for n in catalogue.recent_notes())
+    [b for b in app.button if b.label == "💤 Snooze 30 days"][0].click().run()
+    assert len(open_tasks(catalogue, limit=1000)) == before - 2
+
+
+def test_hotspots_page_renders(app):
+    app.run()
+    app.sidebar.radio[0].set_value("Issue hotspots").run()
+    assert not app.exception
+    assert len(app.dataframe) == 1

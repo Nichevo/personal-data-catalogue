@@ -54,6 +54,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
             continue
         print("  " + ", ".join(f"{v} {k}" for k, v in counts.items()))
 
+    from .review import refresh_tasks
+
+    review = refresh_tasks(cat)
+    print(f"Review list: {review['open']} open ({review['new']} new, {review['closed']} closed automatically). "
+          "See 'To review' in the app or run `pdcat review`.")
     unresolved = cat.unresolved_refs()
     if unresolved:
         print(f"{len(unresolved)} table name(s) in code did not match a scanned table "
@@ -101,6 +106,21 @@ def cmd_profile(args: argparse.Namespace) -> int:
             print(f"  failed: {type(e).__name__}: {e}")
     cat.close()
     return 1 if failures else 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    from .review import RULES, open_tasks, refresh_tasks
+
+    cfg = load_config(find_config(args.config))
+    cat = Catalogue(cfg.db_path)
+    refresh_tasks(cat)
+    tasks = open_tasks(cat, only_used=args.used, limit=args.limit)
+    for t in tasks:
+        print(f"[{RULES[t['rule']][0]}] {t['title']}" + (f"\n    {t['detail']}" if t["detail"] else ""))
+    if not tasks:
+        print("Nothing to review.")
+    cat.close()
+    return 0
 
 
 def cmd_search(args: argparse.Namespace) -> int:
@@ -158,6 +178,11 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--source", action="append", help="only this SQL Server source")
     pr.add_argument("--sample-rows", type=int, default=10_000, help="rows sampled for most-common values")
     pr.set_defaults(fn=cmd_profile)
+
+    r = sub.add_parser("review", help="list what needs your attention, most important first")
+    r.add_argument("--used", action="store_true", help="only items your code uses")
+    r.add_argument("--limit", type=int, default=30)
+    r.set_defaults(fn=cmd_review)
 
     q = sub.add_parser("search", help="search the catalogue from the terminal")
     q.add_argument("text")
