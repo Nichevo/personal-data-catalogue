@@ -128,3 +128,91 @@ def test_removing_a_library_drops_its_links(libs):
     libs.remove_library("deep")
     assert not any(l["dst_key"] and l["dst_key"].startswith("py://deep/")
                    for l in libs.links_from("py://common/src/common/clean.py"))
+
+
+NESTED_PY = '''
+"""Pipeline."""
+import common.clean as cc
+from common.io import load_sales as ls
+
+
+def run(engine, days: int = 7, *, dry=False) -> "pd.DataFrame":
+    """Load, tidy and return the sales.
+
+    Longer explanation here.
+    """
+    def inner(df):
+        return df.head(days)
+    if dry:
+        return None
+    return inner(cc.tidy(ls(engine)))
+
+
+class Job:
+    def go(self):
+        return self.helper()
+
+    def helper(self):
+        yield 1
+
+
+if __name__ == "__main__":
+    run(None)
+'''
+
+
+def test_function_info_and_import_map():
+    from pdcat.scan_python import scan_python_source
+
+    attrs = scan_python_source(textwrap.dedent(NESTED_PY)).attrs
+    info = attrs["function_info"]
+    assert set(info) == {"run", "run.inner", "Job.go", "Job.helper", "(script)"}
+    run = info["run"]
+    assert [p["name"] for p in run["params"]] == ["engine", "days", "dry"]
+    assert run["params"][1] == {"name": "days", "annotation": "int", "default": "7"}
+    assert run["returns_annotation"] == "'pd.DataFrame'"
+    assert run["returns"] == ["None", "inner(cc.tidy(ls(engine)))"]
+    assert set(run["calls"]) == {"inner", "cc.tidy", "ls"}            # inner's own calls aren't run's
+    assert run["doc"].startswith("Load, tidy and return the sales.")
+    assert info["run.inner"]["calls"] == ["df.head"]
+    assert info["Job.helper"]["yields"] and info["(script)"]["calls"] == ["run"]
+    assert attrs["import_map"] == {"cc": "common.clean", "ls": "common.io.load_sales"}
+
+
+def test_calls_resolve_to_library_functions_and_callers(libs, project):
+    from pdcat.codemap import CodeIndex
+
+    write(project, "src/pipeline.py", NESTED_PY)
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    idx = CodeIndex(libs)
+    key = "py://forecasting/src/pipeline.py"
+    calls = set(idx.calls(key, "run"))
+    assert ("local", key, "run.inner") in calls
+    assert ("lib", "py://common/src/common/clean.py", "tidy") in calls
+    assert ("lib", "py://common/src/common/io.py", "load_sales") in calls
+    assert idx.calls(key, "Job.go") == [("local", key, "Job.helper")]
+    callers = idx.callers("py://common/src/common/io.py", "load_sales")
+    assert (key, "run") in callers and ("py://forecasting/src/model.py", "run") in callers
+
+
+def test_function_graph_zooms_in_and_out(libs, project):
+    from pdcat.codemap import function_graph
+
+    write(project, "src/pipeline.py", NESTED_PY)
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    key = "py://forecasting/src/pipeline.py"
+    whole = function_graph(libs, key)
+    labels = {n["label"] for n in whole.nodes.values()}
+    assert {"run", "run.inner", "Job.go", "Job.helper", "(script)", "tidy", "load_sales"} <= labels
+    assert "stash" not in labels                                      # whole script stops at the first library call
+
+    zoomed = function_graph(libs, key, "run", depth=3)
+    assert zoomed.nodes[f"{key}::run"]["kind"] == "focus"
+    assert f"py://deep/deep/util.py::stash" in zoomed.nodes          # tidy -> stash, two files away
+    assert ("table:ml.deep") in zoomed.nodes                           # and the table stash writes
+    assert (f"{key}::(script)", f"{key}::run", "call") in zoomed.edges  # caller shown
+    assert "Job.go" not in {n["label"] for n in zoomed.nodes.values()}
+    shallow = function_graph(libs, key, "run", depth=1, include_data=False)
+    assert f"py://deep/deep/util.py::stash" not in shallow.nodes
+    assert "(['run'])" not in to_mermaid(zoomed) and '(["run"])' in to_mermaid(zoomed)
+    assert "fillcolor=\"#fde68a\"" in to_dot(zoomed)

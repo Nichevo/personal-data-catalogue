@@ -13,6 +13,7 @@ dependencies = [
     "pandas>=2.0",
     "pyodbc>=5.0",
     "pyarrow>=14",
+    "pyyaml>=6",
 ]
 
 [project.optional-dependencies]

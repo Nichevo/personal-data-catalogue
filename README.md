@@ -40,6 +40,19 @@ functions each one calls, and the tables and files they reach. Download as Merma
 
 ![Code map page](docs/screenshots/codemap.png)
 
+**Inside a script**: zoom out to every function in the file, or into one function
+to follow what it calls (into your libraries too), what it returns, its docstring and
+the data it touches:
+
+![Whole-script view](docs/screenshots/script-functions.png)
+
+![Zoomed into one function](docs/screenshots/function-zoom.png)
+
+**Environment and libraries**: what each project declares in requirements.txt,
+environment.yml or pyproject.toml, compared with what the code really imports:
+
+![Environment section](docs/screenshots/environment.png)
+
 **Data folders**: point it at any folder of CSV/Parquet files:
 
 ![Data folders page](docs/screenshots/folders.png)
@@ -91,6 +104,18 @@ functions each one calls, and the tables and files they reach. Download as Merma
   diagrams at project or file level, on the Code map page and on each project's page.
   Libraries you haven't added yet are spotted from editable installs and `sys.path`
   additions and can be added with one click; `pdcat diagram` writes Mermaid or DOT.
+- **Zoom into scripts**: every function, method and nested function is listed with its
+  parameters, docstring, what it calls and what it returns. Pick a function to see a
+  diagram of its sub-functions (1 to 5 levels deep, following calls into your other
+  projects and libraries), the tables and files each one uses, and what calls it, from
+  this file or any other. Zoom back out to the whole script or the whole project.
+  Links like `?asset=…&fn=train` open straight at a function.
+- **Environments and packages**: reads `requirements*.txt`, conda `environment.yml`,
+  `pyproject.toml` (including Poetry), `setup.cfg`, `setup.py` and `Pipfile`. Each
+  project page shows the Python version, conda env and channels, local `-e` installs,
+  the declared packages, packages imported but not declared (`sklearn` is matched to
+  `scikit-learn` and so on) and packages declared but never imported. The Code map page
+  has one table of packages across all projects, to spot different versions.
 - **Search** across names, columns, descriptions, notes and tags.
 - **Needs notes** view: undocumented tables, the ones your code uses most first.
 - **Export everything** (tables, columns, links and notes) as CSV or JSON, from the
@@ -110,6 +135,27 @@ pip install -e .
 
 pdcat init
 ```
+
+### Or with conda
+
+If you use Anaconda or Miniconda, open an **Anaconda Prompt** and run:
+
+```powershell
+git clone https://github.com/Nichevo/personal-data-catalogue.git
+cd personal-data-catalogue
+conda env create -f environment.yml
+conda activate pdcat
+pip install -e . --no-deps
+
+pdcat init
+```
+
+The environment brings its own Python and all dependencies from conda-forge, so it won't
+disturb your other environments. To update it after pulling new code:
+`conda env update -f environment.yml --prune`, then `pip install -e . --no-deps` again.
+Your pyodbc still needs the Microsoft ODBC Driver installed on Windows (see above).
+
+### Then
 
 `pdcat init` creates `%USERPROFILE%\.pdcat\config.toml`. Open it and fill in your
 servers and project folders:
@@ -150,7 +196,7 @@ pdcat profile --used            # ...or of every table your code or pasted SQL u
 pdcat review --used             # what needs your attention, starting with what your code uses
 pdcat diagram --project forecasting --level projects --out map.mmd   # flow diagram as Mermaid
 pdcat search "store sales"      # quick search from the terminal
-pdcat export --format csv       # writes assets/columns/links/notes CSVs to .\catalogue-export
+pdcat export --format csv       # writes one CSV per table to .\catalogue-export
 pdcat export --format json --out C:\temp\catalogue
 ```
 
@@ -165,6 +211,8 @@ disappeared is marked "missing" rather than deleted, and its notes are kept.
 | `columns` | column of a table or view | `asset_key`, `name`, `data_type`, `description` |
 | `links` | "this reads/writes/calls that" | `src_key`, `relation`, `dst`, `matched`, `evidence` (file:line) |
 | `notes` | your note, data issue or example | `asset_key` (`<key>#<column>` for column notes), `note_type`, `status`, `body`, `tags` |
+| `functions` | function in your code | `asset_key`, `function`, `line`, `parameters`, `returns`, `calls`, `doc` |
+| `packages` | package a project declares or imports | `project`, `package`, `version`, `declared_in`, `status` |
 | `profiles` | column of a profiled table or file | `asset_key`, `column_name`, `row_count`, `null_count`, `distinct_count`, `min_value`, `max_value`, `mean_value`, `top_values` |
 
 Keys look like `sql://warehouse/yourdatabase/dbo.sales`,
