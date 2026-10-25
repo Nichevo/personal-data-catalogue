@@ -123,8 +123,40 @@ environment.yml or pyproject.toml, compared with what the code really imports:
 
 ## Setup (Windows)
 
-You need Python 3.11+ and the Microsoft ODBC Driver for SQL Server (17 or 18). Most
-work laptops already have it; check "ODBC Data Sources" → Drivers.
+You need the Microsoft ODBC Driver for SQL Server (17 or 18). Most work laptops
+already have it: search the Start menu for "ODBC Data Sources" and look under
+**Drivers**. Read [SECURITY.md](SECURITY.md) for what the tool connects to and stores.
+
+### With conda (recommended if you use Anaconda or Miniconda)
+
+Open an **Anaconda Prompt** (or any terminal where `conda` works) and run:
+
+```powershell
+git clone https://github.com/Nichevo/personal-data-catalogue.git
+cd personal-data-catalogue
+conda env create -f environment.yml     # creates an environment called "pdcat"
+conda activate pdcat
+pip install -e . --no-deps              # adds the pdcat command; conda already installed the packages
+pdcat init
+```
+
+- **Every new terminal:** run `conda activate pdcat` before `pdcat scan` or `pdcat ui`.
+- **After pulling new code:** `conda activate pdcat`, then
+  `conda env update -f environment.yml --prune`, then `pip install -e . --no-deps`.
+- **Separate from your project environments:** pdcat has its own environment and
+  never touches your forecasting or other environments. It reads your projects'
+  `environment.yml` / `requirements.txt` files as text, so it doesn't need their
+  packages installed.
+- **Another name or location:** `conda env create -f environment.yml -n my-catalogue`,
+  or `-p C:\envs\pdcat`.
+- **Channel:** packages come from `conda-forge` only, which is free to use. If your
+  network blocks conda-forge, ask IT for the internal mirror and add it with
+  `conda config --add channels <mirror-url>`.
+- **To remove it:** `conda deactivate`, then `conda env remove -n pdcat`.
+
+### Or with a plain virtual environment
+
+You need Python 3.11+.
 
 ```powershell
 git clone https://github.com/Nichevo/personal-data-catalogue.git
@@ -132,28 +164,8 @@ cd personal-data-catalogue
 py -m venv .venv
 .venv\Scripts\activate
 pip install -e .
-
 pdcat init
 ```
-
-### Or with conda
-
-If you use Anaconda or Miniconda, open an **Anaconda Prompt** and run:
-
-```powershell
-git clone https://github.com/Nichevo/personal-data-catalogue.git
-cd personal-data-catalogue
-conda env create -f environment.yml
-conda activate pdcat
-pip install -e . --no-deps
-
-pdcat init
-```
-
-The environment brings its own Python and all dependencies from conda-forge, so it won't
-disturb your other environments. To update it after pulling new code:
-`conda env update -f environment.yml --prune`, then `pip install -e . --no-deps` again.
-Your pyodbc still needs the Microsoft ODBC Driver installed on Windows (see above).
 
 ### Then
 
@@ -220,6 +232,10 @@ Keys look like `sql://warehouse/yourdatabase/dbo.sales`,
 
 ## Good to know
 
+- Security and privacy: see [SECURITY.md](SECURITY.md). In short: SQL Server access is
+  read-only, code is parsed but never run, everything stays in a local unencrypted
+  file, and value profiles store real data values.
+
 - Table detection in code is a pattern match, not a full SQL parser. Dynamic table
   names (`f"FROM {table}"` where `table` isn't a constant) are skipped, and the
   **Unmatched tables** view lists names that didn't match anything, so you can spot
@@ -237,7 +253,7 @@ Keys look like `sql://warehouse/yourdatabase/dbo.sales`,
 ## Development
 
 ```powershell
-pip install -e ".[dev]"
+pip install -e ".[dev]"                 # or, in the conda env: pip install -e . --no-deps
 pytest
 python scripts/make_demo.py C:\temp\pdcat-demo     # sample catalogue to try the app with
 streamlit run src/pdcat/app.py -- --db C:\temp\pdcat-demo\catalogue.db
