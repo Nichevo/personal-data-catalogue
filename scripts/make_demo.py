@@ -99,10 +99,12 @@ TRAIN_PY = '''
 """Train the LightGBM forecast model and write the weekly forecast."""
 import joblib
 import pandas as pd
+from forecast_core.calendar import add_holidays
+from forecast_core.metrics import wape
 
 def train(engine):
     features = pd.read_parquet("outputs/weekly_features.parquet")
-    holidays = pd.read_sql_table("Holidays", engine, schema="ref")
+    holidays = add_holidays(features, engine)
     model = fit(features, holidays)
     joblib.dump(model, "models/lgbm_weekly.pkl")
     return model
@@ -113,6 +115,45 @@ def publish(forecast, engine, week):
 '''
 
 
+LIB_FILES = {
+    "common-utils/src/common_utils/__init__.py": "",
+    "common-utils/src/common_utils/db.py": '''
+        """Shared database helpers."""
+        import pandas as pd
+
+        def read_table(engine, name):
+            return pd.read_sql(f"SELECT * FROM {name}", engine)
+
+        def store_lookup(engine):
+            return pd.read_sql("SELECT StoreId, Region FROM dbo.Store", engine)
+    ''',
+    "common-utils/src/common_utils/files.py": '''
+        """Shared file helpers."""
+        import pandas as pd
+
+        def latest_extract(folder):
+            return pd.read_csv("extracts/store_list.csv")
+    ''',
+    "forecast-core/forecast_core/__init__.py": "",
+    "forecast-core/forecast_core/calendar.py": '''
+        """Retail calendar features."""
+        import pandas as pd
+        from common_utils.db import store_lookup
+
+        def add_holidays(df, engine):
+            hol = pd.read_sql("SELECT * FROM ref.Holidays", engine)
+            cal = pd.read_sql("SELECT * FROM ref.Calendar", engine)
+            return df.merge(hol).merge(store_lookup(engine))
+    ''',
+    "forecast-core/forecast_core/metrics.py": '''
+        """Forecast accuracy metrics."""
+
+        def wape(actual, forecast):
+            return abs(actual - forecast).sum() / actual.sum()
+    ''',
+}
+
+
 def main(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     project = out / "forecasting"
@@ -121,6 +162,18 @@ def main(out: Path) -> None:
     (project / "README.md").write_text("# Forecasting\n\nWeekly store-level sales forecast for the planning team.\n")
     (project / "src" / "features.py").write_text(textwrap.dedent(FEATURES_PY))
     (project / "src" / "train.py").write_text(textwrap.dedent(TRAIN_PY))
+    (project / "src" / "regions.py").write_text(textwrap.dedent('''
+        """Regional roll-up report."""
+        from common_utils.db import store_lookup
+        from common_utils.files import latest_extract
+
+        def report(engine):
+            return store_lookup(engine).merge(latest_extract("extracts"))
+    '''))
+    for rel, text in LIB_FILES.items():
+        path = out / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(text))
 
     rng = np.random.default_rng(7)
     n = 5_000
@@ -155,6 +208,10 @@ def main(out: Path) -> None:
         ingest(cat, SERVER, "SalesDW", later)
     cat.add_folder("extracts", str(extracts))
     scan_folder(cat, "extracts", extracts)
+    for lib in ("common-utils", "forecast-core"):
+        cat.add_library(lib, str(out / lib))
+        scan_project(cat, PythonSource(name=lib, path=out / lib, role="library", data_files=False,
+                                       default_database="warehouse/SalesDW"))
     scan_project(cat, PythonSource(name="forecasting", path=project, default_database="warehouse/SalesDW"))
 
     sales = "sql://warehouse/salesdw/dbo.salesdaily"

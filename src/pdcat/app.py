@@ -22,7 +22,7 @@ KIND_ICONS = {"table": "🗃️", "view": "👁️", "procedure": "⚙️", "dat
               "data_file": "📄", "folder": "🗂️"}
 KIND_LABELS = {"data_file": "data file", "sql_snippet": "pasted SQL", "sql_script": "SQL file"}
 NOTE_ICONS = {"note": "📝", "issue": "⚠️", "example": "🔢"}
-RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls"}
+RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls", "imports": "Imports"}
 
 
 def db_path() -> str:
@@ -87,7 +87,7 @@ def home(cat: Catalogue) -> None:
     with st.sidebar:
         st.header("Data catalogue")
         n_review = len(open_tasks(cat, limit=100_000))
-        view = st.radio("View", ["Search", "To review", "Issue hotspots", "Add SQL", "Data folders",
+        view = st.radio("View", ["Search", "To review", "Issue hotspots", "Code map", "Add SQL", "Data folders",
                                  "Data issues", "Needs notes", "Recent notes", "Unmatched tables"],
                         label_visibility="collapsed")
         st.divider()
@@ -107,6 +107,9 @@ def home(cat: Catalogue) -> None:
 
     if view == "To review":
         review_page(cat)
+        return
+    if view == "Code map":
+        code_map_page(cat)
         return
     if view == "Issue hotspots":
         hotspots_page(cat)
@@ -253,6 +256,10 @@ def detail(cat: Catalogue, key: str) -> None:
 
     lineage_section(cat, key, asset)
 
+    if asset["kind"] == "project":
+        with st.expander("Code map: how this connects to your libraries and data"):
+            diagram_block(cat, asset["source"], f"proj-{key}")
+
     children = cat.children(key)
     if children:
         st.subheader("Contains")
@@ -268,6 +275,118 @@ def detail(cat: Catalogue, key: str) -> None:
                 if k not in ("definition", "imports", "functions", "classes") and v not in (None, "", [])}
         st.json(rest, expanded=False)
         st.caption(f"First seen {asset['first_seen'][:10]} · last seen {asset['last_seen'][:10]}")
+
+
+def code_map_page(cat: Catalogue) -> None:
+    from pdcat.codemap import reached_data, uncatalogued_libraries
+
+    st.title("Code map")
+    st.caption("How your projects and home-built libraries connect, which library functions each project calls, "
+               "and the tables and files reached through those chains.")
+    projects = cat.conn.execute(
+        "SELECT source, attrs FROM assets WHERE kind = 'project' AND status = 'active' ORDER BY source").fetchall()
+    if not projects:
+        st.info("No Python projects scanned yet. Add them to your config and run `pdcat scan`.")
+        return
+    roles = {p["source"]: json.loads(p["attrs"]).get("role", "project") for p in projects}
+    choice = st.selectbox("Start from", ["Everything", *roles],
+                          format_func=lambda s: s if s == "Everything" else f"{'📚' if roles[s] == 'library' else '📁'} {s}")
+    project = None if choice == "Everything" else choice
+    diagram_block(cat, project, "codemap")
+
+    if project:
+        rows = reached_data(cat, f"py://{project}")
+        st.subheader("Data reached through libraries")
+        if rows:
+            st.caption("Tables and files your code doesn't touch directly but reaches by calling library code. "
+                       "Where the library function itself uses the data, only that function's data is listed.")
+            st.dataframe(pd.DataFrame([{"": "writes" if r["relation"] == "writes" else r["relation"],
+                                        "table or file": r["data"], "via": r["via"], "library": r["library"]}
+                                       for r in rows]), hide_index=True, width="stretch")
+        else:
+            st.caption("None found.")
+
+    st.subheader("Home-built libraries not catalogued yet")
+    missing = uncatalogued_libraries(cat)
+    located = [m for m in missing if m["path"]]
+    if not located:
+        st.caption("No uncatalogued home-built libraries found (from editable installs or sys.path in your code).")
+    for i, m in enumerate(located):
+        with st.container(border=True):
+            st.markdown(f"**{m['name']}** · imported by {m['used_by']} file(s)")
+            st.caption(f"Found via {m['how']}: `{m['path']}`")
+            with st.form(f"addlib-{i}"):
+                path = st.text_input("Library folder", value=m["path"], key=f"libpath-{i}")
+                if st.form_submit_button("Add and scan library"):
+                    _add_library(cat, m["name"], path)
+    unplaced = [m for m in missing if not m["path"]]
+    if unplaced:
+        with st.expander(f"Imports I couldn't place ({len(unplaced)})"):
+            st.caption("Not installed in the Python running this app, so these are probably packages from another "
+                       "environment. If one is yours, add its folder below.")
+            st.write(", ".join(f"`{m['name']}` ({m['used_by']})" for m in unplaced))
+    with st.expander("Add another library folder"):
+        with st.form("addlib-manual"):
+            c1, c2 = st.columns([1, 2])
+            name = c1.text_input("Name")
+            path = c2.text_input("Folder", placeholder=r"C:\Users\you\code\common-utils")
+            if st.form_submit_button("Add and scan library"):
+                _add_library(cat, name, path)
+    for lib in cat.libraries():
+        c1, c2 = st.columns([4, 1])
+        c1.caption(f"📚 {lib['name']} · `{lib['path']}`")
+        if c2.button("Remove", key=f"rmlib-{lib['name']}"):
+            cat.remove_library(lib["name"])
+            st.rerun()
+
+
+def _add_library(cat: Catalogue, name: str, path: str) -> None:
+    from pdcat.config import PythonSource
+    from pdcat.scan_python import scan_project
+
+    path = path.strip().strip('"')
+    name = (name.strip() or Path(path).name).replace("/", "-")
+    taken = set(cat.sources()) - {l["name"] for l in cat.libraries()}
+    if not path or not Path(path).is_dir():
+        st.error(f"Can't find a folder at {path or '(empty)'}")
+        return
+    if name in taken or name == MANUAL_SOURCE:
+        st.warning(f"The name '{name}' is already used by another source.")
+        return
+    cat.add_library(name, path)
+    with st.spinner(f"Scanning {path} …"):
+        counts = scan_project(cat, PythonSource(name=name, path=Path(path), role="library", data_files=False))
+    refresh_tasks(cat)
+    st.toast(f"Scanned {counts['files']} file(s) in {name}")
+    st.rerun()
+
+
+def diagram_block(cat: Catalogue, project: str | None, key: str) -> None:
+    from pdcat.codemap import build_graph, to_dot, to_mermaid
+
+    c1, c2 = st.columns([2, 2])
+    level = c1.radio("Detail", ["projects", "modules"], horizontal=True, key=f"{key}-level",
+                     format_func={"projects": "Projects and libraries", "modules": "Every file"}.get)
+    include_data = c2.checkbox("Show tables and files", value=True, key=f"{key}-data")
+    g = build_graph(cat, project, level=level, include_data=include_data)
+    if not g.nodes:
+        st.caption("Nothing to draw yet.")
+        return
+    if len(g.nodes) > 150:
+        st.warning(f"{len(g.nodes)} boxes is a lot to draw. Pick a single project or switch to "
+                   "'Projects and libraries'.")
+    dot, mermaid = to_dot(g), to_mermaid(g)
+    st.graphviz_chart(dot, width="stretch")
+    st.caption("Blue boxes are your code (📚 purple for libraries), green cylinders are tables, yellow notes are "
+               "files. Solid blue arrows are imports labelled with the functions used; dashed arrows read data; "
+               "red arrows write it.")
+    d1, d2, d3 = st.columns(3)
+    name = project or "all"
+    d1.download_button("⬇️ Mermaid (.mmd)", mermaid, f"codemap-{name}.mmd", "text/plain", key=f"{key}-mmd",
+                       help="Paste into GitHub, Azure DevOps, Confluence or mermaid.live")
+    d2.download_button("⬇️ Graphviz (.dot)", dot, f"codemap-{name}.dot", "text/plain", key=f"{key}-dot")
+    with d3.popover("Copy Mermaid"):
+        st.code(mermaid, language=None)
 
 
 def review_page(cat: Catalogue) -> None:
@@ -566,6 +685,8 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
                 c1.caption(rel)
                 with c2:
                     asset_button(l["dst_key"], l["dst_name"] or l["dst_key"], l["dst_kind"] or "table", f"uses-{i}")
+                    if l["relation"] == "imports" and l["evidence"]:
+                        st.caption(f"uses {l['evidence']}")
             else:
                 kind, _, name = l["dst_ref"].partition(":")
                 what = "file" if kind == "file" else "unmatched table"
@@ -583,7 +704,8 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
             c1, c2 = st.columns([4, 2])
             with c1:
                 asset_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"usedby-{i}")
-            c2.caption(f"{rel} · {l['evidence'] or ''}")
+            c2.caption(f"{rel} {l['evidence']}" if l["relation"] == "imports" and l["evidence"]
+                       else f"{rel} · {l['evidence'] or ''}")
 
 
 def notes_section(cat: Catalogue, key: str, column_names: list[str]) -> None:
