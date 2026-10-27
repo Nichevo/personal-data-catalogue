@@ -166,6 +166,10 @@ one at a time, and every query is logged:
   `forecasting/src`, or a data folder) in one go, with an option to keep adding new files
   that appear there. Start a new business project straight from a table or script page,
   with that item already in it.
+- **Mark items as not relevant**: one click hides a table such as `dbo.sysdiagrams` from
+  search, the review list, coverage, diagrams and exports; scans keep it hidden, and a
+  list lets you bring it back. Tables SQL Server tools create for themselves (marked
+  `microsoft_database_tools_support`, like `sysdiagrams`) are skipped by default.
 
 ## Upgrading from version 1
 
