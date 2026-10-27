@@ -190,6 +190,8 @@ one at a time, and every query is logged:
   items the document names are highlighted in the text and listed as links, and those
   items show the document on their own pages. Document text is searchable and can go in
   the Copilot pack.
+- **Menu guide**: a link that always shows in the sidebar, opening a page that explains
+  every section and page in the menu in a line each, with a button to open it.
 
 ## Upgrading from version 1
 
