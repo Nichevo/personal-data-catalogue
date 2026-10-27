@@ -177,3 +177,15 @@ def test_project_page_shows_environment(app, catalogue, project):
     assert not app.exception
     assert any(s.value == "Environment and libraries" for s in app.subheader)
     assert any(t.label.startswith("Declared, not imported (1)") for t in app.tabs)
+
+
+def test_item_pages_for_keys_packages_and_knowledge(app, catalogue):
+    from pdcat import keys as K
+    from pdcat.knowledge import save_knowledge
+    K.mark_key(catalogue, "StoreId", SALES, "StoreId")
+    uid = save_knowledge(catalogue, "Freight is always sea freight", "Air is separate.", triggers="sales")
+    for key in ["key://StoreId", "pkg://pandas", SALES]:
+        app.query_params["asset"] = key
+        app.run()
+        assert not app.exception, (key, app.exception)
+    assert any("Freight is always sea freight" in b.label for b in app.button)  # related knowledge on the table

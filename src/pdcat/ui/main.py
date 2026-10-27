@@ -15,13 +15,15 @@ Page = Callable[[Catalogue], None]
 
 
 def sections() -> dict[str, dict[str, Page]]:
-    from . import lists, scanning
+    from . import keys_pages, lists, scanning
     return {
-        "🔎 Find": {"Search": search.search_page, "Packages": code.packages_page},
+        "🔎 Find": {"Search": search.search_page, "Company-wide keys": keys_pages.keys_page,
+                   "Packages": code.packages_page},
         "📋 Review": {"To review": review_pages.review_page, "Issue hotspots": review_pages.hotspots_page,
                      "Data issues": search.data_issues_page, "Needs notes": search.needs_notes_page,
                      "Recent notes": search.recent_notes_page, "Unmatched tables": search.unmatched_page,
-                     "Unlinked data": lists.unlinked_page},
+                     "Unlinked data": lists.unlinked_page, "Recent changes": lists.changes_page,
+                     "Sensitive data": keys_pages.sensitive_page},
         "🗺️ Map": {"Code map": code.code_map_page},
         "➕ Add": {"Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
                   "SQL scanning": scanning.scanning_page},

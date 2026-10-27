@@ -20,3 +20,25 @@ def unlinked_page(cat: Catalogue) -> None:
         return
     result_list([{**r, "note_count": 0} for r in rows], "unlinked",
                 extra=lambda r: f"read by {r['read_by']}" if r["read_by"] else "")
+
+
+def changes_page(cat: Catalogue) -> None:
+    import pandas as pd
+
+    from pdcat.history import recent_changes
+    st.title("Recent changes")
+    st.caption("What changed between scans: new and dropped items, columns added, removed or retyped.")
+    days = st.select_slider("Over the last", [7, 30, 90, 365], value=30, format_func=lambda d: f"{d} days")
+    rows = recent_changes(cat, days)
+    if not rows:
+        st.info("No changes recorded. Changes are recorded from the second scan of a source onwards.")
+        return
+    df = pd.DataFrame([{"when": r["at"][:16].replace("T", " "), "item": r["name"] or r["asset_key"],
+                        "change": r["change"], "detail": r["detail"], "key": r["asset_key"]} for r in rows])
+    event = st.dataframe(df.drop(columns=["key"]), hide_index=True, width="stretch", on_select="rerun",
+                         selection_mode="single-row", key="changes-table")
+    sel = event.selection.rows if event else []
+    if sel:
+        from .common import go
+        go(rows[sel[0]]["asset_key"])
+        st.rerun()

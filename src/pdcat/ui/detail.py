@@ -188,8 +188,11 @@ def columns_section(cat: Catalogue, key: str, columns) -> None:
         if col:
             col_notes.setdefault(col, []).append(n["body"])
     mine = curation.column_info(cat, key)
+    from pdcat.keys import columns_with_keys
+    keyed = columns_with_keys(cat, key)
     df = pd.DataFrame([{
         "column": c["name"], "type": c["data_type"], "nullable": bool(c["nullable"]),
+        "key": _key_badge(keyed.get(c["name"])),
         "description": (mine.get(c["name"], {}).get("description") or c["description"] or ""),
         "sensitive": bool(mine.get(c["name"], {}).get("sensitive")),
         "notes": " | ".join(col_notes.get(c["name"], [])),
@@ -197,8 +200,17 @@ def columns_section(cat: Catalogue, key: str, columns) -> None:
     column_editor(cat, key, df)
 
 
+def _key_badge(k: dict | None) -> str:
+    if not k:
+        return ""
+    return f"🔑 {k['key']}" if k["state"] == "confirmed" else f"🔑? {k['key']}"
+
+
 def column_editor(cat: Catalogue, key: str, df: pd.DataFrame) -> None:
-    """Edit descriptions and sensitivity in the table itself; Save writes only what changed."""
+    """Edit descriptions and sensitivity in the table itself; Save writes only what changed.
+    Also where a column is marked as a company-wide key."""
+    from .keys_pages import mark_key_form
+    mark_key_form(cat, key, list(df["column"]))
     edited = st.data_editor(df, hide_index=True, width="stretch", key=f"coled-{key}",
                             disabled=[c for c in df.columns if c not in ("description", "sensitive")],
                             column_config={"sensitive": st.column_config.CheckboxColumn(
@@ -236,6 +248,12 @@ def profile_section(cat: Catalogue, key: str, asset: dict) -> None:
         if m.get("description"):
             descriptions[name] = m["description"]
     df = profile_frame(profile, descriptions)
+    from pdcat.keys import columns_with_keys
+    keyed = columns_with_keys(cat, key)
+    df.insert(2, "key", [_key_badge(keyed.get(p["column_name"])) for p in profile])
+    hints = [", ".join(h["text"] for h in json.loads(p["hints"] or "[]")) for p in profile]
+    if any(hints):
+        df["type check"] = hints
     df["sensitive"] = [bool(mine.get(p["column_name"], {}).get("sensitive")) for p in profile]
     column_editor(cat, key, df)
     charted = [p for p in profile if p["histogram"]]

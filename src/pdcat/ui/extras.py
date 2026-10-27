@@ -10,7 +10,15 @@ from .common import first_line, go
 
 
 def item_extras_top(cat: Catalogue, key: str, asset: dict) -> None:
+    from pdcat.history import freshness
     from pdcat.knowledge import item_text, pin, triggered
+    f = freshness(cat, key) if asset["kind"] in ("table", "view", "data_file", "file_series") else None
+    if f:
+        line = f"🕒 Newest {f['column']}: **{f['latest']}** ({f['age_days']} days old when measured {f['measured']})"
+        if f["stale"]:
+            st.warning(line + f". Expected within {f['limit_days']} days: is the load still running?")
+        else:
+            st.caption(line)
     hits = triggered(cat, item_text(cat, key), key)
     if hits:
         with st.container(border=True):
@@ -26,7 +34,45 @@ def item_extras_top(cat: Catalogue, key: str, asset: dict) -> None:
 
 
 def item_extras_bottom(cat: Catalogue, key: str, asset: dict) -> None:
+    from pdcat.history import history
+    from pdcat.keys import join_hints
     from pdcat.knowledge import list_questions
+    from pdcat.relationships import joins_for, set_relationship_state
+    hints = join_hints(cat, key)
+    joins = joins_for(cat, key) if asset["kind"] in ("table", "view") else []
+    if hints or joins:
+        st.subheader("Joins to")
+        for i, h in enumerate(hints):
+            c1, c2 = st.columns([3, 3])
+            with c1:
+                st.button(f"🔑 {h['other_name'] or h['other']}", key=f"jh-{key}-{i}", on_click=go, args=(h["other"],),
+                          type="tertiary")
+            c2.caption(f"on {h['column']} = {h['other_column']} (company-wide key {h['key']})")
+        for i, r in enumerate(joins):
+            other, mine, theirs = (r["dst_key"], r["src_columns"], r["dst_columns"]) if r["src_key"] == key else \
+                (r["src_key"], r["dst_columns"], r["src_columns"])
+            c1, c2, c3 = st.columns([3, 3, 1.4])
+            with c1:
+                st.button(f"🗃️ {other.split('/')[-1]}", key=f"rel-{key}-{i}", on_click=go, args=(other,),
+                          type="tertiary")
+            label = {"declared": "foreign key", "confirmed": "confirmed", "suggested": "suggested"}[r["state"]] \
+                if r["state"] in ("declared", "confirmed", "suggested") else r["state"]
+            c2.caption(f"on {mine} = {theirs} · {label} · {r['evidence'] or ''}")
+            if r["state"] == "suggested":
+                with c3:
+                    a, b = st.columns(2)
+                    if a.button("✓", key=f"relok-{key}-{i}", help="Confirm this join"):
+                        set_relationship_state(cat, r, "confirmed")
+                        st.rerun()
+                    if b.button("✗", key=f"relno-{key}-{i}", help="Not a real join; don't suggest it again"):
+                        set_relationship_state(cat, r, "rejected")
+                        st.rerun()
+    changes = history(cat, key)
+    if changes:
+        with st.expander(f"Change history ({len(changes)})"):
+            import pandas as pd
+            st.dataframe(pd.DataFrame([{"when": c["at"][:16].replace("T", " "), "change": c["change"],
+                                        "detail": c["detail"]} for c in changes]), hide_index=True, width="stretch")
     qs = list_questions(cat, table_key=key)
     if qs:
         st.subheader("Questions this answers")
