@@ -15,11 +15,15 @@ Page = Callable[[Catalogue], None]
 
 
 def sections() -> dict[str, dict[str, Page]]:
-    from . import keys_pages, lists, scanning
+    from . import bproject_pages, curation_pages, keys_pages, knowledge_pages, lists, ml_pages, scanning
     return {
         "🔎 Find": {"Search": search.search_page, "Company-wide keys": keys_pages.keys_page,
                    "Packages": code.packages_page},
-        "📋 Review": {"To review": review_pages.review_page, "Issue hotspots": review_pages.hotspots_page,
+        "📚 Knowledge": {"Knowledge": knowledge_pages.knowledge_page, "Business projects": bproject_pages.bprojects_page,
+                        "Question library": knowledge_pages.questions_page,
+                        "Metric glossary": knowledge_pages.metrics_page, "Feature dictionary": ml_pages.features_page},
+        "📋 Review": {"Coverage": curation_pages.coverage_page, "Describe columns": curation_pages.describe_columns_page,
+                     "Edit many items": curation_pages.bulk_edit_page, "To review": review_pages.review_page, "Issue hotspots": review_pages.hotspots_page,
                      "Data issues": search.data_issues_page, "Needs notes": search.needs_notes_page,
                      "Recent notes": search.recent_notes_page, "Unmatched tables": search.unmatched_page,
                      "Unlinked data": lists.unlinked_page, "Recent changes": lists.changes_page,
@@ -32,7 +36,8 @@ def sections() -> dict[str, dict[str, Page]]:
     }
 
 
-NEEDS_DATA = {"Search", "Data issues", "Needs notes", "Recent notes", "Unmatched tables", "Packages"}
+NEEDS_DATA = {"Search", "Data issues", "Needs notes", "Recent notes", "Unmatched tables", "Packages", "Coverage",
+              "Describe columns", "Edit many items"}
 
 
 def sidebar(cat: Catalogue) -> tuple[str, Page]:

@@ -27,6 +27,11 @@ def _extra_steps():
     except ImportError:
         pass
     try:
+        from .mlfeatures import suggest_features
+        steps.append(("feature suggestions", suggest_features))
+    except ImportError:
+        pass
+    try:
         from .duplicates import find_duplicates
         steps.append(("duplicates", find_duplicates))
     except ImportError:

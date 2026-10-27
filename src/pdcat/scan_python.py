@@ -79,6 +79,8 @@ def _scan_project(cat: Catalogue, src: PythonSource, root: Path, project_key: st
                 counts["links"] += 1
             counts["files"] += 1
             counts["errors"] += bool(found.attrs.get("parse_error"))
+        from .mlfeatures import scan_models
+        counts["models"] = scan_models(cat, root, project_key, src.name, skip)
         if src.data_files:
             got = ingest_files(cat, root, sorted(iter_data_files(root, skip=skip)), project_key, src.name, src.max_rows)
             counts["data files"] += got["files"]
@@ -129,7 +131,7 @@ def _scan_notebook(text: str) -> Found:
         found.attrs["parse_error"] = f"Not valid notebook JSON: {e}"
         return found
     cells = nb.get("cells", [])
-    funcs, imports, errors, import_details = [], set(), [], []
+    funcs, imports, errors, import_details, feature_rows = [], set(), [], [], []
     merged: dict[str, dict] = {"function_info": {}, "import_map": {}, "function_refs": {}}
     for i, cell in enumerate(cells, start=1):
         source = "".join(cell.get("source", []))
@@ -150,6 +152,7 @@ def _scan_notebook(text: str) -> Found:
         funcs += cell_found.attrs.get("functions", [])
         imports.update(cell_found.attrs.get("imports", []))
         import_details += cell_found.attrs.get("import_details", [])
+        feature_rows += cell_found.attrs.get("feature_assignments", [])
         for name, value in merged.items():
             for k, v in cell_found.attrs.get(name, {}).items():
                 if name == "function_info":
@@ -159,6 +162,8 @@ def _scan_notebook(text: str) -> Found:
     found.refs = list(dict.fromkeys(found.refs))
     found.attrs.update({"cells": len(cells), "functions": funcs, "imports": sorted(imports),
                         "import_details": import_details, **{k: v for k, v in merged.items() if v}})
+    if feature_rows:
+        found.attrs["feature_assignments"] = feature_rows
     if errors:
         found.attrs["parse_error"] = "Could not parse " + ", ".join(errors)
     return found
@@ -202,6 +207,10 @@ def scan_python_source(text: str) -> Found:
             function_refs[name] = [list(r) for r in refs]
     if function_refs:
         found.attrs["function_refs"] = function_refs
+    from .mlfeatures import feature_assignments
+    feats = feature_assignments(tree)
+    if feats:
+        found.attrs["feature_assignments"] = feats
     found.attrs["import_details"] = _import_details(tree)
     found.attrs["import_map"] = _import_map(tree)
     found.attrs["function_info"] = _function_info(tree)

@@ -11,6 +11,9 @@ from .common import first_line, go
 
 def item_extras_top(cat: Catalogue, key: str, asset: dict) -> None:
     from pdcat.history import freshness
+
+    from .bproject_pages import projects_box
+    projects_box(cat, key)
     if asset["kind"] == "file_series":
         series_section(cat, key, asset)
     if asset["attrs"].get("in_series"):

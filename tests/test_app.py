@@ -189,3 +189,20 @@ def test_item_pages_for_keys_packages_and_knowledge(app, catalogue):
         app.run()
         assert not app.exception, (key, app.exception)
     assert any("Freight is always sea freight" in b.label for b in app.button)  # related knowledge on the table
+
+
+def test_knowledge_item_pages(app, catalogue):
+    from pdcat import bprojects as B
+    from pdcat import mlfeatures as M
+    from pdcat.knowledge import save_metric, save_question
+    uid = B.save_project(catalogue, "Sales forecasting", purpose="Weekly forecast")
+    B.set_member(catalogue, uid, SALES)
+    fuid = M.save_feature(catalogue, "sales_lag_7", project="forecasting", sources=[f"{SALES}#Units"],
+                          known_at_prediction="yes")
+    q = save_question(catalogue, "Weekly sales by region?", sql="SELECT * FROM dbo.SalesDaily")
+    m = save_metric(catalogue, "Forecast accuracy", definition="1 - WAPE", sources=[SALES])
+    for key in [f"bp://{uid}", f"feature://{fuid}", f"q://{q}", f"metric://{m}", SALES]:
+        app.query_params["asset"] = key
+        app.run()
+        assert not app.exception, (key, app.exception)
+    assert any("Sales forecasting" in b.label for b in app.button)  # the table shows its business project
