@@ -259,6 +259,20 @@ one at a time, and every query is logged:
   in under a minute, mostly by confirming a suggestion.
 - **Learn from your queries**: joins and filters that come up again and again in pasted
   SQL and scripts become "how this table is usually used" notes and join hints.
+- **Home page**: opens first. It shows your follow-ups, what changed since your last
+  visit, your five quick questions, and anything failing or no longer refreshing.
+- **Follow up**: a "Follow up" tick on any table, script, file or knowledge page pins it
+  to the home page (with an optional note on where you were), so you can get back to
+  what you were working on. Untick it when you're done.
+- **Search box always in the sidebar**, so you can search from any page.
+- **Recently viewed** items in the sidebar.
+- **Edit history** on notes and descriptions: who changed what and when, with undo.
+- **A tidier menu**: To review takes in Data issues, Needs notes, Unmatched tables,
+  Unlinked data and Duplicates as filter tabs; Coverage and Issue hotspots become one
+  Health page; Recent notes and Recent changes become one What's new page; Describe
+  columns and Edit many items become one Bulk edit page; Add SQL, Data folders and SQL
+  scanning become one Sources page; Company-wide keys moves to Knowledge, Packages to
+  Map, and Sensitive data to Settings.
 - **Suggested metrics**: the Metric glossary suggests metrics found in your code and
   reports: functions such as `wape()` or `forecast_accuracy()`, named calculations
   (`mape = ...`), computed SQL columns (`SUM(x) / SUM(y) AS fill_rate`), and Power BI
