@@ -157,6 +157,11 @@ one at a time, and every query is logged:
   That means scripts that import it (and which of its functions they call), and scripts
   that run it with `subprocess`, `os.system`, `runpy`, `python -m`, `%run` or
   `!python`. Run links also show on the code map.
+- **Link files found in another folder**: when a script names `sales.csv` but the only
+  `sales.csv` catalogued is in a different folder, link it anyway and flag it as a
+  possible wrong folder (today the folders must match). When the same file name turns up
+  in several folders, say so on the link and on the script and file pages (today the
+  newest is picked without a word).
 
 ## Upgrading from version 1
 
