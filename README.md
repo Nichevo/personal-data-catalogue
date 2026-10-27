@@ -204,6 +204,11 @@ one at a time, and every query is logged:
   or by a script, folder or project name in any column. A clear match is linked; a
   likely one is shown as a suggestion for you to confirm or change; anything else is
   listed as unmatched so you can link it by hand. Script pages then show when they run.
+- **Find more output files**: spot files a script writes in ways the scan misses today:
+  a path passed in as a function argument (`def save(df, path)` called with the real
+  path), paths looked up in a config dictionary, `pd.ExcelWriter`, `Path.write_text` and
+  `Path.open`, `np.save`, `shutil.copy`, polars `write_csv`/`write_parquet` and openpyxl
+  `wb.save`.
 
 ## Upgrading from version 1
 
