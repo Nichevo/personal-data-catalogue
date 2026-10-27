@@ -16,7 +16,7 @@ Page = Callable[[Catalogue], None]
 
 def sections() -> dict[str, dict[str, Page]]:
     from . import (bproject_pages, curation_pages, erd_page, keys_pages, knowledge_pages, lists, ml_pages,
-                   scanning)
+                   scanning, setup_page)
     return {
         "🔎 Find": {"Search": search.search_page, "Company-wide keys": keys_pages.keys_page,
                    "Packages": code.packages_page},
@@ -34,7 +34,7 @@ def sections() -> dict[str, dict[str, Page]]:
                   "SQL scanning": scanning.scanning_page},
         "📤 Share": {"Share with colleagues": share.sharing_page, "Copilot pack": share.copilot_page,
                     "Export": share.export_page},
-        "⚙️ Settings": {"Settings": settings_page.settings_page},
+        "⚙️ Settings": {"Settings": settings_page.settings_page, "Get started": setup_page.setup_page},
     }
 
 
@@ -98,7 +98,8 @@ def main() -> None:
                 detail(cat, key)
         elif name in NEEDS_DATA and not cat.stats()["kinds"] and not cat.conn.execute(
                 "SELECT 1 FROM knowledge LIMIT 1").fetchone():
-            search.empty_catalogue()
+            from .setup_page import setup_page
+            setup_page(cat)
         else:
             with timed(name):
                 page(cat)

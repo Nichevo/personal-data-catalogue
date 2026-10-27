@@ -74,3 +74,22 @@ def test_failed_upgrade_points_to_the_backup(v1_db, monkeypatch):
     assert "before-v2" in str(err.value)
     # The original notes are untouched.
     assert len(_rows(v1_db, "SELECT * FROM notes")) == 3
+
+
+def test_first_run_config(tmp_path):
+    from pdcat import firstrun
+    from pdcat.config import load_config
+    path = firstrun.ensure_config(tmp_path / "config.toml")
+    assert load_config(path).sqlserver == []
+    firstrun.add_sqlserver(path, "warehouse", r"DEMO-SQL01\SALES", ["ForecastDB", " Other "], "ODBC Driver 18 for SQL Server")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    firstrun.add_python(path, "forecasting", str(proj), "warehouse/ForecastDB")
+    cfg = load_config(path)
+    assert cfg.sqlserver[0].server == r"DEMO-SQL01\SALES" and cfg.sqlserver[0].databases == ["ForecastDB", "Other"]
+    assert cfg.python[0].default_database == "warehouse/ForecastDB"
+    import pytest
+    with pytest.raises(ValueError):  # duplicate names are refused and the file is left as it was
+        firstrun.add_python(path, "warehouse", str(proj))
+    assert len(load_config(path).python) == 1
+    assert "drivers" in firstrun.odbc_drivers()

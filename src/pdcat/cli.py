@@ -245,8 +245,13 @@ def cmd_openmetadata(args: argparse.Namespace) -> int:
 
 
 def cmd_ui(args: argparse.Namespace) -> int:
+    from .firstrun import ensure_config
     cfg_path = find_config(args.config)
+    if not cfg_path.exists():  # first run: the app's Get started page fills it in
+        ensure_config(cfg_path)
+        print(f"Created {cfg_path}")
     cfg = load_config(cfg_path)
+    cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
     app = Path(__file__).with_name("app.py")
     cmd = [sys.executable, "-m", "streamlit", "run", str(app),
            "--server.address", "localhost", "--browser.gatherUsageStats", "false",
