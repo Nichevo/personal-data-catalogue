@@ -216,6 +216,14 @@ one at a time, and every query is logged:
   script page lists it as "Unknown file" with the line and the code (`df.to_csv(filepath)`),
   it goes on the To review list, and you can say which file it is, which then links it
   like any other.
+- **Script versions**: scripts in the same folder whose names differ only by a version
+  or date at the end (`forecast_v2.py`, `forecast_v3.py`, `forecast_20261001.py`,
+  `forecast_old.py`, `forecast - Copy.py`) are grouped as versions of one script. The
+  current one is the one other code imports or runs, or the one in the schedule list,
+  or else the newest; when that isn't clear, you tick the main one. Only the current
+  version shows on the code map, in search and in lineage. Older versions stay listed
+  on its page with their dates and a "what changed" view, and you can split a pair that
+  aren't really versions.
 - **Suggested metrics**: the Metric glossary suggests metrics found in your code and
   reports: functions such as `wape()` or `forecast_accuracy()`, named calculations
   (`mape = ...`), computed SQL columns (`SUM(x) / SUM(y) AS fill_rate`), and Power BI
