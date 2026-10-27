@@ -205,8 +205,11 @@ one at a time, and every query is logged:
   likely one is shown as a suggestion for you to confirm or change; anything else is
   listed as unmatched so you can link it by hand. Script pages then show when they run.
 - **Find more output files**: spot files a script writes in ways the scan misses today:
-  a path passed in as a function argument (`def save(df, path)` called with the real
-  path), paths looked up in a config dictionary, `pd.ExcelWriter`, `Path.write_text` and
+  `df.to_csv(filepath)` where `filepath` is passed in as a function argument (followed
+  back to the call that gives the real path), imported from another module
+  (`from settings import OUTPUT_DIR`), an argparse default, a `self.` attribute or
+  returned by a helper function; paths looked up in a config dictionary in code;
+  every branch of an if/else; `pd.ExcelWriter`, `Path.write_text` and
   `Path.open`, `np.save`, `shutil.copy`, polars `write_csv`/`write_parquet` and openpyxl
   `wb.save`.
 - **Suggested metrics**: the Metric glossary suggests metrics found in your code and
