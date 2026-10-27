@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #ffffff; --fg: #262730; --muted: #6b6f7b; --line: #d5d7de; --panel: #f6f7f9; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+               font-family: "Source Sans Pro", "Segoe UI", sans-serif; font-size: 13px; }
+  #bar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 4px 0 6px; }
+  #bar button { border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 6px;
+                padding: 3px 8px; cursor: pointer; font: inherit; }
+  #bar button:hover { border-color: #ff4b4b; }
+  #find { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 6px;
+          padding: 3px 8px; font: inherit; width: 180px; }
+  #hint { color: var(--muted); margin-left: auto; }
+  #cy { position: relative; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+  #busy { position: absolute; top: 8px; left: 10px; color: var(--muted); z-index: 10; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="zin" title="Zoom in">＋</button>
+  <button id="zout" title="Zoom out">－</button>
+  <button id="fit" title="Show everything">Fit</button>
+  <button id="open-all" title="Open every group">Open all</button>
+  <button id="close-all" title="Close every group">Close all</button>
+  <input id="find" placeholder="Find a box…" title="Type part of a name and press Enter">
+  <button id="png" title="Download as a picture">PNG</button>
+  <button id="svg" title="Download as SVG">SVG</button>
+  <span id="hint">Click a box to open it · click a group to open or close it · scroll to zoom</span>
+</div>
+<div id="cy"><div id="busy">Laying out…</div></div>
+<script src="vendor/cytoscape.min.js"></script>
+<script src="vendor/elk.bundled.js"></script>
+<script src="vendor/cytoscape-elk.js"></script>
+<script src="vendor/cytoscape-expand-collapse.js"></script>
+<script src="graph.js"></script>
+</body>
+</html>

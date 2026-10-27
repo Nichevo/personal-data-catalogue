@@ -15,7 +15,8 @@ Page = Callable[[Catalogue], None]
 
 
 def sections() -> dict[str, dict[str, Page]]:
-    from . import bproject_pages, curation_pages, keys_pages, knowledge_pages, lists, ml_pages, scanning
+    from . import (bproject_pages, curation_pages, erd_page, keys_pages, knowledge_pages, lists, ml_pages,
+                   scanning)
     return {
         "🔎 Find": {"Search": search.search_page, "Company-wide keys": keys_pages.keys_page,
                    "Packages": code.packages_page},
@@ -28,7 +29,7 @@ def sections() -> dict[str, dict[str, Page]]:
                      "Recent notes": search.recent_notes_page, "Unmatched tables": search.unmatched_page,
                      "Unlinked data": lists.unlinked_page, "Recent changes": lists.changes_page,
                      "Sensitive data": keys_pages.sensitive_page, "Duplicates": lists.duplicates_page},
-        "🗺️ Map": {"Code map": code.code_map_page},
+        "🗺️ Map": {"Code map": code.code_map_page, "Database diagrams": erd_page.erd_page},
         "➕ Add": {"Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
                   "SQL scanning": scanning.scanning_page},
         "📤 Share": {"Share with colleagues": share.sharing_page, "Copilot pack": share.copilot_page,

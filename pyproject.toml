@@ -27,6 +27,9 @@ pdcat = "pdcat.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+pdcat = ["ui/graph/*.html", "ui/graph/*.js", "ui/graph/vendor/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

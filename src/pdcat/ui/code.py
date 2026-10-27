@@ -111,24 +111,24 @@ def code_map_page(cat: Catalogue) -> None:
 
 
 def diagram_block(cat: Catalogue, project: str | None, key: str) -> None:
-    from pdcat.codemap import build_graph, to_dot, to_mermaid
+    from pdcat.codemap import build_graph, cyto_elements, to_dot, to_mermaid
 
-    c1, c2 = st.columns([2, 2])
+    from .graphview import graph_view
+    c1, c2, c3 = st.columns([2, 1.2, 1.2])
     level = c1.radio("Detail", ["projects", "modules"], horizontal=True, key=f"{key}-level",
                      format_func={"projects": "Projects and libraries", "modules": "Every file"}.get)
-    include_data = c2.checkbox("Show tables and files", value=True, key=f"{key}-data")
-    g = build_graph(cat, project, level=level, include_data=include_data)
-    if not g.nodes:
+    include_data = c2.checkbox("Tables and files", value=True, key=f"{key}-data")
+    packages = c3.checkbox("Third-party packages", value=False, key=f"{key}-pkgs", disabled=level != "modules")
+    elements = cyto_elements(cat, project, level=level, include_data=include_data, include_packages=packages)
+    if not elements:
         st.caption("Nothing to draw yet.")
         return
-    if len(g.nodes) > 150:
-        st.warning(f"{len(g.nodes)} boxes is a lot to draw. Pick a single project or switch to "
-                   "'Projects and libraries'.")
+    graph_view(cat, elements, key=f"{key}-{project or 'all'}-{level}", name=f"codemap-{project or 'all'}")
+    st.caption("Blue boxes are your code (purple for libraries), green barrels are tables, yellow tags are files, "
+               "grey boxes are packages. Blue arrows are imports labelled with the functions used; dashed arrows "
+               "read data; red arrows write it. Groups (projects, folders, databases) open and close with a click.")
+    g = build_graph(cat, project, level=level, include_data=include_data)
     dot, mermaid = to_dot(g), to_mermaid(g)
-    st.graphviz_chart(dot, width="stretch")
-    st.caption("Blue boxes are your code (📚 purple for libraries), green cylinders are tables, yellow notes are "
-               "files. Solid blue arrows are imports labelled with the functions used; dashed arrows read data; "
-               "red arrows write it.")
     d1, d2, d3 = st.columns(3)
     name = project or "all"
     d1.download_button("⬇️ Mermaid (.mmd)", mermaid, f"codemap-{name}.mmd", "text/plain", key=f"{key}-mmd",
