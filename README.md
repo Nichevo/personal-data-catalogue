@@ -178,6 +178,12 @@ one at a time, and every query is logged:
   from your own catalogue ("Which scripts write ml.ForecastOutput?", "What does Forecast
   accuracy mean?", "What replaces dbo.Store?") with the answer the pack holds, so you can
   ask Copilot and check it gets them right. They also go in the pack as a test file.
+- **Import from an Excel sheet**: upload a workbook, pick the sheet, and say what each row
+  is: a SQL query (title, SQL, notes become pasted SQL linked to the tables it uses, or
+  question library entries), a metric (name, definition, formula, e.g. how forecast
+  accuracy is calculated), or a knowledge note. Match columns to fields, preview, then
+  import; each item remembers which workbook it came from. A sheet of free text can be
+  imported whole as one knowledge note.
 
 ## Upgrading from version 1
 
