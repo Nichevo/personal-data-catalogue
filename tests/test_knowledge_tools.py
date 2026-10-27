@@ -60,7 +60,8 @@ def test_business_projects_and_suggestions(catalogue):
     assert STORE not in {s["key"] for s in B.suggest(catalogue, uid)}  # rejected ones stay hidden
     assert [p["name"] for p in B.projects_for(catalogue, SALES)] == ["Sales forecasting"]
     assert B.list_projects(catalogue)[0]["members"] == 2
-    assert any(r["key"] == f"bp://{uid}" for r in catalogue.search("forecasting"))
+    hit = [r for r in catalogue.search("forecasting") if r["key"] == f"bp://{uid}"]
+    assert hit and hit[0]["name"] == "Sales forecasting"  # its name, not its key
     with pytest.raises(ValueError):
         B.save_project(catalogue, " ")
 

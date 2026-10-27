@@ -13,37 +13,77 @@ and folder paths live only in a local `config.toml` that git ignores.
 
 All screenshots use made-up demo data (`python scripts/make_demo.py <folder>` builds it).
 
-**Search** across tables, columns, scripts, files, notes and tags:
+### Find
+
+**Search** across tables, columns, scripts, files, reports, notes and knowledge. Each
+result says what it matched on:
 
 ![Search page](docs/screenshots/search.png)
 
-**A table page**: notes, a data issue on a column, pasted example values, value ranges
-per column, and which scripts, procedures and pasted SQL use it:
+**A table page**: purpose, grain, owner and trust, the business project it belongs to,
+a freshness check, and what needs reviewing. Further down: columns with value ranges,
+notes, and which scripts, procedures and reports use it:
 
 ![Table page](docs/screenshots/table.png)
 
-**A CSV/Parquet file compared with the SQL table it came from**:
+**A data file compared with the SQL table it came from**: types, ranges, nulls and
+distinct counts side by side, and the scripts that write and read it:
 
 ![File page with comparison](docs/screenshots/compare.png)
 
-**To review**: a prioritised list of what needs your feedback, worked out after every scan.
-Comment on an item (saved as a note), mark it done, snooze it or dismiss it:
+**Dated file series**: monthly extracts become one entry, with the date range and any
+missing months:
+
+![File series page](docs/screenshots/file-series.png)
+
+**Power BI reports**: pages, visuals, measures with their DAX, model tables, and the
+SQL tables and files the report loads:
+
+![Power BI report page](docs/screenshots/powerbi.png)
+
+### Know
+
+**Knowledge**: business rules, definitions and quirks that show up wherever their
+trigger words do:
+
+![Knowledge page](docs/screenshots/knowledge.png)
+
+**Feature dictionary**: every model input, filled from your feature code and LightGBM
+models, with checks for leakage, unused features and drift:
+
+![Feature dictionary](docs/screenshots/features.png)
+
+### Review
+
+**To review**: a prioritised list of what needs your feedback, worked out after every
+scan. Tick rows to mark them done, snooze or dismiss them:
 
 ![To review page](docs/screenshots/review.png)
+
+**Coverage**: how well documented the catalogue is, and what to document next (with a
+draft worked out from the scan):
+
+![Coverage page](docs/screenshots/coverage.png)
 
 **Issue hotspots**: which schemas, folders and tables have the most problems:
 
 ![Issue hotspots page](docs/screenshots/hotspots.png)
 
-**Code map**: how your projects and home-built libraries connect, which library
-functions each one calls, and the tables and files they reach. Download as Mermaid
-(pastes into GitHub, Azure DevOps or Confluence) or Graphviz:
+### Map
+
+**Code map**: how your projects and home-built libraries connect, and the tables and
+files they reach. Zoom, open and close groups, click a box to open it, and download as
+PNG, SVG or Mermaid:
 
 ![Code map page](docs/screenshots/codemap.png)
 
-**Inside a script**: zoom out to every function in the file, or into one function
-to follow what it calls (into your libraries too), what it returns, its docstring and
-the data it touches:
+**Database diagrams**: tables and how they join, split into subject areas worked out
+from the joins. Rename areas and move tables; your changes are kept:
+
+![Database diagrams page](docs/screenshots/erd.png)
+
+**Inside a script**: every function in the file, or zoom into one to follow what it
+calls (into your libraries too), what it returns, its docstring and the data it touches:
 
 ![Whole-script view](docs/screenshots/script-functions.png)
 
@@ -54,9 +94,16 @@ environment.yml or pyproject.toml, compared with what the code really imports:
 
 ![Environment section](docs/screenshots/environment.png)
 
-**Data folders**: point it at any folder of CSV/Parquet files:
+### Add
+
+**Data folders**: point it at any folder of CSV, Parquet, Power BI and Excel files:
 
 ![Data folders page](docs/screenshots/folders.png)
+
+**SQL scanning**: tables are only profiled when you ask. Approve them here; queries go
+one at a time, and every query is logged:
+
+![SQL scanning page](docs/screenshots/sql-scanning.png)
 
 ## New in version 2
 
@@ -172,10 +219,14 @@ details (`pdcat scan`).
   the declared packages, packages imported but not declared (`sklearn` is matched to
   `scikit-learn` and so on) and packages declared but never imported. The Code map page
   has one table of packages across all projects, to spot different versions.
-- **Search** across names, columns, descriptions, notes and tags.
+- **Search** across names, columns, descriptions, notes, knowledge and tags.
 - **Needs notes** view: undocumented tables, the ones your code uses most first.
-- **Export everything** (tables, columns, links and notes) as CSV or JSON, from the
-  web page or the command line, so you can move it into another tool later.
+- **Export everything** (items, columns, links, notes, profiles and your knowledge) as
+  CSV or JSON, from the web page or the command line, so you can move it into another
+  tool later.
+
+Version 2 adds Power BI and Excel, the knowledge base, sharing, the Copilot pack and
+more: see [New in version 2](#new-in-version-2).
 
 ## Setup (Windows)
 
@@ -255,38 +306,59 @@ If your server uses Azure AD sign-in instead of Windows login, add
 
 ## Use
 
+Most of the time you only need two commands:
+
 ```powershell
-pdcat scan                      # scan everything in the config
-pdcat scan --source forecasting # or just one source
-pdcat ui                        # opens the catalogue in your browser
-pdcat scan --plan               # print the SQL Server queries a scan would send, without connecting
-pdcat profile dbo.SalesDaily    # measure value ranges of a table (read-only, paced)
-pdcat profile --queue           # run the tables approved on the SQL scanning page
-pdcat review --used             # what needs your attention, starting with what your code uses
-pdcat diagram --project forecasting --level projects --out map.mmd   # flow diagram as Mermaid
-pdcat search "store sales"      # quick search from the terminal
-pdcat export --format csv       # writes one CSV per table to .\catalogue-export
-pdcat export --format json --out C:\temp\catalogue
-pdcat share --out mine.json     # your notes and knowledge, for a colleague
-pdcat merge theirs.json --preview   # see what merging a colleague's file would change
-pdcat ai-export --out C:\temp\copilot-pack [--docx] [--hide-locations]
-pdcat openmetadata --out om.zip # tables, descriptions, glossary and lineage for OpenMetadata
+pdcat scan      # read your databases, projects, folders, reports and workbooks
+pdcat ui        # open the catalogue in your browser (leave the window open while you use it)
 ```
 
 Re-run `pdcat scan` whenever your code or databases change. Anything that has
 disappeared is marked "missing" rather than deleted, and its notes are kept.
 
+Everything else can be done from the app, or from the terminal:
+
+| Command | What it does |
+| --- | --- |
+| `pdcat init` | Create a starter config file |
+| `pdcat scan` | Scan everything in the config (`--source NAME` for one; `--plan` to see the SQL first) |
+| `pdcat ui` | Open the catalogue in your browser |
+| `pdcat profile dbo.SalesDaily` | Measure value ranges, nulls and common values of tables (`--used` for all your code uses) |
+| `pdcat review` | What needs your attention, most important first |
+| `pdcat search "store sales"` | Search from the terminal |
+| `pdcat diagram --out map.mmd` | The code map as Mermaid or Graphviz text |
+| `pdcat share --out mine.json` | Your notes and knowledge in one file, for a colleague |
+| `pdcat merge theirs.json --preview` | See what a colleague's file would change; drop `--preview` to merge |
+| `pdcat ai-export --out copilot-pack` | The Copilot pack (`--docx` for Word, `--hide-locations`) |
+| `pdcat export` | Everything as CSV (or `--format json`) |
+| `pdcat openmetadata --out om.zip` | Tables, descriptions, glossary and lineage for OpenMetadata |
+
+**[Command reference](docs/commands.md)**: every option, with examples and what the
+output looks like. In the terminal, `pdcat --help` lists the commands and
+`pdcat <command> --help` shows one command's options and examples.
+
 ## Export format
 
 | File | One row per | Key columns |
 | --- | --- | --- |
-| `assets` | table, view, procedure, database, project, script, notebook, pasted SQL (`sql_snippet`, text in `attrs.sql`) | `key`, `kind`, `name`, `source`, `description`, `attrs` (JSON) |
+| `assets` | table, view, procedure, database, project, script, notebook, data file, file series, report, measure, workbook, ML model, pasted SQL (`sql_snippet`, text in `attrs.sql`) | `key`, `kind`, `name`, `source`, `description`, `attrs` (JSON) |
 | `columns` | column of a table or view | `asset_key`, `name`, `data_type`, `description` |
 | `links` | "this reads/writes/calls that" | `src_key`, `relation`, `dst`, `matched`, `evidence` (file:line) |
-| `notes` | your note, data issue or example | `asset_key` (`<key>#<column>` for column notes), `note_type`, `status`, `body`, `tags` |
+| `notes` | your note, data issue or example | `asset_key` (`<key>#<column>` for column notes), `note_type`, `status`, `body`, `tags`, `author` |
+| `profiles` | column of a profiled table or file | `asset_key`, `column_name`, `row_count`, `null_count`, `distinct_count`, `min_value`, `max_value`, `mean_value`, `top_values`, `histogram`, `percentiles` |
+| `item_info` | item you've described | `asset_key`, `purpose`, `grain`, `refresh`, `lifecycle`, `trust`, `owner`, `sensitive` |
+| `column_info` | column you've described or marked sensitive | `asset_key`, `column_name`, `description`, `sensitive` |
+| `relationships` | join between two tables | `src_key`, `src_columns`, `dst_key`, `dst_columns`, `how`, `state` |
+| `knowledge`, `questions`, `metrics` | knowledge note, worked question, metric | `title` / `question` / `name`, then the body, SQL or definition |
+| `features` | ML feature in the dictionary | `name`, `project`, `description`, `window`, `known_at_prediction`, `models` |
+| `keys`, `key_columns` | company-wide key, and the columns that hold it | `name`, `asset_key`, `column_name` |
+| `business_projects`, `business_project_members` | business project, and the items in it | `name`, `purpose`, `asset_key` |
 | `functions` | function in your code | `asset_key`, `function`, `line`, `parameters`, `returns`, `calls`, `doc` |
 | `packages` | package a project declares or imports | `project`, `package`, `version`, `declared_in`, `status` |
-| `profiles` | column of a profiled table or file | `asset_key`, `column_name`, `row_count`, `null_count`, `distinct_count`, `min_value`, `max_value`, `mean_value`, `top_values` |
+| `series_files` | file in a dated file series | `series_key`, `file`, `period`, `rows`, `layout_differs` |
+| `change_history` | change seen by a scan | `asset_key`, `at`, `change`, `detail` |
+
+Values from columns marked sensitive are never exported.
 
 Keys look like `sql://warehouse/yourdatabase/dbo.sales`,
 `py://forecasting/src/features.py` and `files://extracts/sales.csv`. CSVs are UTF-8 with a BOM so Excel opens them cleanly.

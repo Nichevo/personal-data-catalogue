@@ -249,6 +249,8 @@ def test_folder_scan_links_reports_and_workbooks(catalogue, tmp_path):
     measure = [c for c in catalogue.children(report) if c["kind"] == "measure"][0]
     assert measure["name"] == "Sales[Total Units]" and measure["description"] == "Units sold, net of returns"
     assert any(r["key"] == measure["key"] for r in catalogue.search("total units"))
+    from pdcat import aipack
+    assert "SUM(Sales[Units])" in aipack.build(catalogue)["reports.md"]  # the Copilot pack lists its measures
     # Rescanning an unchanged file reuses what was read.
     assert scan_folder(catalogue, "reports", folder)["reports"] == 1
     assert catalogue.get_asset(measure["key"])["status"] == "active"

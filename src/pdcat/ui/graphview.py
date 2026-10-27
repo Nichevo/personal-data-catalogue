@@ -21,8 +21,10 @@ _viewer = components.declare_component("pdcat_graph", path=str(Path(__file__).wi
 
 
 def graph_view(cat: Catalogue, elements: list[dict[str, Any]], *, key: str, height: int = 620,
-               direction: str = "RIGHT", name: str = "graph") -> None:
-    """Draw the graph. Opens what was clicked, and remembers which groups are open."""
+               direction: str = "RIGHT", name: str = "graph", packed: bool = False) -> None:
+    """Draw the graph. Opens what was clicked, and remembers which groups are open.
+    packed: lay each group out on its own and pack the groups together, for groups that don't flow into
+    each other (database subject areas)."""
     remembered = cat.setting(f"graph_open:{key}", None)
     leaves = sum(1 for e in elements if "source" not in e["data"] and not e["data"]["id"].startswith("grp:"))
     if remembered is None:
@@ -30,6 +32,7 @@ def graph_view(cat: Catalogue, elements: list[dict[str, Any]], *, key: str, heig
         remembered = [e["data"]["id"] for e in elements if e["data"]["id"].startswith("grp:")
                       and not e["data"].get("closed")] if leaves <= 40 else []
     event = _viewer(elements=elements, open=remembered, height=height, direction=direction, name=name, key=key,
+                    packed=packed,
                     default=None)
     stamp = (event or {}).get("at")
     if not event or stamp == st.session_state.get(f"{key}-last-event"):

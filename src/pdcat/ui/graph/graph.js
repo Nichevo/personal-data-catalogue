@@ -25,6 +25,13 @@
     send("streamlit:setComponentValue", { value: Object.assign({ n: sent, at: Date.now() }, v), dataType: "json" });
   }
 
+  const ruler = document.createElement("canvas").getContext("2d");
+  function tagWidth(n) {
+    ruler.font = '11px "Source Sans Pro", "Segoe UI", sans-serif';
+    const longest = Math.max(...String(n.data("label") || "").split("\n").map((t) => ruler.measureText(t).width));
+    return Math.min(longest, 150) * 1.35 + 10;
+  }
+
   function style(dark) {
     const fg = dark ? "#e8e8ea" : "#262730";
     const groupBg = dark ? "#23252c" : "#f6f7f9";
@@ -61,12 +68,35 @@
                                                                   "border-color": COLORS[k][1] } });
     });
     s.splice(1, 0, { selector: "node[kind = 'table'], node[kind = 'view']", style: { "shape": "barrel" } });
-    s.splice(1, 0, { selector: "node[kind = 'file']", style: { "shape": "tag" } });
+    // A tag's point takes the right third of the box, so make it wider and move the text left.
+    s.splice(1, 0, { selector: "node[kind = 'file']", style: { "shape": "tag", "width": tagWidth,
+                                                                "text-margin-x": (n) => -0.12 * tagWidth(n) } });
     s.splice(1, 0, { selector: "node[kind = 'package']", style: { "shape": "rectangle" } });
     return s;
   }
 
+  // Packed: groups are laid out on their own and then packed into a box shaped like the viewer, for
+  // groups that don't flow into each other (database subject areas). Laid out together, ELK puts
+  // unconnected groups in one long row.
+  const GROUP = { "algorithm": "layered", "elk.separateConnectedComponents": true, "elk.aspectRatio": 1.6,
+                  "elk.spacing.nodeNode": 28, "elk.layered.spacing.nodeNodeBetweenLayers": 50,
+                  "elk.padding": "[top=28,left=12,bottom=12,right=12]" };
+
+  function viewerShape() {
+    const el = document.getElementById("cy");
+    return el.clientHeight ? el.clientWidth / el.clientHeight : 1.6;
+  }
+
   function layoutOptions(fit) {
+    if (args.packed) {
+      return {
+        name: "elk", fit: fit !== false, padding: 20, nodeDimensionsIncludeLabels: true, animate: false,
+        nodeLayoutOptions: (n) => (n.isParent() ? Object.assign({ "elk.direction": args.direction || "DOWN" }, GROUP)
+                                                : undefined),
+        elk: { "algorithm": "rectpacking", "elk.hierarchyHandling": "SEPARATE_CHILDREN",
+               "elk.aspectRatio": viewerShape(), "elk.spacing.nodeNode": 28 },
+      };
+    }
     return {
       name: "elk", fit: fit !== false, padding: 20, nodeDimensionsIncludeLabels: true, animate: false,
       elk: {
@@ -255,7 +285,7 @@
       r.setProperty("--panel", theme.secondaryBackgroundColor || "#262730");
       r.setProperty("--line", "#3b3d45");
     }
-    const data = JSON.stringify([args.elements, args.direction, args.algorithm, dark]);
+    const data = JSON.stringify([args.elements, args.direction, args.algorithm, args.packed, dark]);
     if (data !== lastData) {
       lastData = data;
       build({ elements: args.elements || [], open: args.open || [] }, dark);
