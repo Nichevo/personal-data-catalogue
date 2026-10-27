@@ -170,6 +170,10 @@ one at a time, and every query is logged:
   search, the review list, coverage, diagrams and exports; scans keep it hidden, and a
   list lets you bring it back. Tables SQL Server tools create for themselves (marked
   `microsoft_database_tools_support`, like `sysdiagrams`) are skipped by default.
+- **Clearer feature dictionary**: rename it "ML model features" and say up front that it
+  lists the inputs to your machine learning models. Each row names the models that use the
+  feature, the script that builds it and the table and column it comes from, each one a
+  link, instead of a bare count of models.
 
 ## Upgrading from version 1
 
