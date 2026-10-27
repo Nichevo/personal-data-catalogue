@@ -224,6 +224,13 @@ one at a time, and every query is logged:
   version shows on the code map, in search and in lineage. Older versions stay listed
   on its page with their dates and a "what changed" view, and you can split a pair that
   aren't really versions.
+- **Main and backup tables**: link a table on SQL Server with its copy elsewhere (an
+  Azure SQL backup with extra history, say) and mark which is the main one. Pairs are
+  suggested when the same table name and columns turn up on two servers, for you to
+  confirm. Both pages show the pair side by side: where each lives, the date range each
+  covers (from the profiles), row counts and any columns only one has. On the code map
+  and in lineage the pair shows as one table with a "main + backup" badge, so a script
+  that reads both is clear about why.
 - **Suggested metrics**: the Metric glossary suggests metrics found in your code and
   reports: functions such as `wape()` or `forecast_accuracy()`, named calculations
   (`mape = ...`), computed SQL columns (`SUM(x) / SUM(y) AS fill_rate`), and Power BI
