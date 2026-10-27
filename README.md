@@ -198,6 +198,12 @@ one at a time, and every query is logged:
   page, you can link a project to the environment it runs in, and the project page
   compares what's installed with what the code imports and what `environment.yml` asks
   for (missing, extra, or a different version).
+- **Import a schedule list**: bring in a CSV that lists scheduled jobs (a Task Scheduler
+  export, a job list, a hand-kept sheet). You pick which columns hold the job name, the
+  command and the timing. Each job is matched to scripts by the command or path it runs,
+  or by a script, folder or project name in any column. A clear match is linked; a
+  likely one is shown as a suggestion for you to confirm or change; anything else is
+  listed as unmatched so you can link it by hand. Script pages then show when they run.
 
 ## Upgrading from version 1
 
