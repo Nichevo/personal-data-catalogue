@@ -174,6 +174,10 @@ one at a time, and every query is logged:
   lists the inputs to your machine learning models. Each row names the models that use the
   feature, the script that builds it and the table and column it comes from, each one a
   link, instead of a bare count of models.
+- **Copilot pack test questions**: the Copilot pack page lists ten or so questions built
+  from your own catalogue ("Which scripts write ml.ForecastOutput?", "What does Forecast
+  accuracy mean?", "What replaces dbo.Store?") with the answer the pack holds, so you can
+  ask Copilot and check it gets them right. They also go in the pack as a test file.
 
 ## Upgrading from version 1
 
