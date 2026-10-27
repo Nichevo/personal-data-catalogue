@@ -42,14 +42,34 @@ NEEDS_DATA = {"Search", "Data issues", "Needs notes", "Recent notes", "Unmatched
               "Describe columns", "Edit many items"}
 
 
+def leave_item() -> None:
+    """Picking a page from the menu closes the item page that is open, so the page shows."""
+    st.query_params.pop("asset", None)
+    st.query_params.pop("fn", None)
+
+
+def pick_from_item(section: str) -> None:
+    """A page picked while an item page is open: open that page."""
+    st.session_state[f"nav-{section}"] = st.session_state.pop(f"nav-item-{section}")
+    leave_item()
+
+
 def sidebar(cat: Catalogue) -> tuple[str, Page]:
     from pdcat.review import count_open
     secs = sections()
     with st.sidebar:
         st.header("Data catalogue")
-        section = st.selectbox("Section", list(secs), key="nav-section", label_visibility="collapsed")
+        section = st.selectbox("Section", list(secs), key="nav-section", label_visibility="collapsed",
+                               on_change=leave_item)
         pages = secs[section]
-        page = st.radio("Page", list(pages), key=f"nav-{section}", label_visibility="collapsed")
+        if st.query_params.get("asset"):
+            # On an item page no menu page is ticked, so clicking any page, even the one you came from, opens it.
+            st.radio("Page", list(pages), index=None, key=f"nav-item-{section}", label_visibility="collapsed",
+                     on_change=pick_from_item, args=(section,))
+            page = st.session_state.get(f"nav-{section}") or next(iter(pages))
+        else:
+            page = st.radio("Page", list(pages), key=f"nav-{section}", label_visibility="collapsed",
+                            on_change=leave_item)
         st.divider()
         stats = cat.stats()
         kinds = stats["kinds"]

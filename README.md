@@ -151,6 +151,86 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## Planned for version 2.1
+
+- **"Called by" on script pages**: every other script that uses a script, in one list.
+  That means scripts that import it (and which of its functions they call), and scripts
+  that run it with `subprocess`, `os.system`, `runpy`, `python -m`, `%run` or
+  `!python`. Run links also show on the code map.
+- **Link files found in another folder**: when a script names `sales.csv` but the only
+  `sales.csv` catalogued is in a different folder, link it anyway and flag it as a
+  possible wrong folder (today the folders must match). When the same file name turns up
+  in several folders, say so on the link and on the script and file pages (today the
+  newest is picked without a word).
+- **Business projects**: add a whole folder (a project, a sub-folder like
+  `forecasting/src`, or a data folder) in one go, with an option to keep adding new files
+  that appear there. Start a new business project straight from a table or script page,
+  with that item already in it.
+- **Mark items as not relevant**: one click hides a table such as `dbo.sysdiagrams` from
+  search, the review list, coverage, diagrams and exports; scans keep it hidden, and a
+  list lets you bring it back. Tables SQL Server tools create for themselves (marked
+  `microsoft_database_tools_support`, like `sysdiagrams`) are skipped by default.
+- **Clearer feature dictionary**: rename it "ML model features" and say up front that it
+  lists the inputs to your machine learning models. Each row names the models that use the
+  feature, the script that builds it and the table and column it comes from, each one a
+  link, instead of a bare count of models.
+- **Copilot pack test questions**: the Copilot pack page lists ten or so questions built
+  from your own catalogue ("Which scripts write ml.ForecastOutput?", "What does Forecast
+  accuracy mean?", "What replaces dbo.Store?") with the answer the pack holds, so you can
+  ask Copilot and check it gets them right. They also go in the pack as a test file.
+- **Import from an Excel sheet**: upload a workbook, pick the sheet, and say what each row
+  is: a SQL query (title, SQL, notes become pasted SQL linked to the tables it uses, or
+  question library entries), a metric (name, definition, formula, e.g. how forecast
+  accuracy is calculated), or a knowledge note. Match columns to fields, preview, then
+  import; each item remembers which workbook it came from. A sheet of free text can be
+  imported whole as one knowledge note.
+- **Reference documents on business projects**: attach design documents (Word, PDF,
+  Markdown, text) to a business project. Add a new version at any time and every older
+  version is kept, newest first, with its date. Tables, scripts and other catalogued
+  items the document names are highlighted in the text and listed as links, and those
+  items show the document on their own pages. Document text is searchable and can go in
+  the Copilot pack.
+- **Menu guide**: a link that always shows in the sidebar, opening a page that explains
+  every section and page in the menu in a line each, with a button to open it.
+- **Installed conda environments**: read the conda environments on your machine (from
+  each environment's `conda-meta` folder, without running conda) and record every
+  installed package with its exact version and channel. Each environment gets its own
+  page, you can link a project to the environment it runs in, and the project page
+  compares what's installed with what the code imports and what `environment.yml` asks
+  for (missing, extra, or a different version).
+- **Import a schedule list**: bring in a CSV that lists scheduled jobs (a Task Scheduler
+  export, a job list, a hand-kept sheet). You pick which columns hold the job name, the
+  command and the timing. Each job is matched to scripts by the command or path it runs,
+  or by a script, folder or project name in any column. A clear match is linked; a
+  likely one is shown as a suggestion for you to confirm or change; anything else is
+  listed as unmatched so you can link it by hand. Script pages then show when they run.
+- **Find more output files**: spot files a script writes in ways the scan misses today:
+  `df.to_csv(filepath)` where `filepath` is passed in as a function argument (followed
+  back to the call that gives the real path), imported from another module
+  (`from settings import OUTPUT_DIR`), an argparse default, a `self.` attribute or
+  returned by a helper function; paths looked up in a config dictionary in code;
+  every branch of an if/else; `pd.ExcelWriter`, `Path.write_text` and
+  `Path.open`, `np.save`, `shutil.copy`, polars `write_csv`/`write_parquet` and openpyxl
+  `wb.save`.
+  Every read or write call is recorded even when its path can't be worked out: the
+  script page lists it as "Unknown file" with the line and the code (`df.to_csv(filepath)`),
+  it goes on the To review list, and you can say which file it is, which then links it
+  like any other.
+- **Script versions**: scripts in the same folder whose names differ only by a version
+  or date at the end (`forecast_v2.py`, `forecast_v3.py`, `forecast_20261001.py`,
+  `forecast_old.py`, `forecast - Copy.py`) are grouped as versions of one script. The
+  current one is the one other code imports or runs, or the one in the schedule list,
+  or else the newest; when that isn't clear, you tick the main one. Only the current
+  version shows on the code map, in search and in lineage. Older versions stay listed
+  on its page with their dates and a "what changed" view, and you can split a pair that
+  aren't really versions.
+- **Suggested metrics**: the Metric glossary suggests metrics found in your code and
+  reports: functions such as `wape()` or `forecast_accuracy()`, named calculations
+  (`mape = ...`), computed SQL columns (`SUM(x) / SUM(y) AS fill_rate`), and Power BI
+  measures not yet in the glossary. Each suggestion shows where it was found and the
+  formula, and you tick the ones to add; the rest can be dismissed so they don't come
+  back.
+
 ## Upgrading from version 1
 
 Install the new version the same way as before (`pip install -e .` or
@@ -159,6 +239,12 @@ Install the new version the same way as before (`pip install -e .` or
 untouched copy of the old file next to it (the path is shown in the app and on the
 Settings page). Nothing is removed; every note is kept. Rescan to fill in the new
 details (`pdcat scan`).
+
+Version 2 needs Streamlit 1.62 or later; both install commands above update it. With an
+older Streamlit the app can stop with "Exception in ASGI application … Expected
+http.response.start", which comes from older Streamlit clashing with a newer Starlette.
+To update just Streamlit: `pip install -U "streamlit>=1.62"` (or
+`conda install -c conda-forge "streamlit>=1.62"` in a conda environment).
 
 ## What it does
 

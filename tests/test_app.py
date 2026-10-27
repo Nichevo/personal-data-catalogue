@@ -15,7 +15,9 @@ def goto(app, page: str):
     from pdcat.ui.main import sections
     section = next(name for name, pages in sections().items() if page in pages)
     app.sidebar.selectbox(key="nav-section").set_value(section).run()
-    app.sidebar.radio(key=f"nav-{section}").set_value(page).run()
+    keys = [r.key for r in app.sidebar.radio]
+    key = f"nav-item-{section}" if f"nav-item-{section}" in keys else f"nav-{section}"
+    app.sidebar.radio(key=key).set_value(page).run()
     return app
 
 
@@ -228,3 +230,22 @@ def test_report_workbook_and_measure_pages(app, catalogue, tmp_path):
     assert not app.exception
     from pdcat.knowledge import list_metrics
     assert list_metrics(catalogue)[0]["from_measure"] == measure
+
+
+def test_menu_leaves_an_item_page(app):
+    app.query_params["asset"] = SALES
+    app.run()
+    goto(app, "Code map")
+    assert not app.exception
+    assert "asset" not in app.query_params and app.title[0].value == "Code map"
+
+
+def test_menu_reopens_the_page_you_came_from(app):
+    app.run()
+    assert app.title[0].value == "Search"
+    app.query_params["asset"] = SALES
+    app.run()
+    assert app.sidebar.radio(key="nav-item-🔎 Find").value is None  # no page ticked on an item page
+    app.sidebar.radio(key="nav-item-🔎 Find").set_value("Search").run()
+    assert not app.exception
+    assert "asset" not in app.query_params and app.title[0].value == "Search"

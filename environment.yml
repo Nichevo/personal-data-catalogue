@@ -8,7 +8,7 @@ channels:
 dependencies:
   - python=3.12
   - pip
-  - streamlit>=1.46
+  - streamlit>=1.62
   - pandas>=2.0
   - pyarrow>=14
   - pyodbc>=5.0
