@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import fnmatch
+import getpass
 import sqlite3
 import uuid
 from collections import defaultdict
@@ -121,7 +122,273 @@ CREATE TABLE IF NOT EXISTS scans (
     finished_at TEXT,
     summary     TEXT
 );
+
+-- App settings (backups, SQL pacing, Copilot pack…) and the catalogue's revision counter.
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- What you know about an item, kept apart from scanned data so rescans never touch it.
+-- asset_key is any key: a table, file, script, report, business project ("bp://…") or package ("pkg://…").
+CREATE TABLE IF NOT EXISTS item_info (
+    asset_key        TEXT PRIMARY KEY,
+    purpose          TEXT,
+    grain            TEXT,
+    refresh          TEXT,          -- daily | weekly | monthly | ad hoc
+    lifecycle        TEXT,          -- in use | experimental | deprecated | retired
+    replaced_by      TEXT,
+    trust            TEXT,          -- trusted | caution | do not use
+    owner            TEXT,
+    sensitive        INTEGER NOT NULL DEFAULT 0,
+    freshness_column TEXT,
+    copy_of          TEXT,
+    updated_at       TEXT,
+    author           TEXT,
+    import_batch     INTEGER
+);
+
+-- Your description of a column, and whether its values are sensitive.
+CREATE TABLE IF NOT EXISTS column_info (
+    asset_key    TEXT NOT NULL,
+    column_name  TEXT NOT NULL,
+    description  TEXT,
+    sensitive    INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT,
+    author       TEXT,
+    import_batch INTEGER,
+    PRIMARY KEY (asset_key, column_name)
+);
+
+-- Company-wide keys such as PlantID, and the columns that carry them.
+CREATE TABLE IF NOT EXISTS keys (
+    name          TEXT PRIMARY KEY,
+    state         TEXT NOT NULL DEFAULT 'active',   -- active | suggested | rejected
+    description   TEXT,
+    format        TEXT,
+    master_key    TEXT,
+    master_column TEXT,
+    aliases       TEXT NOT NULL DEFAULT '[]',
+    evidence      TEXT,
+    created_at    TEXT,
+    updated_at    TEXT,
+    author        TEXT,
+    import_batch  INTEGER
+);
+CREATE TABLE IF NOT EXISTS key_columns (
+    key_name     TEXT NOT NULL,
+    asset_key    TEXT NOT NULL,
+    column_name  TEXT NOT NULL,
+    state        TEXT NOT NULL DEFAULT 'suggested', -- confirmed | suggested | rejected
+    how          TEXT,
+    updated_at   TEXT,
+    import_batch INTEGER,
+    PRIMARY KEY (asset_key, column_name)
+);
+
+-- Business projects ("Demand forecasting") that group tables, scripts, files and reports.
+CREATE TABLE IF NOT EXISTS bprojects (
+    uid          TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    purpose      TEXT,
+    status       TEXT,
+    owner        TEXT,
+    notes        TEXT,
+    created_at   TEXT,
+    updated_at   TEXT,
+    author       TEXT,
+    import_batch INTEGER
+);
+CREATE TABLE IF NOT EXISTS bproject_members (
+    project_uid TEXT NOT NULL,
+    asset_key   TEXT NOT NULL,
+    state       TEXT NOT NULL DEFAULT 'confirmed',  -- confirmed | suggested | rejected
+    PRIMARY KEY (project_uid, asset_key)
+);
+
+-- Standalone knowledge: articles and business rules that needn't attach to anything.
+CREATE TABLE IF NOT EXISTS knowledge (
+    uid          TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    body         TEXT NOT NULL DEFAULT '',
+    section      TEXT,             -- Business rules | How-to | History | …
+    tags         TEXT NOT NULL DEFAULT '',
+    triggers     TEXT NOT NULL DEFAULT '',
+    pinned       TEXT NOT NULL DEFAULT '[]',
+    excluded     TEXT NOT NULL DEFAULT '[]',
+    author       TEXT,
+    created_at   TEXT,
+    updated_at   TEXT,
+    confirmed_at TEXT,
+    import_batch INTEGER
+);
+
+-- Real analyst questions with the tables and query that answer them.
+CREATE TABLE IF NOT EXISTS questions (
+    uid          TEXT PRIMARY KEY,
+    question     TEXT NOT NULL,
+    answer       TEXT,
+    sql          TEXT,
+    tables       TEXT NOT NULL DEFAULT '[]',
+    caveats      TEXT,
+    tags         TEXT NOT NULL DEFAULT '',
+    author       TEXT,
+    created_at   TEXT,
+    updated_at   TEXT,
+    import_batch INTEGER
+);
+
+-- Business metric definitions ("forecast accuracy").
+CREATE TABLE IF NOT EXISTS metrics (
+    uid          TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    definition   TEXT,
+    formula      TEXT,
+    sources      TEXT NOT NULL DEFAULT '[]',
+    owner        TEXT,
+    caveats      TEXT,
+    tags         TEXT NOT NULL DEFAULT '',
+    from_measure TEXT,
+    author       TEXT,
+    created_at   TEXT,
+    updated_at   TEXT,
+    import_batch INTEGER
+);
+
+-- Machine learning feature dictionary.
+CREATE TABLE IF NOT EXISTS features (
+    uid                 TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    project             TEXT,
+    description         TEXT,
+    entity              TEXT,
+    grain               TEXT,
+    sources             TEXT NOT NULL DEFAULT '[]',   -- ["<asset key>#<column>", …]
+    built_by            TEXT,                         -- "<script key>::<function>"
+    expression          TEXT,
+    window              TEXT,
+    known_at_prediction TEXT,                         -- yes | no | unknown
+    leakage_reason      TEXT,
+    missing             TEXT,
+    encoding            TEXT,
+    data_type           TEXT,
+    models              TEXT NOT NULL DEFAULT '[]',
+    importance          TEXT NOT NULL DEFAULT '{}',
+    status              TEXT,
+    owner               TEXT,
+    state               TEXT NOT NULL DEFAULT 'confirmed',  -- confirmed | suggested | rejected
+    baseline            TEXT,
+    author              TEXT,
+    created_at          TEXT,
+    updated_at          TEXT,
+    import_batch        INTEGER
+);
+
+-- What changed between scans: columns added, removed or retyped, row counts, new and dropped items.
+CREATE TABLE IF NOT EXISTS schema_history (
+    id        INTEGER PRIMARY KEY,
+    asset_key TEXT NOT NULL,
+    at        TEXT NOT NULL,
+    change    TEXT NOT NULL,
+    detail    TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_history_asset ON schema_history(asset_key);
+
+-- Every query sent to a SQL Server, so you can show a DBA exactly what ran.
+CREATE TABLE IF NOT EXISTS query_log (
+    id       INTEGER PRIMARY KEY,
+    at       TEXT NOT NULL,
+    source   TEXT,
+    database TEXT,
+    purpose  TEXT,
+    query    TEXT NOT NULL,
+    rows     INTEGER,
+    ms       INTEGER,
+    status   TEXT,
+    error    TEXT
+);
+
+-- Tables waiting to be profiled, run at a controlled pace once you approve them.
+CREATE TABLE IF NOT EXISTS profile_queue (
+    asset_key    TEXT PRIMARY KEY,
+    state        TEXT NOT NULL DEFAULT 'queued',  -- queued | approved | done | failed | skipped
+    full_table   INTEGER NOT NULL DEFAULT 0,
+    requested_at TEXT,
+    finished_at  TEXT,
+    error        TEXT
+);
+
+-- Table-to-table relationships for ERDs: declared keys, joins found in code, matching key names.
+CREATE TABLE IF NOT EXISTS relationships (
+    src_key     TEXT NOT NULL,
+    src_columns TEXT NOT NULL,
+    dst_key     TEXT NOT NULL,
+    dst_columns TEXT NOT NULL,
+    how         TEXT NOT NULL,     -- fk | join | name | key
+    state       TEXT NOT NULL,     -- declared | suggested | confirmed | rejected
+    evidence    TEXT,
+    PRIMARY KEY (src_key, src_columns, dst_key, dst_columns)
+);
+
+-- Subject areas: groups of related tables for ERDs, worked out automatically and editable by hand.
+CREATE TABLE IF NOT EXISTS subject_areas (
+    uid          TEXT PRIMARY KEY,
+    database_key TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    manual       INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS area_members (
+    area_uid  TEXT NOT NULL,
+    asset_key TEXT NOT NULL,
+    shared    INTEGER NOT NULL DEFAULT 0,
+    manual    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (area_uid, asset_key)
+);
+
+-- Links you add by hand ("created by this script"). They survive rescans.
+CREATE TABLE IF NOT EXISTS manual_links (
+    src_key      TEXT NOT NULL,
+    relation     TEXT NOT NULL,
+    dst_key      TEXT NOT NULL,
+    removed      INTEGER NOT NULL DEFAULT 0,  -- 1 = hide a link the scanner found
+    created_at   TEXT,
+    author       TEXT,
+    import_batch INTEGER,
+    PRIMARY KEY (src_key, relation, dst_key)
+);
+
+-- Notes and scans merged in from colleagues, so a whole import can be undone.
+CREATE TABLE IF NOT EXISTS import_batches (
+    id          INTEGER PRIMARY KEY,
+    file        TEXT,
+    author      TEXT,
+    imported_at TEXT NOT NULL,
+    summary     TEXT,
+    undone      INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS source_map (
+    author      TEXT NOT NULL,
+    their_source TEXT NOT NULL,
+    my_source   TEXT NOT NULL,
+    PRIMARY KEY (author, their_source)
+);
 """
+
+SCHEMA_VERSION = 2
+
+# Columns added to v1 tables. Added in place by the upgrade; nothing is dropped.
+ADDED_COLUMNS = {
+    "notes": {"uid": "TEXT", "author": "TEXT", "confirmed_at": "TEXT", "archived": "INTEGER NOT NULL DEFAULT 0",
+              "import_batch": "INTEGER"},
+    "links": {"how": "TEXT"},
+    "profiles": {"histogram": "TEXT", "percentiles": "TEXT", "hints": "TEXT"},
+    "folders": {"canonical": "TEXT"},
+}
+
+
+class UpgradeError(RuntimeError):
+    """The catalogue couldn't be upgraded. The message says where the untouched backup is."""
 
 TABLE_KINDS = ("table", "view")
 MANUAL_SOURCE = "manual"  # SQL you paste in by hand; never touched by scans
@@ -139,26 +406,99 @@ def split_tags(tags: str) -> list[str]:
 class Catalogue:
     def __init__(self, path: str | Path):
         self.path = Path(path)
-        if str(path) != ":memory:":
+        memory = str(path) == ":memory:"
+        existed = not memory and self.path.exists() and self.path.stat().st_size > 0
+        if not memory:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.executescript(SCHEMA)
-        self._migrate()
+        self.upgrade_backup: Path | None = None
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        has_data = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'assets'").fetchone() is not None
+        if existed and has_data and version < SCHEMA_VERSION:
+            # Upgrading a catalogue made by an older version: keep an untouched copy first.
+            self.upgrade_backup = self._safety_copy(version)
+        try:
+            self.conn.executescript(SCHEMA)
+            self._migrate()
+        except Exception as e:
+            self.conn.close()
+            if self.upgrade_backup:
+                raise UpgradeError(
+                    f"Couldn't upgrade the catalogue at {self.path} ({type(e).__name__}: {e}). Nothing was changed "
+                    f"in your notes: an untouched copy is at {self.upgrade_backup}. Copy it back over the "
+                    "catalogue file to keep using the old version.") from e
+            raise
         self.fts = self._create_search_index()
 
     def close(self) -> None:
         self.conn.close()
 
+    def _safety_copy(self, version: int) -> Path:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = self.path.with_name(f"{self.path.stem}.before-v{SCHEMA_VERSION}-{stamp}{self.path.suffix or '.db'}")
+        dest = sqlite3.connect(str(target))
+        try:
+            self.conn.backup(dest)
+        finally:
+            dest.close()
+        return target
+
     def _migrate(self) -> None:
-        """Bring catalogues made by older versions up to date."""
-        note_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(notes)")}
+        """Bring catalogues made by older versions up to date. Only adds: no table, column or note is removed."""
         with self.conn:
+            for table, cols in ADDED_COLUMNS.items():
+                have = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+                for name, decl in cols.items():
+                    if name not in have:
+                        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+            note_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(notes)")}
             if "note_type" not in note_cols:
                 self.conn.execute("ALTER TABLE notes ADD COLUMN note_type TEXT NOT NULL DEFAULT 'note'")
             if "status" not in note_cols:
                 self.conn.execute("ALTER TABLE notes ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
+            # Every note gets an id that is the same on every machine, so notes can be shared and merged.
+            self.conn.execute("UPDATE notes SET uid = lower(hex(randomblob(16))) WHERE uid IS NULL")
+            self.conn.execute("UPDATE notes SET author = ? WHERE author IS NULL", (self.author(),))
+            self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_notes_uid ON notes(uid)")
+            self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    # ---- settings -------------------------------------------------------
+
+    def setting(self, key: str, default: Any = None) -> Any:
+        row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return json.loads(row["value"]) if row else default
+
+    def set_setting(self, key: str, value: Any) -> None:
+        with self.conn:
+            self.conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                              "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, json.dumps(value)))
+        if key != "revision":
+            self.changed()
+
+    def author(self) -> str:
+        """Who notes are written by on this machine: the name in Settings, or your Windows user name."""
+        try:
+            row = self.conn.execute("SELECT value FROM settings WHERE key = 'author'").fetchone()
+        except sqlite3.OperationalError:
+            row = None
+        if row and json.loads(row["value"]):
+            return json.loads(row["value"])
+        try:
+            return getpass.getuser()
+        except Exception:
+            return "me"
+
+    def revision(self) -> int:
+        """A counter that goes up whenever the catalogue changes, so the app knows when cached pages are stale."""
+        return int(self.setting("revision", 0))
+
+    def changed(self) -> None:
+        with self.conn:
+            self.conn.execute("INSERT INTO settings (key, value) VALUES ('revision', '1') "
+                              "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1")
 
     def _create_search_index(self) -> bool:
         try:
@@ -361,6 +701,7 @@ class Catalogue:
         with self.conn:
             self.conn.execute("DELETE FROM search_idx")
             self.conn.executemany("INSERT INTO search_idx (key, kind, source, name, body) VALUES (?, ?, ?, ?, ?)", rows)
+        self.changed()
 
     def search(self, text: str, *, kind: str | None = None, source: str | None = None,
                limit: int = 100) -> list[sqlite3.Row]:
@@ -523,6 +864,7 @@ class Catalogue:
                 "INSERT INTO folders (name, path, recursive, added_at) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(name) DO UPDATE SET path = excluded.path, recursive = excluded.recursive",
                 (name, path, int(recursive), now()))
+        self.changed()
 
     def folders(self) -> list[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM folders ORDER BY name").fetchall()
@@ -583,8 +925,10 @@ class Catalogue:
         ts = now()
         with self.conn:
             cur = self.conn.execute(
-                "INSERT INTO notes (asset_key, body, tags, created_at, updated_at, note_type) VALUES (?, ?, ?, ?, ?, ?)",
-                (asset_key, body.rstrip(), ", ".join(split_tags(tags)), ts, ts, note_type),
+                "INSERT INTO notes (asset_key, body, tags, created_at, updated_at, note_type, uid, author) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (asset_key, body.rstrip(), ", ".join(split_tags(tags)), ts, ts, note_type, uuid.uuid4().hex,
+                 self.author()),
             )
         self.rebuild_search()
         return cur.lastrowid
@@ -602,6 +946,7 @@ class Catalogue:
             raise ValueError("status must be 'open' or 'resolved'")
         with self.conn:
             self.conn.execute("UPDATE notes SET status = ?, updated_at = ? WHERE id = ?", (status, now(), note_id))
+        self.changed()
 
     def open_issues(self) -> list[sqlite3.Row]:
         return self.conn.execute(
@@ -627,6 +972,7 @@ class Catalogue:
                   json.dumps(c.get("top") or [], default=str), method, ts)
                  for i, c in enumerate(columns)],
             )
+        self.changed()
 
     def profile(self, key: str) -> list[sqlite3.Row]:
         return self.conn.execute(

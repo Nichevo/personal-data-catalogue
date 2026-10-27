@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import configparser
+import functools
 import re
 import sys
 from pathlib import Path
@@ -263,14 +264,19 @@ def package_for(module: str) -> str:
     """Best guess at the package that provides an import, e.g. sklearn -> scikit-learn."""
     if module in ALIASES:
         return ALIASES[module]
+    dists = _installed_distributions().get(module)
+    return dists[0] if dists else module
+
+
+@functools.lru_cache(maxsize=1)
+def _installed_distributions() -> dict[str, list[str]]:
+    """Import name -> installed packages. Reading every package's metadata is slow (seconds in a big
+    conda environment on Windows), so it is done once per run of the app."""
     try:
         from importlib.metadata import packages_distributions
-        dists = packages_distributions().get(module)
-        if dists:
-            return dists[0]
+        return packages_distributions()
     except Exception:  # metadata can be odd in some environments
-        pass
-    return module
+        return {}
 
 
 def compare(env: dict[str, Any], imported: dict[str, list[str]], home_built: set[str]) -> dict[str, Any]:
