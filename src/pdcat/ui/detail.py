@@ -57,6 +57,9 @@ def detail(cat: Catalogue, key: str) -> None:
         st.error("Marked **don't use**. See the notes for why.")
     if asset["status"] == "missing":
         st.warning("Not found in the latest scan. It may have been dropped, renamed or deleted.")
+    if attrs.get("imported_from"):
+        st.info(f"From {attrs['imported_from']}'s scan, merged from a share file. Scan the source yourself to "
+                "replace it with your own.", icon="📥")
     if attrs.get("parse_error"):
         st.warning(f"Couldn't fully read this file: {attrs['parse_error']}")
     if attrs.get("read_error"):

@@ -186,6 +186,64 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_share(args: argparse.Namespace) -> int:
+    from .sharing import to_share_json
+
+    cat = Catalogue(load_config(find_config(args.config)).db_path)
+    Path(args.out).write_text(to_share_json(cat, args.scan or []), encoding="utf-8")
+    print(f"Wrote {args.out}. Send it to a colleague to merge with `pdcat merge`.")
+    cat.close()
+    return 0
+
+
+def cmd_merge(args: argparse.Namespace) -> int:
+    from .sharing import merge, preview, read_share, suggest_mapping
+
+    cat = Catalogue(load_config(find_config(args.config)).db_path)
+    pack = read_share(Path(args.file).read_text(encoding="utf-8"))
+    mapping = suggest_mapping(cat, pack)
+    for m in args.map or []:
+        theirs, _, mine = m.partition("=")
+        mapping[theirs.strip()] = mine.strip()
+    p = preview(cat, pack, mapping)
+    print(f"From {pack.get('author') or 'someone'} ({pack.get('made_at', '')[:10]}). Their sources: "
+          + ", ".join(f"{k} -> {v}" for k, v in mapping.items()))
+    for table, c in p["sections"].items():
+        if any(c.values()):
+            print(f"  {table}: {c['new']} new, {c['fills']} fill gaps, {c['different']} different, {c['same']} same")
+    for source, s in p["scans"].items():
+        print(f"  scan of {source} into {s['into']}: {s['new']} of {s['items']} items new")
+    if args.preview:
+        print("Preview only: nothing was changed.")
+        return 0
+    result = merge(cat, pack, mapping, take_theirs=args.take_theirs, file_name=Path(args.file).name)
+    print(f"Merged as batch {result['batch']}. Undo it on the app's Share page.")
+    cat.close()
+    return 0
+
+
+def cmd_ai_export(args: argparse.Namespace) -> int:
+    from .aipack import write
+
+    cat = Catalogue(load_config(find_config(args.config)).db_path)
+    files = write(cat, Path(args.out), hide_locations=args.hide_locations, include_values=args.values,
+                  fmt="docx" if args.docx else "md")
+    print(f"Wrote {len(files)} files to {args.out}. Put the folder on OneDrive or SharePoint and add it to a "
+          "Copilot agent as knowledge; agent-instructions has the text to paste.")
+    cat.close()
+    return 0
+
+
+def cmd_openmetadata(args: argparse.Namespace) -> int:
+    from .openmeta import to_zip
+
+    cat = Catalogue(load_config(find_config(args.config)).db_path)
+    Path(args.out).write_bytes(to_zip(cat))
+    print(f"Wrote {args.out}. Unzip it and run load_openmetadata.py against your OpenMetadata server.")
+    cat.close()
+    return 0
+
+
 def cmd_ui(args: argparse.Namespace) -> int:
     cfg_path = find_config(args.config)
     cfg = load_config(cfg_path)
@@ -243,6 +301,29 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--format", choices=["csv", "json"], default="csv")
     e.add_argument("--out", default="catalogue-export", help="folder to write to (default: ./catalogue-export)")
     e.set_defaults(fn=cmd_export)
+
+    sh = sub.add_parser("share", help="write your notes and knowledge to a file a colleague can merge")
+    sh.add_argument("--out", default="catalogue-share.json")
+    sh.add_argument("--scan", action="append", help="also include your scan of this source (repeatable)")
+    sh.set_defaults(fn=cmd_share)
+
+    mg = sub.add_parser("merge", help="merge a colleague's share file into your catalogue")
+    mg.add_argument("file")
+    mg.add_argument("--map", action="append", help="their source = yours, e.g. dw=warehouse (repeatable)")
+    mg.add_argument("--take-theirs", action="store_true", help="where you both wrote something different, use theirs")
+    mg.add_argument("--preview", action="store_true", help="show what would change, change nothing")
+    mg.set_defaults(fn=cmd_merge)
+
+    ai = sub.add_parser("ai-export", help="write the Copilot pack: what the catalogue knows, as documents")
+    ai.add_argument("--out", default="copilot-pack")
+    ai.add_argument("--docx", action="store_true", help="Word files instead of Markdown")
+    ai.add_argument("--hide-locations", action="store_true", help="leave out server names and file locations")
+    ai.add_argument("--values", action="store_true", help="include value ranges and common values (never sensitive)")
+    ai.set_defaults(fn=cmd_ai_export)
+
+    om = sub.add_parser("openmetadata", help="export tables, descriptions, glossary and lineage for OpenMetadata")
+    om.add_argument("--out", default="openmetadata-export.zip")
+    om.set_defaults(fn=cmd_openmetadata)
 
     u = sub.add_parser("ui", help="open the catalogue in your browser")
     u.add_argument("--port", type=int)

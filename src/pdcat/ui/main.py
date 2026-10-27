@@ -31,7 +31,8 @@ def sections() -> dict[str, dict[str, Page]]:
         "🗺️ Map": {"Code map": code.code_map_page},
         "➕ Add": {"Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
                   "SQL scanning": scanning.scanning_page},
-        "📤 Share": {"Export": share.export_page},
+        "📤 Share": {"Share with colleagues": share.sharing_page, "Copilot pack": share.copilot_page,
+                    "Export": share.export_page},
         "⚙️ Settings": {"Settings": settings_page.settings_page},
     }
 

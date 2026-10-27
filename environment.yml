@@ -14,3 +14,7 @@ dependencies:
   - pyodbc>=5.0
   - pyyaml>=6
   - pytest>=8
+  # Optional readers for Power BI .pbix models and Excel macros
+  - olefile
+  - pip:
+      - pbixray
