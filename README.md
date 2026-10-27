@@ -269,6 +269,16 @@ one at a time, and every query is logged:
 - **Edit history** on notes and descriptions: who changed what and when, with undo.
 - **Schedule scans from the app**: a Settings button that creates (or removes) the
   weekly Task Scheduler task for you, and shows when it last ran and whether it worked.
+- **Naming rules audit**: paste a database's naming rules as text (from an email, say)
+  on its page. The text is kept as written, and each rule the app recognises becomes a
+  check you confirm or edit: prefixes (`vw_` for views, `usp_` for procedures), case
+  (PascalCase, snake_case), endings (`...ID`, `...Date`), no spaces or reserved words,
+  maximum length, which schema things belong in. Rules it can't turn into a check stay
+  as text, and the Copilot round trip can help write them. The audit shows each rule
+  with how many tables, views, procedures and columns pass, the ones that don't, and
+  lets you mark agreed exceptions. New objects that break a rule go on To review, the
+  results export to CSV, and the rules go in the Copilot pack so queries Copilot
+  writes follow them.
 - **A tidier menu**: To review takes in Data issues, Needs notes, Unmatched tables,
   Unlinked data and Duplicates as filter tabs; Coverage and Issue hotspots become one
   Health page; Recent notes and Recent changes become one What's new page; Describe
