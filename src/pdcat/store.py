@@ -600,13 +600,15 @@ class Catalogue:
         )
 
     def add_link(self, src_key: str, relation: str, dst_ref: str, source: str, *,
-                 dst_key: str | None = None, hint: str | None = None, evidence: str | None = None) -> None:
+                 dst_key: str | None = None, hint: str | None = None, evidence: str | None = None,
+                 how: str | None = None) -> None:
         """Record that src uses dst. dst_ref is "table:<name>" for a table to be matched later,
-        "file:<path>" for a file, or an exact asset key."""
+        "file:<path>" for a file, or an exact asset key. `how` says how the link was found
+        ("pandas read_csv", "path from config file"…), so you can judge how sure it is."""
         self.conn.execute(
-            "INSERT OR IGNORE INTO links (src_key, relation, dst_ref, dst_key, source, hint, evidence) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (src_key, relation, dst_ref, dst_key, source, hint, evidence),
+            "INSERT OR IGNORE INTO links (src_key, relation, dst_ref, dst_key, source, hint, evidence, how) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (src_key, relation, dst_ref, dst_key, source, hint, evidence, how),
         )
 
     def resolve_refs(self) -> None:
@@ -631,7 +633,11 @@ class Catalogue:
         updates = []
         for link in self.conn.execute("SELECT rowid, dst_ref, hint FROM links WHERE dst_ref LIKE 'table:%'"):
             parts = link["dst_ref"][len("table:"):].split(".")
-            cands = by_object.get(parts[-1], [])
+            if "{}" in parts[-1]:  # a name built at run time, e.g. f"sales_{region}"
+                pattern = re.compile(re.escape(parts[-1]).replace(r"\{\}", ".+") + "$")
+                cands = [c for obj, cs in by_object.items() if pattern.match(obj) for c in cs]
+            else:
+                cands = by_object.get(parts[-1], [])
             if len(parts) >= 2:
                 cands = [c for c in cands if c["schema"] == parts[-2]]
             if len(parts) >= 3:
@@ -657,10 +663,11 @@ class Catalogue:
         """
         files = []
         for row in self.conn.execute(
-                "SELECT key, source, attrs FROM assets WHERE kind = 'data_file' AND status = 'active'"):
+                "SELECT key, source, attrs FROM assets WHERE kind IN ('data_file', 'series_file') AND status = 'active'"):
             a = json.loads(row["attrs"])
-            files.append({"key": row["key"], "source": row["source"], "path": _norm_path(a.get("path", "")),
-                          "mtime": a.get("mtime") or 0})
+            # A file in a dated series links to the series, not to one month's copy.
+            files.append({"key": a.get("in_series") or row["key"], "source": row["source"],
+                          "path": _norm_path(a.get("path", "")), "mtime": a.get("mtime") or 0})
         if not files:
             return [(None, r["rowid"]) for r in self.conn.execute("SELECT rowid FROM links WHERE dst_ref LIKE 'file:%'")]
 
@@ -704,7 +711,8 @@ class Catalogue:
 
         rows = []
         seen = set()
-        for a in self.conn.execute("SELECT key, kind, source, name, description, attrs FROM assets"):
+        for a in self.conn.execute("SELECT key, kind, source, name, description, attrs FROM assets "
+                                   "WHERE kind != 'series_file'"):
             attrs = json.loads(a["attrs"])
             extra = " ".join(str(attrs.get(k, "")) for k in ("functions", "imports", "classes", "sql", "tags",
                                                                "measures", "pattern"))
@@ -816,7 +824,7 @@ class Catalogue:
 
     def list_assets(self, *, kind: str | None = None, source: str | None = None,
                     limit: int = 100) -> list[sqlite3.Row]:
-        filters, params = ["1 = 1"], []
+        filters, params = ["kind != 'series_file'"], []
         if kind:
             filters.append("kind = ?")
             params.append(kind)
@@ -892,7 +900,7 @@ class Catalogue:
 
     def stats(self) -> dict[str, Any]:
         kinds = dict(self.conn.execute(
-            "SELECT kind, COUNT(*) FROM assets WHERE status = 'active' GROUP BY kind").fetchall())
+            "SELECT kind, COUNT(*) FROM assets WHERE status = 'active' AND kind != 'series_file' GROUP BY kind").fetchall())
         notes = self.conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
         last = self.conn.execute(
             "SELECT source, MAX(finished_at) AS at FROM scans GROUP BY source ORDER BY source").fetchall()
@@ -938,12 +946,27 @@ class Catalogue:
     # ---- folders added from the app ---------------------------------------
 
     def add_folder(self, name: str, path: str, recursive: bool = True) -> None:
+        from .duplicates import canonical, drive_aliases
         with self.conn:
             self.conn.execute(
-                "INSERT INTO folders (name, path, recursive, added_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(name) DO UPDATE SET path = excluded.path, recursive = excluded.recursive",
-                (name, path, int(recursive), now()))
+                "INSERT INTO folders (name, path, recursive, added_at, canonical) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET path = excluded.path, recursive = excluded.recursive, "
+                "canonical = excluded.canonical",
+                (name, path, int(recursive), now(), canonical(path, drive_aliases(self))))
         self.changed()
+
+    def folder_overlaps(self, path: str) -> list[str]:
+        """Folder sources already covering this path (the same folder, a parent or a child),
+        so the same files aren't catalogued twice."""
+        from .duplicates import _inside, canonical, drive_aliases
+        aliases = drive_aliases(self)
+        new = canonical(path, aliases)
+        out = []
+        for r in self.folders():
+            old = canonical(r["path"], aliases)
+            if _inside(new, old) or _inside(old, new):
+                out.append(r["name"])
+        return out
 
     def folders(self) -> list[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM folders ORDER BY name").fetchall()

@@ -23,7 +23,7 @@ def sections() -> dict[str, dict[str, Page]]:
                      "Data issues": search.data_issues_page, "Needs notes": search.needs_notes_page,
                      "Recent notes": search.recent_notes_page, "Unmatched tables": search.unmatched_page,
                      "Unlinked data": lists.unlinked_page, "Recent changes": lists.changes_page,
-                     "Sensitive data": keys_pages.sensitive_page},
+                     "Sensitive data": keys_pages.sensitive_page, "Duplicates": lists.duplicates_page},
         "🗺️ Map": {"Code map": code.code_map_page},
         "➕ Add": {"Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
                   "SQL scanning": scanning.scanning_page},

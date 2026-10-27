@@ -38,9 +38,10 @@ RULES: dict[str, tuple[str, str, int]] = {
     "sensitive": ("Possibly sensitive values", "warning", 20),
     "stale_data": ("Data looks out of date", "warning", 24),
     "layout_change": ("File layout changed", "change", 28),
+    "duplicate": ("Same file in two places", "warning", 14),
 }
 # Checks where "dismiss" means "it's like this on purpose".
-BY_DESIGN = {"data_type", "sensitive", "stale_data"}
+BY_DESIGN = {"data_type", "sensitive", "stale_data", "duplicate"}
 CATEGORY_LABELS = {"docs": "Document", "change": "Check a change", "warning": "Possible data problem"}
 QUANTITY_NAME = re.compile(r"(qty|quantity|units?|amount|price|cost|revenue|sales|count|weight|volume)", re.I)
 STALE_DAYS = 90
@@ -331,6 +332,14 @@ def _v2_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: Counte
         out.append(task("sensitive", c["asset_key"], f"{c['name']} in {c['item']} may hold personal data",
                         "Mark it sensitive on the item's page (values are then never kept or exported), or dismiss.",
                         version=c["name"]))
+    from .duplicates import report
+    for group in report(cat)["same_file"]:
+        first, *copies = group["files"]
+        for c in copies:
+            key = c["series"] or c["key"]
+            out.append(task("duplicate", key, f"{c['name']} is the same file as {first['name']}",
+                            f"{c['path']} and {first['path']} are identical. Keep one, or note which is the master.",
+                            version=c["key"]))
     for key, a in assets.items():
         for change in a["attrs"].get("layout_changes", []):
             out.append(task("layout_change", key, f"{a['name']}: layout changed in {change['file']}",

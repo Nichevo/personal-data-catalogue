@@ -5,7 +5,6 @@ from pathlib import Path
 
 import streamlit as st
 
-from pdcat.review import refresh_tasks
 from pdcat.store import MANUAL_SOURCE, Catalogue
 
 from .common import asset_button, go
@@ -54,6 +53,10 @@ def folders_page(cat: Catalogue) -> None:
             st.warning(f"The name '{name}' is already used by another source. Pick another.")
         elif not Path(path).is_dir():
             st.error(f"Can't find a folder at {path}")
+        elif cat.folder_overlaps(path) and not st.session_state.get(f"overlap-ok-{path}"):
+            st.session_state[f"overlap-ok-{path}"] = True
+            st.warning(f"This overlaps a folder you already added ({', '.join(cat.folder_overlaps(path))}), so the "
+                       "same files would be catalogued twice. Press Add and scan again to add it anyway.")
         else:
             cat.add_folder(name, path, recursive)
             _run_folder_scan(cat, scan_folder, name, path, recursive)
@@ -66,7 +69,10 @@ def _run_folder_scan(cat: Catalogue, scan_folder, name: str, path: str, recursiv
         except Exception as e:
             st.error(f"Scan failed: {type(e).__name__}: {e}")
             return
-    msg = f"Scanned {counts['files']} file(s)" + (f", {counts['errors']} couldn't be read" if counts["errors"] else "")
+    msg = f"Scanned {counts['files']} file(s)" + (f" ({counts['series']} dated series)" if counts.get("series") else "") \
+        + (f", {counts['errors']} couldn't be read" if counts["errors"] else "")
+    from pdcat.postscan import after_scan
+    after_scan(cat)
     st.toast(msg)
     st.rerun()
 
@@ -123,6 +129,7 @@ def add_library(cat: Catalogue, name: str, path: str) -> None:
     cat.add_library(name, path)
     with st.spinner(f"Scanning {path} …"):
         counts = scan_project(cat, PythonSource(name=name, path=Path(path), role="library", data_files=False))
-    refresh_tasks(cat)
+    from pdcat.postscan import after_scan
+    after_scan(cat)
     st.toast(f"Scanned {counts['files']} file(s) in {name}")
     st.rerun()

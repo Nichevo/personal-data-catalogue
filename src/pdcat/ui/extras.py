@@ -11,6 +11,11 @@ from .common import first_line, go
 
 def item_extras_top(cat: Catalogue, key: str, asset: dict) -> None:
     from pdcat.history import freshness
+    if asset["kind"] == "file_series":
+        series_section(cat, key, asset)
+    if asset["attrs"].get("in_series"):
+        st.info("This file is part of a dated series.", icon="🗓️")
+        st.button("Open the series", on_click=go, args=(asset["attrs"]["in_series"],))
     from pdcat.knowledge import item_text, pin, triggered
     f = freshness(cat, key) if asset["kind"] in ("table", "view", "data_file", "file_series") else None
     if f:
@@ -31,6 +36,35 @@ def item_extras_top(cat: Catalogue, key: str, asset: dict) -> None:
                 if c2.button("Not here", key=f"kbx-{key}-{k['uid']}", help="Don't show this note on this item"):
                     pin(cat, k["uid"], key, exclude=True)
                     st.rerun()
+
+
+def series_section(cat: Catalogue, key: str, asset: dict) -> None:
+    """A dated file series: pattern, how often, first and last, gaps and each file."""
+    import pandas as pd
+
+    from .common import size_label
+    a = asset["attrs"]
+    st.markdown(f"🗓️ **Dated series** `{a['pattern']}` · {a['frequency']} · {a['first']} to {a['last']} · "
+                f"{a['file_count']} files · {a.get('total_rows', 0):,} rows in all")
+    if a.get("missing"):
+        st.warning(f"Missing {len(a['missing'])} period(s): " + ", ".join(a["missing"][:24])
+                   + (" …" if len(a["missing"]) > 24 else ""))
+    for m in a.get("mismatches", []):
+        st.caption(f"⚠️ {m['file']}: {m['detail']}")
+    for c in a.get("layout_changes", []):
+        st.warning(f"Layout differs in {c['file']}: {c['detail']}")
+    st.caption("Columns and values below are from the newest file. Older files only had their rows and header read.")
+    with st.expander(f"Files in this series ({a['file_count']})"):
+        st.dataframe(pd.DataFrame([{"period": f["period"], "file": f["rel"], "rows": f["rows"],
+                                    "size": size_label(f["size"]) if f.get("size") is not None else "",
+                                    "modified": (f.get("modified") or "")[:16].replace("T", " "),
+                                    "layout": "differs" if f.get("layout_differs") else ""}
+                                   for f in reversed(a["files"])]), hide_index=True, width="stretch")
+        if st.button("Split this series into separate files",
+                     help="The files are listed one by one from the next scan of this folder."):
+            split = cat.setting("series_split", [])
+            cat.set_setting("series_split", [*split, key])
+            st.toast("Done. Re-scan the folder to see the separate files.")
 
 
 def item_extras_bottom(cat: Catalogue, key: str, asset: dict) -> None:

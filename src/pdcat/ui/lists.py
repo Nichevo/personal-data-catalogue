@@ -42,3 +42,58 @@ def changes_page(cat: Catalogue) -> None:
         from .common import go
         go(rows[sel[0]]["asset_key"])
         st.rerun()
+
+
+def duplicates_page(cat: Catalogue) -> None:
+    import pandas as pd
+
+    from pdcat.duplicates import add_drive_alias, drive_aliases, report
+    from .common import asset_button, size_label
+    st.title("Duplicates")
+    st.caption("The same file in more than one place, folders that are copies of each other, sources that overlap, "
+               "and files named like copies. Mapped drives count as their network path, so S:\\ and "
+               "\\\\server\\share are the same place.")
+    r = report(cat)
+    if not any(r.values()):
+        st.success("No duplicates found.")
+    if r["overlapping_sources"]:
+        st.subheader("Sources that overlap")
+        st.caption("The same files are catalogued twice. Remove one of the folders on the Data folders page.")
+        st.dataframe(pd.DataFrame([{"source": o["a"], "path": o["a_path"], "and": o["b"], "path ": o["b_path"],
+                                    "how": o["how"]} for o in r["overlapping_sources"]]), hide_index=True,
+                     width="stretch")
+    if r["copied_folders"]:
+        st.subheader("Folders that are copies")
+        st.dataframe(pd.DataFrame([{"folder": c["a"], "and": c["b"], "how": c["how"], "same files": c["shared_files"],
+                                    "files in first": c["a_files"], "files in second": c["b_files"]}
+                                   for c in r["copied_folders"]]), hide_index=True, width="stretch")
+    if r["same_file"]:
+        st.subheader(f"Same file in two places ({len(r['same_file'])})")
+        for i, g in enumerate(r["same_file"][:100]):
+            with st.container(border=True):
+                st.caption(f"{size_label(g['size'])} · identical contents")
+                for j, f in enumerate(g["files"]):
+                    asset_button(f["series"] or f["key"], f"{f['name']} · {f['path']}", "data_file", f"dup-{i}-{j}")
+    if r["named_copies"]:
+        st.subheader("Named like copies")
+        for i, n in enumerate(r["named_copies"]):
+            c1, c2 = st.columns(2)
+            with c1:
+                asset_button(n["copy_key"], n["copy"], "data_file", f"named-{i}")
+            if n["original_key"]:
+                with c2:
+                    asset_button(n["original_key"], f"original: {n['original']}", "data_file", f"orig-{i}")
+    st.subheader("Mapped drives")
+    aliases = drive_aliases(cat)
+    if aliases:
+        st.caption(" · ".join(f"{d} = {u}" for d, u in aliases.items()))
+    with st.form("drive-alias"):
+        c1, c2 = st.columns([1, 3])
+        drive = c1.text_input("Drive", placeholder="S:")
+        unc = c2.text_input("Network path", placeholder=r"\\fileserver\shared")
+        if st.form_submit_button("Add"):
+            try:
+                add_drive_alias(cat, drive, unc)
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))

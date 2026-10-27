@@ -55,6 +55,23 @@ def settings_page(cat: Catalogue) -> None:
                 cat.set_setting(k, v)
             st.toast("Saved")
 
+    st.subheader("Data files")
+    group = st.checkbox("Group files that differ only by a date into one dated series", 
+                        value=bool(cat.setting("series_grouping", True)),
+                        help="sales_2026-01.csv, sales_2026-02.csv… become one entry. Takes effect on the next scan.")
+    if group != bool(cat.setting("series_grouping", True)):
+        cat.set_setting("series_grouping", group)
+        st.rerun()
+    split = cat.setting("series_split", [])
+    if split:
+        with st.expander(f"Series you split ({len(split)})"):
+            for k in split:
+                c1, c2 = st.columns([4, 1])
+                c1.caption(k)
+                if c2.button("Group again", key=f"regroup-{k}"):
+                    cat.set_setting("series_split", [x for x in split if x != k])
+                    st.rerun()
+
     st.subheader("Notes")
     with st.form("settings-notes"):
         days = st.number_input("Ask me to re-check notes older than (days, 0 = never)", 0, 3650,

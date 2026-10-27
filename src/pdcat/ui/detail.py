@@ -118,7 +118,7 @@ def detail(cat: Catalogue, key: str) -> None:
         with st.expander("Code map: how this connects to your libraries and data"):
             diagram_block(cat, asset["source"], f"proj-{key}")
 
-    children = cat.children(key)
+    children = [c for c in cat.children(key) if c["kind"] != "series_file"]
     if children:
         st.subheader("Contains")
         result_list([{**dict(c), "source": "", "note_count": 0} for c in children], "child")

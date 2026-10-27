@@ -266,6 +266,21 @@ def _ends_with_newline(path: Path) -> bool:
         return f.read(1) == b"\n"
 
 
+def quick_info(path: Path) -> dict[str, Any]:
+    """Rows and header only, for the older files in a dated series."""
+    attrs = file_info(path)
+    if path.suffix.lower() == ".parquet":
+        import pyarrow.parquet as pq
+        pf = pq.ParquetFile(path)
+        attrs["row_count"], attrs["header"] = pf.metadata.num_rows, list(pf.schema_arrow.names)
+    else:
+        attrs["header"] = [str(c) for c in _read_csv(path, 0).columns]
+        attrs["row_count"] = max(_count_lines(path) - 1, 0)
+    attrs["row_count_exact"] = True
+    attrs["column_count"] = len(attrs["header"])
+    return attrs
+
+
 def profile_file(path: Path, max_rows: int = DEFAULT_MAX_ROWS) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
     """Return (attrs, column profiles, method description) for a data file."""
     attrs = file_info(path)
