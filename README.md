@@ -184,6 +184,12 @@ one at a time, and every query is logged:
   accuracy is calculated), or a knowledge note. Match columns to fields, preview, then
   import; each item remembers which workbook it came from. A sheet of free text can be
   imported whole as one knowledge note.
+- **Reference documents on business projects**: attach design documents (Word, PDF,
+  Markdown, text) to a business project. Add a new version at any time and every older
+  version is kept, newest first, with its date. Tables, scripts and other catalogued
+  items the document names are highlighted in the text and listed as links, and those
+  items show the document on their own pages. Document text is searchable and can go in
+  the Copilot pack.
 
 ## Upgrading from version 1
 
