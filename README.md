@@ -192,6 +192,12 @@ one at a time, and every query is logged:
   the Copilot pack.
 - **Menu guide**: a link that always shows in the sidebar, opening a page that explains
   every section and page in the menu in a line each, with a button to open it.
+- **Installed conda environments**: read the conda environments on your machine (from
+  each environment's `conda-meta` folder, without running conda) and record every
+  installed package with its exact version and channel. Each environment gets its own
+  page, you can link a project to the environment it runs in, and the project page
+  compares what's installed with what the code imports and what `environment.yml` asks
+  for (missing, extra, or a different version).
 
 ## Upgrading from version 1
 
