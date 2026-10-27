@@ -267,6 +267,8 @@ one at a time, and every query is logged:
 - **Search box always in the sidebar**, so you can search from any page.
 - **Recently viewed** items in the sidebar.
 - **Edit history** on notes and descriptions: who changed what and when, with undo.
+- **Schedule scans from the app**: a Settings button that creates (or removes) the
+  weekly Task Scheduler task for you, and shows when it last ran and whether it worked.
 - **A tidier menu**: To review takes in Data issues, Needs notes, Unmatched tables,
   Unlinked data and Duplicates as filter tabs; Coverage and Issue hotspots become one
   Health page; Recent notes and Recent changes become one What's new page; Describe
@@ -471,6 +473,10 @@ Everything else can be done from the app, or from the terminal:
 **[Command reference](docs/commands.md)**: every option, with examples and what the
 output looks like. In the terminal, `pdcat --help` lists the commands and
 `pdcat <command> --help` shows one command's options and examples.
+
+To refresh the catalogue automatically every week, see
+[Scan on a schedule](docs/commands.md#scan-on-a-schedule): a ready-made batch file and one
+Task Scheduler command.
 
 ## Export format
 

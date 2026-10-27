@@ -94,7 +94,7 @@ pdcat scan --plan                            # print the SQL Server queries, sen
 - Nothing is ever deleted. Items that have gone are marked "missing" and keep their notes.
 - Re-run it whenever your code or databases change. Unchanged files aren't re-read.
 
-To scan every morning, add a Windows Task Scheduler task that runs `pdcat scan`.
+To refresh the catalogue on its own every week, see [Scan on a schedule](#scan-on-a-schedule).
 
 ### `pdcat profile`
 
@@ -305,6 +305,58 @@ python load_openmetadata.py https://your-openmetadata:8585 <bot token> --dry-run
 ```
 
 ---
+
+## Scan on a schedule
+
+Windows Task Scheduler can refresh the catalogue for you, say every Monday at 7am. The
+repo has a ready-made batch file, `scripts\windows\pdcat-weekly-scan.bat`, that runs
+`pdcat scan` and then `pdcat profile --queue` (the tables you approved on the app's
+**SQL scanning** page), and writes everything to `%USERPROFILE%\.pdcat\scan.log`.
+
+**1. Copy the batch file and check two lines.** Copy it to `%USERPROFILE%\.pdcat\`
+and open it in Notepad:
+
+- `CONDA_BASE`: where conda is installed. In Anaconda Prompt, run `conda info --base`
+  and paste what it prints (often `C:\Users\you\miniconda3` or `...\anaconda3`).
+- `PDCAT_CONFIG`: your `config.toml`. The default, `%USERPROFILE%\.pdcat\config.toml`,
+  is where `pdcat init` and the **Get started** page put it.
+
+If you used a virtual environment instead of conda, replace the `call ... activate.bat`
+line with `call C:\path\to\venv\Scripts\activate.bat`.
+
+**2. Try it once by hand.** Double-click the batch file, then open `scan.log`. It
+should end with the scan's summary. Fix anything it complains about before scheduling.
+
+**3. Create the task.** In an ordinary Command Prompt (not as administrator), run:
+
+```bat
+schtasks /Create /TN "pdcat weekly scan" /SC WEEKLY /D MON /ST 07:00 /TR "%USERPROFILE%\.pdcat\pdcat-weekly-scan.bat"
+```
+
+Change `/D MON /ST 07:00` for another day and time (`/D MON,THU` for twice a week, or
+`/SC DAILY` without `/D` for every day). Or use the Task Scheduler app: **Create Basic
+Task**, pick **Weekly**, choose **Start a program** and browse to the batch file.
+
+The task runs as you, while you're logged on, so it uses your own Windows login for
+SQL Server and can reach your mapped drives, the same as when you run `pdcat scan`
+yourself. If the laptop is off at the time, tick **Run task as soon as possible after
+a scheduled start is missed** in the task's **Settings** tab and it runs when you're
+back.
+
+**Checking on it**
+
+- `scan.log` has every run, with the date and the result.
+- `schtasks /Query /TN "pdcat weekly scan" /V /FO LIST` shows the last run time and its
+  result (`0` worked, `1` something failed, `2` couldn't start; see [Exit codes](#exit-codes)).
+- In the app, the sidebar shows when each source was last scanned.
+- Run it now: `schtasks /Run /TN "pdcat weekly scan"`. Remove it:
+  `schtasks /Delete /TN "pdcat weekly scan"`.
+
+The scan goes as gently as a manual one: one SQL query at a time with the pause, time
+limit, per-run cap and quiet hours from the **Settings** page. It never deletes
+anything. You can leave the app open, but pick a time when you won't be editing in it:
+saving a note while a scan is writing can fail with "database is locked" (save again
+once the scan finishes).
 
 ## Exit codes
 
