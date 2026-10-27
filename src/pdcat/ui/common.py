@@ -158,11 +158,16 @@ def row_get(r, field: str, default: Any = None) -> Any:
         return r.get(field, default)
 
 
+RESULT_PAGE = 200
+
+
 def result_list(rows, prefix: str, extra=None) -> None:
     if not rows:
         st.info("Nothing here yet.")
         return
-    for i, r in enumerate(rows):
+    # Thousands of rows of buttons take seconds to draw, so show them a page at a time.
+    shown = st.session_state.get(f"{prefix}-shown", RESULT_PAGE)
+    for i, r in enumerate(rows[:shown]):
         left, right = st.columns([4, 2])
         with left:
             asset_button(r["key"], r["name"], r["kind"], f"{prefix}-{i}")
@@ -177,6 +182,9 @@ def result_list(rows, prefix: str, extra=None) -> None:
             if extra:
                 bits.append(extra(r))
             st.caption(" · ".join(b for b in bits if b))
+    if len(rows) > shown:
+        st.button(f"Show {min(RESULT_PAGE, len(rows) - shown)} more (of {len(rows) - shown} not shown)",
+                  key=f"{prefix}-more", on_click=lambda: st.session_state.update({f"{prefix}-shown": shown + RESULT_PAGE}))
 
 
 def lazy_download(label: str, build: Callable[[Catalogue], bytes | str], file_name: str, mime: str, key: str,

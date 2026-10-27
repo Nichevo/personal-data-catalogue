@@ -28,7 +28,7 @@ from typing import Any
 
 from . import mquery
 
-READER_VERSION = 1
+READER_VERSION = 2  # 2: passwords removed from stored Power Query text
 REPORT_SUFFIXES = (".pbix", ".pbit")
 
 
@@ -171,6 +171,7 @@ def model_from_tmsl(doc: dict) -> dict[str, Any]:
 
 
 def _analyse_queries(queries: list[dict[str, str]]) -> list[dict[str, Any]]:
+    queries = [{**q, "expression": mquery.redact(q["expression"])} for q in queries]
     bodies = {q["name"]: q["expression"] for q in queries}
     params = mquery.parameters(bodies)
     out = []

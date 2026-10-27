@@ -47,7 +47,8 @@ def copilot_page(cat: Catalogue) -> None:
 
     lazy_download("⬇️ Copilot pack (zip)", build, "copilot-pack.zip", "application/zip",
                   f"copilot-{hide}-{values}-{fmt}")
-    with st.expander("Preview"):
+    # Building the pack takes seconds on a big catalogue, so the preview is only built when asked for.
+    if st.toggle("Preview the files", key="copilot-preview"):
         files = aipack.build(cat, hide_locations=hide, include_values=values)
         pick = st.selectbox("File", list(files))
         st.markdown(files[pick][:20000])

@@ -672,22 +672,30 @@ class Catalogue:
         if not files:
             return [(None, r["rowid"]) for r in self.conn.execute("SELECT rowid FROM links WHERE dst_ref LIKE 'file:%'")]
 
+        # An exact reference can only match files with the same file name, so look those up directly
+        # rather than comparing every reference with every file (slow with thousands of each).
+        by_name: dict[str, list[dict]] = {}
+        for f in files:
+            by_name.setdefault(f["path"].rsplit("/", 1)[-1], []).append(f)
         updates = []
         for link in self.conn.execute("SELECT rowid, dst_ref, source FROM links WHERE dst_ref LIKE 'file:%'"):
             ref = _norm_path(link["dst_ref"][len("file:"):])
             while ref.startswith("./"):
                 ref = ref[2:]
-            pattern = fnmatch.translate(ref.replace("{}", "*")).replace(".*", "[^/]*") if "{}" in ref else None
+            pattern = re.compile(fnmatch.translate(ref.replace("{}", "*")).replace(".*", "[^/]*")) \
+                if "{}" in ref else None
             absolute = bool(re.match(r"^([a-z]:/|/)", ref))
+            depth = ref.count("/") + 1
 
-            def hit(f: dict) -> bool:
+            def hit(f: dict, ref: str = ref, pattern=pattern, absolute: bool = absolute, depth: int = depth) -> bool:
                 if absolute:
                     target = f["path"]
                 else:  # compare the same number of trailing path segments
-                    target = "/".join(f["path"].split("/")[-(ref.count("/") + 1):])
-                return re.fullmatch(pattern, target) is not None if pattern else target == ref
+                    target = "/".join(f["path"].split("/")[-depth:])
+                return pattern.fullmatch(target) is not None if pattern else target == ref
 
-            matches = [f for f in files if hit(f)]
+            candidates = files if pattern else by_name.get(ref.rsplit("/", 1)[-1], [])
+            matches = [f for f in candidates if hit(f)]
             same_project = [f for f in matches if f["source"] == link["source"]]
             matches = same_project or matches
             best = max(matches, key=lambda f: f["mtime"])["key"] if matches else None
@@ -696,24 +704,32 @@ class Catalogue:
 
     # ---- search ---------------------------------------------------------
 
-    def rebuild_search(self) -> None:
-        """Rebuild the full-text index. A personal catalogue is small enough to do this in full."""
+    def _search_rows(self, key: str | None = None) -> list[tuple]:
+        """Index rows for scanned items and notes: all of them, or just the one item `key` (and its columns' notes)."""
+        def where(col: str) -> tuple[str, tuple]:
+            if key is None:
+                return "", ()
+            return f" AND ({col} = ? OR substr({col}, 1, ?) = ?)", (key, len(key) + 1, key + "#")
         notes_by_key: dict[str, list[str]] = defaultdict(list)
-        for n in self.conn.execute("SELECT asset_key, body, tags FROM notes WHERE archived = 0"):
+        w, p = where("asset_key")
+        for n in self.conn.execute("SELECT asset_key, body, tags FROM notes WHERE archived = 0" + w, p):
             base = n["asset_key"].split("#", 1)[0]
             notes_by_key[base].append(f"{n['body']} {n['tags']}")
         cols_by_key: dict[str, list[str]] = defaultdict(list)
+        w, p = where("c.asset_key")
         for c in self.conn.execute(
                 "SELECT c.asset_key, c.name, c.description, ci.description AS mine FROM columns c "
-                "LEFT JOIN column_info ci ON ci.asset_key = c.asset_key AND ci.column_name = c.name"):
+                "LEFT JOIN column_info ci ON ci.asset_key = c.asset_key AND ci.column_name = c.name WHERE 1 = 1" + w, p):
             cols_by_key[c["asset_key"]].append(f"{c['name']} {c['description'] or ''} {c['mine'] or ''}")
+        w, p = where("asset_key")
         info_by_key = {r["asset_key"]: " ".join(str(r[k] or "") for k in ("purpose", "grain", "owner", "refresh"))
-                       for r in self.conn.execute("SELECT * FROM item_info")}
+                       for r in self.conn.execute("SELECT * FROM item_info WHERE 1 = 1" + w, p)}
 
         rows = []
         seen = set()
+        w, p = ("", ()) if key is None else (" AND key = ?", (key,))
         for a in self.conn.execute("SELECT key, kind, source, name, description, attrs FROM assets "
-                                   "WHERE kind != 'series_file'"):
+                                   "WHERE kind != 'series_file'" + w, p):
             attrs = json.loads(a["attrs"])
             extra = " ".join(str(attrs.get(k, "")) for k in ("functions", "imports", "classes", "sql", "tags",
                                                                "measures", "pattern"))
@@ -721,9 +737,26 @@ class Catalogue:
                              " ".join(cols_by_key[a["key"]]), " ".join(notes_by_key[a["key"]])])
             rows.append((a["key"], a["kind"], a["source"], _searchable(a["name"]), _searchable(body)))
             seen.add(a["key"])
-        for key, texts in notes_by_key.items():
-            if key not in seen:  # notes on files or unmatched tables
-                rows.append((key, "note", "", _searchable(key), _searchable(" ".join(texts))))
+        for base, texts in notes_by_key.items():
+            if base not in seen:  # notes on files or unmatched tables
+                rows.append((base, "note", "", _searchable(base), _searchable(" ".join(texts))))
+        return rows
+
+    def reindex_search(self, asset_key: str) -> None:
+        """Refresh one item's entry in the full-text index (after a note or description changes), which is
+        much quicker than rebuilding the whole index on a big catalogue."""
+        key = asset_key.split("#", 1)[0]
+        rows = self._search_rows(key)
+        with self.conn:
+            # Knowledge, questions, metrics and the like have their own rows, which this leaves alone.
+            self.conn.execute("DELETE FROM search_idx WHERE key = ? AND kind NOT IN ('knowledge', 'question', "
+                              "'metric', 'feature', 'key', 'bproject')", (key,))
+            self.conn.executemany("INSERT INTO search_idx (key, kind, source, name, body) VALUES (?, ?, ?, ?, ?)", rows)
+        self.changed()
+
+    def rebuild_search(self) -> None:
+        """Rebuild the full-text index."""
+        rows = self._search_rows()
         # Knowledge that isn't a scanned item: articles, questions, metrics, features, keys, business projects.
         for sql, prefix, kind in (
                 ("SELECT uid AS id, title AS name, body || ' ' || tags || ' ' || triggers || ' ' || COALESCE(section, '') "
@@ -1033,7 +1066,7 @@ class Catalogue:
                 (asset_key, body.rstrip(), ", ".join(split_tags(tags)), ts, ts, note_type, uuid.uuid4().hex,
                  self.author()),
             )
-        self.rebuild_search()
+        self.reindex_search(asset_key)
         return cur.lastrowid
 
     def update_note(self, note_id: int, body: str, tags: str = "", note_type: str | None = None) -> None:
@@ -1042,7 +1075,7 @@ class Catalogue:
                 "UPDATE notes SET body = ?, tags = ?, note_type = COALESCE(?, note_type), updated_at = ? WHERE id = ?",
                 (body.rstrip(), ", ".join(split_tags(tags)), note_type, now(), note_id),
             )
-        self.rebuild_search()
+        self._reindex_note(note_id)
 
     def set_issue_status(self, note_id: int, status: str) -> None:
         if status not in ("open", "resolved"):
@@ -1121,12 +1154,19 @@ class Catalogue:
         """Move a note out of the way without deleting it."""
         with self.conn:
             self.conn.execute("UPDATE notes SET archived = ? WHERE id = ?", (int(archived), note_id))
-        self.rebuild_search()
+        self._reindex_note(note_id)
 
     def delete_note(self, note_id: int) -> None:
+        row = self.conn.execute("SELECT asset_key FROM notes WHERE id = ?", (note_id,)).fetchone()
         with self.conn:
             self.conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
-        self.rebuild_search()
+        if row:
+            self.reindex_search(row[0])
+
+    def _reindex_note(self, note_id: int) -> None:
+        row = self.conn.execute("SELECT asset_key FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row:
+            self.reindex_search(row[0])
 
 
 def _matches_hint(candidate: dict[str, str], hint: str) -> bool:

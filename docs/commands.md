@@ -298,10 +298,14 @@ pdcat openmetadata --out om.zip
 ```
 
 Unzip it and run the loader inside it against your OpenMetadata server. It needs the
-`requests` package and a bot token from OpenMetadata, and is safe to run again:
+`requests` package and a bot token from OpenMetadata, and is safe to run again. Put the
+token in an environment variable rather than on the command line, so it doesn't end up
+in your command history:
 
 ```powershell
-python load_openmetadata.py https://your-openmetadata:8585 <bot token> --dry-run
+$env:OPENMETADATA_TOKEN = "<bot token>"
+python load_openmetadata.py https://your-openmetadata:8585 --dry-run   # list what it would send
+python load_openmetadata.py https://your-openmetadata:8585
 ```
 
 ---

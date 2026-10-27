@@ -26,7 +26,7 @@ from xml.etree import ElementTree as ET
 from . import mquery
 from .sqlrefs import extract_refs, looks_like_sql
 
-READER_VERSION = 1
+READER_VERSION = 2  # 2: passwords removed from stored Power Query text
 WORKBOOK_SUFFIXES = (".xlsx", ".xlsm", ".xltx", ".xltm")
 NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
       "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -311,7 +311,7 @@ def read_workbook(path: Path) -> dict[str, Any]:
             out["macros"] = [m["module"] for m in modules]
             for m in modules:
                 for sql in sql_in_vba(m["code"]):
-                    out["vba_sql"].append({"module": m["module"], "sql": sql})
+                    out["vba_sql"].append({"module": m["module"], "sql": mquery.redact(sql)})
             if not exact:
                 out["not_read"].append("Macros were searched without olefile, so some may be missed. "
                                        "pip install olefile to read them exactly.")

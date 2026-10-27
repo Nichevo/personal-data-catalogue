@@ -230,11 +230,14 @@ def column_editor(cat: Catalogue, key: str, df: pd.DataFrame) -> None:
         also = c2.checkbox("Also describe same-named columns elsewhere that have no description", value=True,
                            key=f"coled-everywhere-{key}")
         if c1.button(f"Save {len(changed)} change(s)", type="primary", key=f"coled-save-{key}"):
+            everywhere = False
             for col, desc, sens in changed:
                 curation.set_column_info(cat, key, col, description=desc, sensitive=bool(sens), rebuild=False)
                 if also and desc:
                     curation.describe_everywhere(cat, col, desc, only_empty=True)
-            cat.rebuild_search()
+                    everywhere = True
+            if not everywhere:  # describe_everywhere already rebuilt the search index
+                cat.reindex_search(key)
             st.session_state.pop(f"coled-{key}", None)
             st.rerun()
 

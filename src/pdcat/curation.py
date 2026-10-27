@@ -55,7 +55,7 @@ def set_item_info(cat: Catalogue, key: str, **fields: Any) -> None:
             (key, *(merged[f] for f in INFO_FIELDS), now(), cat.author()))
     if merged["sensitive"] and not current.get("sensitive"):
         purge_values(cat, key)
-    cat.rebuild_search()
+    cat.reindex_search(key)
 
 
 def column_info(cat: Catalogue, key: str) -> dict[str, dict[str, Any]]:
@@ -79,7 +79,7 @@ def set_column_info(cat: Catalogue, key: str, column: str, *, description: str |
     if sens and not (old and old["sensitive"]):
         purge_values(cat, key, column)
     if rebuild:
-        cat.rebuild_search()
+        cat.reindex_search(key)
 
 
 def column_description(cat: Catalogue, key: str, column: str) -> str:

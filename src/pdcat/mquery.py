@@ -152,7 +152,7 @@ def analyse(body: str, params: dict[str, str] | None = None, others: list[str] |
 
 def read_queries(section_text: str) -> list[dict[str, Any]]:
     """Every query in a Section1.m with what it connects to. Parameters are listed with their value."""
-    queries = split_section(section_text)
+    queries = {name: redact(body) for name, body in split_section(section_text).items()}
     params = parameters(queries)
     out = []
     for name, body in queries.items():
@@ -166,8 +166,10 @@ def read_queries(section_text: str) -> list[dict[str, Any]]:
 
 
 def redact(connection: str) -> str:
-    """A connection string without its password."""
-    return re.sub(r"(?i)\b(password|pwd)\s*=\s*(\{[^}]*\}|[^;]*)", r"\1=***", connection or "")
+    """A connection string (or any text holding one) without its passwords: password=/pwd= values and the
+    password in a user:password@host address."""
+    text = re.sub(r"(?i)\b(password|pwd)\s*=\s*(\{[^}]*\}|[^;\"']*)", r"\1=***", connection or "")
+    return re.sub(r"(?i)(\b[a-z][a-z0-9+.-]*://[^/:@\s\"']+):[^@/\s\"']+@", r"\1:***@", text)
 
 
 def table_refs(q: dict[str, Any]) -> list[str]:

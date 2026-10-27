@@ -249,3 +249,25 @@ def test_menu_reopens_the_page_you_came_from(app):
     app.sidebar.radio(key="nav-item-🔎 Find").set_value("Search").run()
     assert not app.exception
     assert "asset" not in app.query_params and app.title[0].value == "Search"
+
+
+def test_long_lists_show_a_page_at_a_time(app, catalogue, monkeypatch):
+    import pdcat.ui.common as common
+    monkeypatch.setattr(common, "RESULT_PAGE", 1)
+    goto(app.run(), "Needs notes")
+    more = [b for b in app.button if b.label.startswith("Show 1 more")]
+    assert more and not app.exception
+    shown = len(app.button)
+    more[0].click().run()
+    assert len(app.button) > shown
+
+
+def test_copilot_preview_is_built_only_when_asked(app, monkeypatch):
+    from pdcat import aipack
+    calls = []
+    real = aipack.build
+    monkeypatch.setattr(aipack, "build", lambda *a, **k: calls.append(1) or real(*a, **k))
+    goto(app.run(), "Copilot pack")
+    assert not calls and not app.exception
+    app.toggle(key="copilot-preview").set_value(True).run()
+    assert calls and not app.exception
