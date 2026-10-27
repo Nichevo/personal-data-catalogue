@@ -209,6 +209,73 @@ LIB_FILES = {
 }
 
 
+LGB_MODEL = """tree
+version=v4
+objective=regression
+feature_names=units_lag_7 units_roll_28 promo_flag
+feature_infos=[0:100] [0:100] [0:1]
+
+Tree=0
+num_leaves=2
+
+end of trees
+
+feature_importances:
+units_lag_7=41
+units_roll_28=22
+promo_flag=9
+"""
+
+
+def write_report(path: Path) -> None:
+    """A small Power BI template (.pbit) reading dbo.SalesDaily, with one measure on one page."""
+    import json
+    import zipfile
+    visual = {"singleVisual": {"visualType": "lineChart", "prototypeQuery": {
+        "From": [{"Name": "s", "Entity": "Sales"}],
+        "Select": [{"Measure": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Total Units"},
+                    "Name": "Sales.Total Units"}]},
+        "vcObjects": {"title": [{"properties": {"text": {"expr": {"Literal": {"Value": "'Units by week'"}}}}}]}}}
+    layout = {"sections": [{"displayName": "Overview", "visualContainers": [{"config": json.dumps(visual)}]}]}
+    model = {"model": {"tables": [{"name": "Sales", "columns": [{"name": "Units", "dataType": "decimal"}],
+                                   "measures": [{"name": "Total Units", "expression": "SUM(Sales[Units])",
+                                                 "description": "Units sold, net of returns"}],
+                                   "partitions": [{"name": "Sales", "source": {"type": "m", "expression": [
+                                       "let", '    Source = Sql.Database("DEMO-SQL01", "SalesDW"),',
+                                       '    t = Source{[Schema="dbo",Item="SalesDaily"]}[Data]', "in", "    t"]}}]}]}}
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("Report/Layout", json.dumps(layout).encode("utf-16-le"))
+        z.writestr("DataModelSchema", json.dumps(model).encode("utf-16-le"))
+
+
+def add_knowledge(cat: Catalogue, sales: str) -> None:
+    from pdcat import bprojects, curation, keys
+    from pdcat.knowledge import save_knowledge, save_metric, save_question
+    store = "sql://warehouse/salesdw/dbo.store"
+    curation.set_item_info(cat, sales, purpose="Daily unit sales per store and product; the source for forecasting.",
+                           grain="store, product and day", refresh="daily", owner="Sam", lifecycle="in use",
+                           trust="trusted", freshness_column="SaleDate")
+    curation.set_column_info(cat, store, "StoreName", sensitive=False, description="Trading name of the store")
+    keys.mark_key(cat, "StoreId", store, "StoreId", master=True)
+    save_knowledge(cat, "Freight is always sea freight", "Unless a shipment is marked AIR, freight costs are sea "
+                   "freight. Air freight is booked in another system and isn't in these tables.",
+                   section="Business rules", triggers="freight, shipping")
+    save_knowledge(cat, "Weeks start on Monday", "All weekly figures use ISO weeks starting Monday.",
+                   section="Definitions", triggers="week, weekly")
+    save_metric(cat, "Forecast accuracy", definition="How close the forecast was to what sold.",
+                formula="1 - SUM(ABS(actual - forecast)) / SUM(actual)", sources=[sales], owner="Sam")
+    save_question(cat, "What were weekly units by region last quarter?",
+                  answer="Sum SalesDaily units by ISO week, joined to Store for the region.",
+                  sql="SELECT st.Region, DATEPART(iso_week, s.SaleDate) AS Wk, SUM(s.Units) AS Units\n"
+                      "FROM dbo.SalesDaily s JOIN dbo.Store st ON st.StoreId = s.StoreId\n"
+                      "WHERE s.SaleDate >= DATEADD(quarter, -1, GETDATE())\nGROUP BY st.Region, "
+                      "DATEPART(iso_week, s.SaleDate)", caveats="Returns are negative units.")
+    uid = bprojects.save_project(cat, "Demand forecasting", purpose="Weekly store-level sales forecast",
+                                 status="active", owner="Sam")
+    bprojects.set_member(cat, uid, sales)
+    bprojects.set_member(cat, uid, "py://forecasting/src/features.py")
+
+
 def main(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     project = out / "forecasting"
@@ -250,8 +317,16 @@ def main(out: Path) -> None:
                       "ForecastUnits": np.round(rng.gamma(2.0, 6.0, 800), 1)}).to_csv(
             project / "outputs" / f"forecast_{week}.csv", index=False)
 
+    (project / "models").mkdir(exist_ok=True)
+    (project / "models" / "lgb_model.txt").write_text(LGB_MODEL)
     extracts = out / "extracts"
     extracts.mkdir(exist_ok=True)
+    for month, rows in (("01", 310), ("02", 290), ("03", 330), ("05", 301)):  # April is missing
+        pd.DataFrame({"StoreId": rng.integers(1, 120, rows), "Units": np.round(rng.gamma(2.0, 6.0, rows), 1)}).to_csv(
+            extracts / f"sales_2026-{month}.csv", index=False)
+    reports = out / "reports"
+    reports.mkdir(exist_ok=True)
+    write_report(reports / "Weekly sales.pbit")
     pd.DataFrame({"StoreId": range(1, 121), "Region": rng.choice(["North", "South", "East", "West"], 120),
                   "Format": rng.choice(["Metro", "Suburban", "Regional"], 120)}).to_csv(extracts / "store_list.csv", index=False)
 
@@ -316,6 +391,11 @@ def main(out: Path) -> None:
         {"name": "ForecastUnits", "data_type": "decimal(18,2)", "rows": 1_480_000, "nulls": 820_000, "distinct": 5_200,
          "min": 0, "max": 3_100},
     ], "whole table for counts and ranges; mean and top values from first 10,000 rows")
+    cat.add_folder("reports", str(reports))
+    scan_folder(cat, "reports", reports)
+    add_knowledge(cat, sales)
+    from pdcat.postscan import after_scan
+    after_scan(cat, progress=lambda *_: None)
     refresh_tasks(cat)
     cat.close()
     print(f"Demo catalogue: {db}")

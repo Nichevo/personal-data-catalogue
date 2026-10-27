@@ -75,6 +75,7 @@
         "elk.layered.spacing.nodeNodeBetweenLayers": 60, "elk.spacing.edgeNode": 18,
         "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF", "elk.padding": "[top=28,left=12,bottom=12,right=12]",
         "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+        "elk.separateConnectedComponents": true, "elk.aspectRatio": 1.6,
       },
     };
   }
