@@ -125,7 +125,7 @@ def projects_box(cat: Catalogue, key: str) -> None:
     line = st.columns([4, 2])
     with line[0]:
         if mine:
-            st.caption("🧭 Part of: " + ", ".join(p["name"] for p in mine))
+            st.caption("Part of business project" + ("s" if len(mine) > 1 else "") + ":")
             for p in mine:
                 st.button(f"🧭 {p['name']}", key=f"bpbox-{key}-{p['uid']}", on_click=go, args=(f"bp://{p['uid']}",),
                           type="tertiary")

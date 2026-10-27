@@ -772,7 +772,7 @@ class Catalogue:
             filters.append("s.source = ?")
             params.append(source)
         sql = f"""
-            SELECT s.key, s.kind, s.source, COALESCE(a.name, s.key) AS name, a.description, a.status,
+            SELECT s.key, s.kind, s.source, COALESCE(a.name, {_KNOWLEDGE_NAME}, s.key) AS name, a.description, a.status,
                    {snippet} AS snippet, i.lifecycle, i.trust, i.sensitive, i.purpose,
                    (SELECT COUNT(*) FROM notes n WHERE n.asset_key = s.key OR n.asset_key LIKE s.key || '#%') AS note_count
             FROM search_idx s LEFT JOIN assets a ON a.key = s.key LEFT JOIN item_info i ON i.asset_key = s.key
@@ -876,7 +876,7 @@ class Catalogue:
 
     def children(self, key: str) -> list[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT key, kind, name, description, status FROM assets WHERE parent = ? ORDER BY name", (key,)
+            "SELECT key, kind, name, description, status, attrs FROM assets WHERE parent = ? ORDER BY name", (key,)
         ).fetchall()
 
     def needs_documentation(self, limit: int = 50) -> list[sqlite3.Row]:
@@ -1154,6 +1154,17 @@ def _text(v: Any) -> str | None:
 def _norm_path(p: str) -> str:
     """Compare paths the Windows way: forward slashes, case-insensitive."""
     return p.replace("\\", "/").lower()
+
+
+# Display names of search hits that aren't scanned items (knowledge, questions, business projects...).
+_KNOWLEDGE_NAME = """CASE s.kind
+    WHEN 'knowledge' THEN (SELECT title FROM knowledge WHERE 'kb://' || uid = s.key)
+    WHEN 'question' THEN (SELECT question FROM questions WHERE 'q://' || uid = s.key)
+    WHEN 'metric' THEN (SELECT name FROM metrics WHERE 'metric://' || uid = s.key)
+    WHEN 'feature' THEN (SELECT name FROM features WHERE 'feature://' || uid = s.key)
+    WHEN 'key' THEN (SELECT name FROM keys WHERE 'key://' || name = s.key)
+    WHEN 'bproject' THEN (SELECT name FROM bprojects WHERE 'bp://' || uid = s.key)
+    END"""
 
 
 def _searchable(text: str) -> str:

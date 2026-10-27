@@ -1,4 +1,4 @@
-"""Command line: pdcat init | scan | search | ui."""
+"""Command line: pdcat <command>. See docs/commands.md."""
 from __future__ import annotations
 
 import argparse
@@ -168,7 +168,7 @@ def cmd_search(args: argparse.Namespace) -> int:
     for r in rows:
         desc = (r["description"] or "").splitlines()[0][:80] if r["description"] else ""
         notes = f"  [{r['note_count']} note(s)]" if r["note_count"] else ""
-        print(f"{r['kind']:<10} {r['name']}{notes}\n           {r['key']}" + (f"\n           {desc}" if desc else ""))
+        print(f"{r['kind']:<12} {r['name']}{notes}\n             {r['key']}" + (f"\n             {desc}" if desc else ""))
     if not rows:
         print("No matches.")
     cat.close()
@@ -262,77 +262,108 @@ def cmd_ui(args: argparse.Namespace) -> int:
     return subprocess.call(cmd)
 
 
+KINDS = ("table, view, procedure, database, script, project, model, data_file, file_series, folder, "
+         "report, measure, workbook, sql_snippet")
+
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="pdcat", description="Personal data catalogue")
+    p = argparse.ArgumentParser(
+        prog="pdcat", description="Personal data catalogue. Run `pdcat <command> --help` for a command's options "
+        "and examples, or see docs/commands.md.",
+        epilog="Most people only need `pdcat ui`; the app has buttons for all of these commands.")
     p.add_argument("--config", help="path to config.toml (default: ./config.toml, then ~/.pdcat/config.toml)")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="<command>")
 
-    sub.add_parser("init", help="create a starter config file").set_defaults(fn=cmd_init)
+    def command(name: str, summary: str, examples: str, fn) -> argparse.ArgumentParser:
+        c = sub.add_parser(name, help=summary, description=summary[0].upper() + summary[1:] + ".",
+                           epilog="examples:\n" + examples, formatter_class=argparse.RawDescriptionHelpFormatter)
+        c.set_defaults(fn=fn)
+        return c
 
-    s = sub.add_parser("scan", help="scan your databases and projects")
-    s.add_argument("--source", action="append", help="only scan this source (repeatable)")
-    s.add_argument("--database", action="append", help="only this SQL Server database (repeatable)")
+    command("init", "create a starter config file in ~/.pdcat (or at --config)",
+            "  pdcat init\n  pdcat --config C:\\work\\config.toml init", cmd_init)
+
+    s = command("scan", "scan your databases, projects, data folders, reports and workbooks",
+                "  pdcat scan                       everything in the config\n"
+                "  pdcat scan --source forecasting  one source (use the name you gave it)\n"
+                "  pdcat scan --source warehouse --database Sales\n"
+                "  pdcat scan --plan                show the SQL Server queries first, send nothing", cmd_scan)
+    s.add_argument("--source", action="append", metavar="NAME", help="only scan this source (repeatable)")
+    s.add_argument("--database", action="append", metavar="DB", help="only this SQL Server database (repeatable)")
     s.add_argument("--plan", action="store_true", help="print the SQL Server queries that would run, without connecting")
-    s.set_defaults(fn=cmd_scan)
 
-    pr = sub.add_parser("profile", help="measure value ranges, nulls and common values of SQL tables (read-only)")
-    pr.add_argument("tables", nargs="*", help="table names like dbo.SalesDaily")
+    pr = command("profile", "measure value ranges, nulls and common values of SQL tables (read-only, paced)",
+                 "  pdcat profile dbo.SalesDaily dbo.Stores\n"
+                 "  pdcat profile --used             every table your code uses\n"
+                 "  pdcat profile --queue            the tables approved on the app's SQL scanning page\n"
+                 "  pdcat profile --used --plan      show the queries, send nothing", cmd_profile)
+    pr.add_argument("tables", nargs="*", metavar="TABLE", help="table names like dbo.SalesDaily")
     pr.add_argument("--used", action="store_true", help="every table your code or pasted SQL uses")
-    pr.add_argument("--source", action="append", help="only this SQL Server source")
+    pr.add_argument("--source", action="append", metavar="NAME", help="only this SQL Server source (repeatable)")
     pr.add_argument("--queue", action="store_true", help="run the tables approved in the app's queue")
     pr.add_argument("--plan", action="store_true", help="print the queries that would run, without connecting")
-    pr.set_defaults(fn=cmd_profile)
 
-    r = sub.add_parser("review", help="list what needs your attention, most important first")
+    r = command("review", "list what needs your attention, most important first",
+                "  pdcat review\n  pdcat review --used --limit 10", cmd_review)
     r.add_argument("--used", action="store_true", help="only items your code uses")
-    r.add_argument("--limit", type=int, default=30)
-    r.set_defaults(fn=cmd_review)
+    r.add_argument("--limit", type=int, default=30, metavar="N", help="show at most N items (default: 30)")
 
-    d = sub.add_parser("diagram", help="flow diagram of how your projects, libraries and data connect")
-    d.add_argument("--project", help="start from this project or library (default: everything)")
-    d.add_argument("--level", choices=["modules", "projects"], default="modules")
+    d = command("diagram", "write a flow diagram of how your projects, libraries and data connect",
+                "  pdcat diagram --out map.mmd\n"
+                "  pdcat diagram --project forecasting --level projects --out map.mmd\n"
+                "  pdcat diagram --format dot --no-data --out code.dot", cmd_diagram)
+    d.add_argument("--project", metavar="NAME", help="start from this project or library (default: everything)")
+    d.add_argument("--level", choices=["modules", "projects"], default="modules",
+                   help="one box per script (modules, the default) or per project")
     d.add_argument("--no-data", action="store_true", help="code only, without tables and files")
-    d.add_argument("--format", choices=["mermaid", "dot"], default="mermaid")
-    d.add_argument("--out", help="file to write (default: print)")
-    d.set_defaults(fn=cmd_diagram)
+    d.add_argument("--format", choices=["mermaid", "dot"], default="mermaid",
+                   help="mermaid (default; pastes into GitHub, Azure DevOps, Confluence) or dot (Graphviz)")
+    d.add_argument("--out", metavar="FILE", help="file to write (default: print it)")
 
-    q = sub.add_parser("search", help="search the catalogue from the terminal")
-    q.add_argument("text")
-    q.add_argument("--kind")
-    q.add_argument("--limit", type=int, default=20)
-    q.set_defaults(fn=cmd_search)
+    q = command("search", "search the catalogue from the terminal",
+                '  pdcat search "store sales"\n  pdcat search plant --kind table --limit 5', cmd_search)
+    q.add_argument("text", help="words to look for, in names, columns, descriptions, notes and code")
+    q.add_argument("--kind", help=f"only this kind of item: {KINDS}")
+    q.add_argument("--limit", type=int, default=20, metavar="N", help="show at most N matches (default: 20)")
 
-    e = sub.add_parser("export", help="export everything (assets, columns, links, notes) to CSV or JSON")
-    e.add_argument("--format", choices=["csv", "json"], default="csv")
-    e.add_argument("--out", default="catalogue-export", help="folder to write to (default: ./catalogue-export)")
-    e.set_defaults(fn=cmd_export)
+    e = command("export", "export everything (items, columns, links, notes, profiles) to CSV or JSON",
+                "  pdcat export\n  pdcat export --format json --out C:\\temp\\catalogue", cmd_export)
+    e.add_argument("--format", choices=["csv", "json"], default="csv", help="csv (default, one file per table) or json")
+    e.add_argument("--out", default="catalogue-export", metavar="FOLDER",
+                   help="folder to write to (default: ./catalogue-export)")
 
-    sh = sub.add_parser("share", help="write your notes and knowledge to a file a colleague can merge")
-    sh.add_argument("--out", default="catalogue-share.json")
-    sh.add_argument("--scan", action="append", help="also include your scan of this source (repeatable)")
-    sh.set_defaults(fn=cmd_share)
+    sh = command("share", "write your notes and knowledge to a file a colleague can merge",
+                 "  pdcat share --out mine.json\n  pdcat share --out mine.json --scan warehouse", cmd_share)
+    sh.add_argument("--out", default="catalogue-share.json", metavar="FILE",
+                    help="file to write (default: catalogue-share.json)")
+    sh.add_argument("--scan", action="append", metavar="SOURCE",
+                    help="also include your scan of this source, for a colleague who can't scan it (repeatable)")
 
-    mg = sub.add_parser("merge", help="merge a colleague's share file into your catalogue")
-    mg.add_argument("file")
-    mg.add_argument("--map", action="append", help="their source = yours, e.g. dw=warehouse (repeatable)")
+    mg = command("merge", "merge a colleague's share file into your catalogue (undo it on the app's Share page)",
+                 "  pdcat merge theirs.json --preview\n"
+                 "  pdcat merge theirs.json --map dw=warehouse\n"
+                 "  pdcat merge theirs.json --take-theirs", cmd_merge)
+    mg.add_argument("file", help="the .json file they sent")
+    mg.add_argument("--map", action="append", metavar="THEIRS=YOURS",
+                    help="their source name = yours, when the names differ, e.g. dw=warehouse (repeatable)")
     mg.add_argument("--take-theirs", action="store_true", help="where you both wrote something different, use theirs")
     mg.add_argument("--preview", action="store_true", help="show what would change, change nothing")
-    mg.set_defaults(fn=cmd_merge)
 
-    ai = sub.add_parser("ai-export", help="write the Copilot pack: what the catalogue knows, as documents")
-    ai.add_argument("--out", default="copilot-pack")
+    ai = command("ai-export", "write the Copilot pack: what the catalogue knows, as documents for an agent",
+                 "  pdcat ai-export --out C:\\temp\\copilot-pack\n"
+                 "  pdcat ai-export --docx --hide-locations", cmd_ai_export)
+    ai.add_argument("--out", default="copilot-pack", metavar="FOLDER", help="folder to write to (default: ./copilot-pack)")
     ai.add_argument("--docx", action="store_true", help="Word files instead of Markdown")
     ai.add_argument("--hide-locations", action="store_true", help="leave out server names and file locations")
     ai.add_argument("--values", action="store_true", help="include value ranges and common values (never sensitive)")
-    ai.set_defaults(fn=cmd_ai_export)
 
-    om = sub.add_parser("openmetadata", help="export tables, descriptions, glossary and lineage for OpenMetadata")
-    om.add_argument("--out", default="openmetadata-export.zip")
-    om.set_defaults(fn=cmd_openmetadata)
+    om = command("openmetadata", "export tables, descriptions, glossary and lineage for OpenMetadata",
+                 "  pdcat openmetadata --out om.zip", cmd_openmetadata)
+    om.add_argument("--out", default="openmetadata-export.zip", metavar="FILE",
+                    help="zip to write (default: openmetadata-export.zip)")
 
-    u = sub.add_parser("ui", help="open the catalogue in your browser")
-    u.add_argument("--port", type=int)
-    u.set_defaults(fn=cmd_ui)
+    u = command("ui", "open the catalogue in your browser", "  pdcat ui\n  pdcat ui --port 8600", cmd_ui)
+    u.add_argument("--port", type=int, help="port to use (default: Streamlit's, 8501)")
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")  # odd characters in names must not crash a Windows console

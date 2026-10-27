@@ -252,6 +252,7 @@ def add_knowledge(cat: Catalogue, sales: str) -> None:
     from pdcat import bprojects, curation, keys
     from pdcat.knowledge import save_knowledge, save_metric, save_question
     store = "sql://warehouse/salesdw/dbo.store"
+    cat.set_setting("author", "Sam")  # notes and knowledge are signed by a made-up name, not this machine's user
     curation.set_item_info(cat, sales, purpose="Daily unit sales per store and product; the source for forecasting.",
                            grain="store, product and day", refresh="daily", owner="Sam", lifecycle="in use",
                            trust="trusted", freshness_column="SaleDate")
@@ -274,6 +275,22 @@ def add_knowledge(cat: Catalogue, sales: str) -> None:
                                  status="active", owner="Sam")
     bprojects.set_member(cat, uid, sales)
     bprojects.set_member(cat, uid, "py://forecasting/src/features.py")
+
+
+def after_scan_extras(cat: Catalogue) -> None:
+    """What you'd do in the app after a scan: confirm suggested features, ask for some tables to be profiled."""
+    from pdcat import mlfeatures, pacing
+    meanings = {"units_lag_7": ("Units sold at the same store a week earlier", "7 days", "yes"),
+                "units_roll_28": ("Average daily units over the previous 28 days", "28 days", "yes"),
+                "promo_flag": ("1 when the product is on promotion that day", "same day", "yes")}
+    for f in mlfeatures.list_features(cat, state="suggested"):
+        if f["name"] in meanings:
+            text, window, known = meanings[f["name"]]
+            mlfeatures.save_feature(cat, f["name"], f["uid"], description=text, window=window,
+                                    known_at_prediction=known, owner="Sam", state="confirmed")
+    used = pacing.used_tables(cat)
+    pacing.request_profiles(cat, used[:2], approve=True)
+    pacing.request_profiles(cat, used[2:5])
 
 
 def main(out: Path) -> None:
@@ -396,6 +413,7 @@ def main(out: Path) -> None:
     add_knowledge(cat, sales)
     from pdcat.postscan import after_scan
     after_scan(cat, progress=lambda *_: None)
+    after_scan_extras(cat)
     refresh_tasks(cat)
     cat.close()
     print(f"Demo catalogue: {db}")

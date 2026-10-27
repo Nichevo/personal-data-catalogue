@@ -25,7 +25,8 @@ def erd_page(cat: Catalogue) -> None:
     pick = st.selectbox("Subject area", ["all", *names], format_func=lambda u: "All areas" if u == "all" else names[u])
     area = None if pick == "all" else pick
     elements = erd.erd_elements(cat, db, area)
-    graph_view(cat, elements, key=f"erd-{db}-{pick}", direction="DOWN", name=f"erd-{db.rsplit('/', 1)[-1]}")
+    graph_view(cat, elements, key=f"erd-{db}-{pick}", direction="DOWN", name=f"erd-{db.rsplit('/', 1)[-1]}",
+               packed=True)
     c1, c2 = st.columns(2)
     stem = db.rsplit("/", 1)[-1] + ("" if area is None else "-" + names[area].split(" (")[0])
     c1.download_button("⬇️ Mermaid ERD (.mmd)", erd.to_mermaid(cat, db, area), f"erd-{stem}.mmd", "text/plain",
