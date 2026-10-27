@@ -9,7 +9,7 @@ description = "A personal, local data catalogue for SQL Server tables and Python
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "streamlit>=1.46",
+    "streamlit>=1.62",
     "pandas>=2.0",
     "pyodbc>=5.0",
     "pyarrow>=14",
