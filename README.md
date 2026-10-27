@@ -212,6 +212,10 @@ one at a time, and every query is logged:
   every branch of an if/else; `pd.ExcelWriter`, `Path.write_text` and
   `Path.open`, `np.save`, `shutil.copy`, polars `write_csv`/`write_parquet` and openpyxl
   `wb.save`.
+  Every read or write call is recorded even when its path can't be worked out: the
+  script page lists it as "Unknown file" with the line and the code (`df.to_csv(filepath)`),
+  it goes on the To review list, and you can say which file it is, which then links it
+  like any other.
 - **Suggested metrics**: the Metric glossary suggests metrics found in your code and
   reports: functions such as `wape()` or `forecast_accuracy()`, named calculations
   (`mape = ...`), computed SQL columns (`SUM(x) / SUM(y) AS fill_rate`), and Power BI
