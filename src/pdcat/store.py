@@ -471,11 +471,12 @@ class Catalogue:
         row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         return json.loads(row["value"]) if row else default
 
-    def set_setting(self, key: str, value: Any) -> None:
+    def set_setting(self, key: str, value: Any, *, quiet: bool = False) -> None:
+        """Save a setting. quiet=True for bookkeeping that shouldn't count as a change to the catalogue."""
         with self.conn:
             self.conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
                               "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, json.dumps(value)))
-        if key != "revision":
+        if key != "revision" and not quiet:
             self.changed()
 
     def author(self) -> str:
@@ -517,7 +518,7 @@ class Catalogue:
     # ---- scanning -------------------------------------------------------
 
     @contextmanager
-    def scan(self, source: str) -> Iterator["Catalogue"]:
+    def scan(self, source: str, prefix: str | None = None) -> Iterator["Catalogue"]:
         """Wrap one source's scan in a transaction.
 
         Everything the source found last time is marked 'missing' up front and
@@ -526,13 +527,22 @@ class Catalogue:
         scan fails, nothing changes.
         """
         started = now()
+        # A prefix limits the scan to one database ("sql://src/db") and what's inside it.
+        exact, inside = (prefix.lower(), prefix.lower() + "/%") if prefix else ("%", "%")
+        scope = "(key LIKE ? OR key LIKE ?)"
+        from .history import snapshot
+        before = snapshot(self, source, exact, inside)
         with self.conn:
-            self.conn.execute("UPDATE assets SET status = 'missing' WHERE source = ?", (source,))
-            self.conn.execute("DELETE FROM links WHERE source = ?", (source,))
+            self.conn.execute(f"UPDATE assets SET status = 'missing' WHERE source = ? AND {scope}",
+                              (source, exact, inside))
+            self.conn.execute("DELETE FROM links WHERE source = ? AND (src_key LIKE ? OR src_key LIKE ?)",
+                              (source, exact, inside))
             self.conn.execute(
-                "DELETE FROM columns WHERE asset_key IN (SELECT key FROM assets WHERE source = ?)", (source,)
-            )
+                f"DELETE FROM columns WHERE asset_key IN (SELECT key FROM assets WHERE source = ? AND {scope})",
+                (source, exact, inside))
             yield self
+            from .history import record_changes
+            record_changes(self, before, snapshot(self, source, exact, inside), first_scan=not before)
             counts = dict(self.conn.execute(
                 "SELECT kind, COUNT(*) FROM assets WHERE source = ? AND status = 'active' GROUP BY kind",
                 (source,),
@@ -544,6 +554,8 @@ class Catalogue:
         self.resolve_refs()
         from .codemap import resolve_imports
         resolve_imports(self)
+        from .links import apply_manual_links
+        apply_manual_links(self)
         self.rebuild_search()
 
     def upsert_asset(self, key: str, kind: str, name: str, source: str, *, parent: str | None = None,
@@ -679,25 +691,47 @@ class Catalogue:
     def rebuild_search(self) -> None:
         """Rebuild the full-text index. A personal catalogue is small enough to do this in full."""
         notes_by_key: dict[str, list[str]] = defaultdict(list)
-        for n in self.conn.execute("SELECT asset_key, body, tags FROM notes"):
+        for n in self.conn.execute("SELECT asset_key, body, tags FROM notes WHERE archived = 0"):
             base = n["asset_key"].split("#", 1)[0]
             notes_by_key[base].append(f"{n['body']} {n['tags']}")
         cols_by_key: dict[str, list[str]] = defaultdict(list)
-        for c in self.conn.execute("SELECT asset_key, name, description FROM columns"):
-            cols_by_key[c["asset_key"]].append(f"{c['name']} {c['description'] or ''}")
+        for c in self.conn.execute(
+                "SELECT c.asset_key, c.name, c.description, ci.description AS mine FROM columns c "
+                "LEFT JOIN column_info ci ON ci.asset_key = c.asset_key AND ci.column_name = c.name"):
+            cols_by_key[c["asset_key"]].append(f"{c['name']} {c['description'] or ''} {c['mine'] or ''}")
+        info_by_key = {r["asset_key"]: " ".join(str(r[k] or "") for k in ("purpose", "grain", "owner", "refresh"))
+                       for r in self.conn.execute("SELECT * FROM item_info")}
 
         rows = []
         seen = set()
         for a in self.conn.execute("SELECT key, kind, source, name, description, attrs FROM assets"):
             attrs = json.loads(a["attrs"])
-            extra = " ".join(str(attrs.get(k, "")) for k in ("functions", "imports", "classes", "sql", "tags"))
-            body = " ".join([a["description"] or "", extra, " ".join(cols_by_key[a["key"]]),
-                             " ".join(notes_by_key[a["key"]])])
+            extra = " ".join(str(attrs.get(k, "")) for k in ("functions", "imports", "classes", "sql", "tags",
+                                                               "measures", "pattern"))
+            body = " ".join([a["description"] or "", info_by_key.get(a["key"], ""), extra,
+                             " ".join(cols_by_key[a["key"]]), " ".join(notes_by_key[a["key"]])])
             rows.append((a["key"], a["kind"], a["source"], _searchable(a["name"]), _searchable(body)))
             seen.add(a["key"])
         for key, texts in notes_by_key.items():
             if key not in seen:  # notes on files or unmatched tables
                 rows.append((key, "note", "", _searchable(key), _searchable(" ".join(texts))))
+        # Knowledge that isn't a scanned item: articles, questions, metrics, features, keys, business projects.
+        for sql, prefix, kind in (
+                ("SELECT uid AS id, title AS name, body || ' ' || tags || ' ' || triggers || ' ' || COALESCE(section, '') "
+                 "AS body FROM knowledge", "kb://", "knowledge"),
+                ("SELECT uid AS id, question AS name, COALESCE(answer, '') || ' ' || COALESCE(sql, '') || ' ' || tags "
+                 "|| ' ' || COALESCE(caveats, '') AS body FROM questions", "q://", "question"),
+                ("SELECT uid AS id, name, COALESCE(definition, '') || ' ' || COALESCE(formula, '') || ' ' || tags "
+                 "|| ' ' || COALESCE(caveats, '') AS body FROM metrics", "metric://", "metric"),
+                ("SELECT uid AS id, name, COALESCE(description, '') || ' ' || COALESCE(project, '') || ' ' || "
+                 "COALESCE(entity, '') || ' ' || COALESCE(expression, '') AS body FROM features WHERE state != 'rejected'",
+                 "feature://", "feature"),
+                ("SELECT name AS id, name, COALESCE(description, '') || ' ' || aliases AS body FROM keys "
+                 "WHERE state = 'active'", "key://", "key"),
+                ("SELECT uid AS id, name, COALESCE(purpose, '') || ' ' || COALESCE(notes, '') AS body FROM bprojects",
+                 "bp://", "bproject")):
+            for r in self.conn.execute(sql):
+                rows.append((f"{prefix}{r['id']}", kind, "", _searchable(r["name"]), _searchable(r["body"] or "")))
         with self.conn:
             self.conn.execute("DELETE FROM search_idx")
             self.conn.executemany("INSERT INTO search_idx (key, kind, source, name, body) VALUES (?, ?, ?, ?, ?)", rows)
@@ -705,6 +739,8 @@ class Catalogue:
 
     def search(self, text: str, *, kind: str | None = None, source: str | None = None,
                limit: int = 100) -> list[sqlite3.Row]:
+        """Ranked matches. Each row has a "snippet" showing where the words matched (with **bold** hits).
+        Deprecated and retired items sink to the bottom."""
         tokens = re.findall(r"\w+", text or "")
         if not tokens:
             return self.list_assets(kind=kind, source=source, limit=limit)
@@ -713,11 +749,13 @@ class Catalogue:
             filters.append("search_idx MATCH ?")
             params.append(" ".join(f'"{t}"*' for t in tokens))
             order = "bm25(search_idx, 0, 0, 0, 10.0, 1.0)"
+            snippet = "snippet(search_idx, 4, '**', '**', '…', 14)"
         else:
             for t in tokens:
                 filters.append("(s.name LIKE ? OR s.body LIKE ?)")
                 params += [f"%{t}%", f"%{t}%"]
             order = "s.name"
+            snippet = "''"
         if kind:
             filters.append("s.kind = ?")
             params.append(kind)
@@ -726,12 +764,53 @@ class Catalogue:
             params.append(source)
         sql = f"""
             SELECT s.key, s.kind, s.source, COALESCE(a.name, s.key) AS name, a.description, a.status,
+                   {snippet} AS snippet, i.lifecycle, i.trust, i.sensitive, i.purpose,
                    (SELECT COUNT(*) FROM notes n WHERE n.asset_key = s.key OR n.asset_key LIKE s.key || '#%') AS note_count
-            FROM search_idx s LEFT JOIN assets a ON a.key = s.key
+            FROM search_idx s LEFT JOIN assets a ON a.key = s.key LEFT JOIN item_info i ON i.asset_key = s.key
             WHERE {' AND '.join(filters)}
-            ORDER BY {order} LIMIT ?
+            ORDER BY CASE WHEN i.lifecycle IN ('deprecated', 'retired') OR i.trust = 'do not use' THEN 1 ELSE 0 END,
+                     {order} LIMIT ?
         """
         return self.conn.execute(sql, (*params, limit)).fetchall()
+
+    def matching_columns(self, key: str, text: str) -> list[dict[str, Any]]:
+        """Columns of one item whose name or description matches the search words, with their profile."""
+        tokens = [t.lower() for t in re.findall(r"\w+", text or "")]
+        if not tokens:
+            return []
+        out = []
+        prof = {p["column_name"].lower(): dict(p) for p in self.profile(key)}
+        mine = {r["column_name"].lower(): r for r in self.conn.execute(
+            "SELECT column_name, description, sensitive FROM column_info WHERE asset_key = ?", (key,))}
+        cols = [dict(c) for c in self.columns(key)] or \
+            [{"name": p["column_name"], "data_type": p["data_type"], "description": None} for p in prof.values()]
+        for c in cols:
+            low = c["name"].lower()
+            m = mine.get(low)
+            desc = (m["description"] if m and m["description"] else None) or c.get("description") or ""
+            hay = f"{_searchable(c['name'])} {desc}".lower()
+            if all(any(w.startswith(t) for w in re.findall(r"\w+", hay)) for t in tokens):
+                out.append({**c, "description": desc, "profile": prof.get(low),
+                            "sensitive": bool(m and m["sensitive"])})
+        return out
+
+    def search_columns(self, text: str, limit: int = 300) -> list[dict[str, Any]]:
+        """Every column, in any table or file, whose name or description matches the words."""
+        tokens = [t.lower() for t in re.findall(r"\w+", text or "")]
+        if not tokens:
+            return []
+        clauses = " AND ".join(["(lower(c.name) LIKE ? OR lower(COALESCE(ci.description, c.description, '')) LIKE ?)"]
+                               * len(tokens))
+        params = [p for t in tokens for p in (f"%{t}%", f"%{t}%")]
+        rows = self.conn.execute(
+            f"""SELECT c.asset_key, a.name AS item, a.kind, a.source, c.name AS column_name, c.data_type,
+                       COALESCE(ci.description, c.description) AS description, COALESCE(ci.sensitive, 0) AS sensitive,
+                       p.row_count, p.null_count, p.distinct_count, p.min_value, p.max_value, p.top_values
+                FROM columns c JOIN assets a ON a.key = c.asset_key AND a.status = 'active'
+                LEFT JOIN column_info ci ON ci.asset_key = c.asset_key AND ci.column_name = c.name
+                LEFT JOIN profiles p ON p.asset_key = c.asset_key AND lower(p.column_name) = lower(c.name)
+                WHERE {clauses} ORDER BY lower(c.name), a.name LIMIT ?""", (*params, limit)).fetchall()
+        return [dict(r) for r in rows]
 
     # ---- reading --------------------------------------------------------
 
@@ -961,15 +1040,27 @@ class Catalogue:
     def save_profile(self, asset_key: str, columns: list[dict[str, Any]], method: str) -> None:
         """Replace the stored value profile of a table or file (one dict per column)."""
         ts = now()
+        hidden = {r[0].lower() for r in self.conn.execute(
+            "SELECT column_name FROM column_info WHERE asset_key = ? AND sensitive = 1", (asset_key,))}
+        whole = self.conn.execute("SELECT 1 FROM item_info WHERE asset_key = ? AND sensitive = 1",
+                                  (asset_key,)).fetchone() is not None
+        # Sensitive columns: keep the counts, never the values.
+        columns = [c if not (whole or c["name"].lower() in hidden) else
+                   {**c, "min": None, "max": None, "mean": None, "top": [], "histogram": None, "percentiles": None}
+                   for c in columns]
         with self.conn:
             self.conn.execute("DELETE FROM profiles WHERE asset_key = ?", (asset_key,))
             self.conn.executemany(
                 """INSERT INTO profiles (asset_key, column_name, ordinal, data_type, row_count, null_count,
-                       distinct_count, min_value, max_value, mean_value, top_values, method, profiled_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       distinct_count, min_value, max_value, mean_value, top_values, method, profiled_at,
+                       histogram, percentiles, hints)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [(asset_key, c["name"], c.get("ordinal", i + 1), c.get("data_type"), c.get("rows"), c.get("nulls"),
                   c.get("distinct"), _text(c.get("min")), _text(c.get("max")), c.get("mean"),
-                  json.dumps(c.get("top") or [], default=str), method, ts)
+                  json.dumps(c.get("top") or [], default=str), method, ts,
+                  json.dumps(c["histogram"], default=str) if c.get("histogram") else None,
+                  json.dumps(c["percentiles"], default=str) if c.get("percentiles") else None,
+                  json.dumps(c["hints"], default=str) if c.get("hints") else None)
                  for i, c in enumerate(columns)],
             )
         self.changed()
@@ -995,6 +1086,18 @@ class Catalogue:
             if not frontier:
                 break
         return found
+
+    def confirm_note(self, note_id: int) -> None:
+        """You checked the note and it still holds."""
+        with self.conn:
+            self.conn.execute("UPDATE notes SET confirmed_at = ? WHERE id = ?", (now(), note_id))
+        self.changed()
+
+    def archive_note(self, note_id: int, archived: bool = True) -> None:
+        """Move a note out of the way without deleting it."""
+        with self.conn:
+            self.conn.execute("UPDATE notes SET archived = ? WHERE id = ?", (int(archived), note_id))
+        self.rebuild_search()
 
     def delete_note(self, note_id: int) -> None:
         with self.conn:

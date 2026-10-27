@@ -1,11 +1,16 @@
 """Get your data back out: everything in the catalogue as CSV files or one JSON file.
 
-The export has seven tables: assets (tables, views, scripts, data files…),
-columns, links (what reads/writes what), notes (including data issues),
-profiles (value ranges per column), functions (every function in your code with
-its docstring, calls and returns) and packages (what each project declares and
-imports). Keys are stable, so the files can be
-joined together or loaded into another catalogue later.
+The export has a table for each kind of thing: assets (tables, views, scripts,
+data files…), columns, links (what reads/writes what), notes (including data
+issues), profiles (value ranges per column), functions (every function in your
+code with its docstring, calls and returns), packages (what each project
+declares and imports), and what you know: item_info (purpose, grain, owner,
+status…), column_info, knowledge, questions, metrics, features, keys,
+business projects, relationships, series files and change history. Keys are
+stable, so the files can be joined together or loaded into another catalogue.
+
+Sensitive columns and items never have values in the export, and example-value
+notes on them are left out.
 """
 from __future__ import annotations
 
@@ -25,30 +30,64 @@ TABLES = {
                "ORDER BY asset_key, ordinal",
     "links": "SELECT src_key, relation, COALESCE(dst_key, dst_ref) AS dst, dst_key IS NOT NULL AS matched, "
              "source, evidence FROM links ORDER BY src_key, relation, dst",
-    "notes": "SELECT id, asset_key, note_type, status, body, tags, created_at, updated_at FROM notes "
-             "ORDER BY asset_key, created_at",
+    "notes": "SELECT id, uid, asset_key, note_type, status, body, tags, author, created_at, updated_at, "
+             "confirmed_at, archived FROM notes ORDER BY asset_key, created_at",
     "profiles": "SELECT asset_key, ordinal, column_name, data_type, row_count, null_count, distinct_count, "
-                "min_value, max_value, mean_value, top_values, method, profiled_at FROM profiles "
-                "ORDER BY asset_key, ordinal",
+                "min_value, max_value, mean_value, top_values, histogram, percentiles, hints, method, profiled_at "
+                "FROM profiles ORDER BY asset_key, ordinal",
+    "item_info": "SELECT * FROM item_info ORDER BY asset_key",
+    "column_info": "SELECT * FROM column_info ORDER BY asset_key, column_name",
+    "knowledge": "SELECT * FROM knowledge ORDER BY title",
+    "questions": "SELECT * FROM questions ORDER BY question",
+    "metrics": "SELECT * FROM metrics ORDER BY name",
+    "features": "SELECT * FROM features WHERE state != 'rejected' ORDER BY project, name",
+    "keys": "SELECT * FROM keys WHERE state = 'active' ORDER BY name",
+    "key_columns": "SELECT * FROM key_columns WHERE state = 'confirmed' ORDER BY key_name, asset_key",
+    "business_projects": "SELECT * FROM bprojects ORDER BY name",
+    "business_project_members": "SELECT * FROM bproject_members WHERE state = 'confirmed' ORDER BY project_uid",
+    "relationships": "SELECT * FROM relationships WHERE state != 'rejected' ORDER BY src_key, dst_key",
+    "change_history": "SELECT asset_key, at, change, detail FROM schema_history ORDER BY at, id",
 }
+JSON_COLUMNS = {"top_values", "histogram", "percentiles", "hints", "pinned", "excluded", "tables", "sources",
+                "models", "importance", "aliases"}
 
 
 def export_data(cat: Catalogue) -> dict[str, list[dict[str, Any]]]:
+    from .curation import is_sensitive, sensitive_columns
+    hidden = sensitive_columns(cat)
     data = {}
     for name, sql in TABLES.items():
         rows = [dict(r) for r in cat.conn.execute(sql)]
+        for r in rows:
+            for col in JSON_COLUMNS & set(r):
+                if isinstance(r[col], str):
+                    try:
+                        r[col] = json.loads(r[col])
+                    except ValueError:
+                        pass
         if name == "assets":
             for r in rows:
                 r["attrs"] = json.loads(r["attrs"])
-        if name == "profiles":
-            for r in rows:
-                r["top_values"] = json.loads(r["top_values"])
         if name == "links":
             for r in rows:
                 r["matched"] = bool(r["matched"])
+        if name == "notes":
+            def keep(n: dict) -> bool:
+                base, _, col = n["asset_key"].partition("#")
+                return not (n["note_type"] == "example" and is_sensitive(hidden, base, col or None))
+            rows = [n for n in rows if keep(n)]
+        if name == "profiles":
+            rows = [r if not is_sensitive(hidden, r["asset_key"], r["column_name"]) else
+                    {**r, "min_value": None, "max_value": None, "mean_value": None, "top_values": [],
+                     "histogram": None, "percentiles": None} for r in rows]
         data[name] = rows
     data["functions"] = _functions(data["assets"])
     data["packages"] = _packages(cat)
+    try:
+        from .series import series_files
+        data["series_files"] = series_files(cat)
+    except ImportError:
+        pass
     return data
 
 

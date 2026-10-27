@@ -129,11 +129,15 @@ def uncatalogued_libraries(cat: Catalogue) -> list[dict[str, Any]]:
             if top:
                 imported[top].add(row["key"])
 
+    from .libclass import THIRD, Classifier
+    clf = Classifier(cat)
     out = []
     for name, users in imported.items():
         if name in modules or name in _STDLIB:
             continue
         path, how = _locate(name, sys_paths)
+        if path is None and clf.classify(name) == THIRD:
+            continue  # declared by a project or a well-known package: not yours
         if how == "installed package":
             continue
         out.append({"name": name, "used_by": len(users), "path": path, "how": how})

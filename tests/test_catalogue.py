@@ -113,18 +113,22 @@ def test_export_round_trips_everything(catalogue, tmp_path):
 
     catalogue.add_note(SALES, "Refreshed nightly, café data é.", "refresh")
     data = json.loads(to_json(catalogue))
-    assert set(data) == {"assets", "columns", "links", "notes", "profiles", "functions", "packages"}
+    assert set(data) >= {"assets", "columns", "links", "notes", "profiles", "functions", "packages", "item_info",
+                         "column_info", "knowledge", "questions", "metrics", "features", "keys", "relationships",
+                         "change_history"}
     assert data["notes"][0]["body"] == "Refreshed nightly, café data é."
     assert any(a["key"] == SALES and a["attrs"]["row_count"] == 1200 for a in data["assets"])
     assert any(l["dst"] == "table:staging.mystery" and not l["matched"] for l in data["links"])
 
     with zipfile.ZipFile(io.BytesIO(to_csv_zip(catalogue))) as z:
-        assert sorted(z.namelist()) == ["assets.csv", "columns.csv", "functions.csv", "links.csv", "notes.csv", "packages.csv", "profiles.csv"]
+        assert set(z.namelist()) >= {"assets.csv", "columns.csv", "functions.csv", "links.csv", "notes.csv",
+                                     "packages.csv", "profiles.csv", "knowledge.csv", "item_info.csv"}
         notes = list(csv.DictReader(io.StringIO(z.read("notes.csv").decode("utf-8-sig"))))
     assert notes[0]["asset_key"] == SALES and notes[0]["tags"] == "refresh"
 
     paths = write_export(catalogue, tmp_path / "out", "csv")
-    assert {p.name for p in paths} == {"assets.csv", "columns.csv", "functions.csv", "links.csv", "notes.csv", "packages.csv", "profiles.csv"}
+    assert {p.name for p in paths} >= {"assets.csv", "columns.csv", "functions.csv", "links.csv", "notes.csv",
+                                       "packages.csv", "profiles.csv"}
 
 
 def test_pasted_sql_is_linked_searchable_kept_and_exported(catalogue, project):

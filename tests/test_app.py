@@ -10,6 +10,15 @@ APP = str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py")
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 
 
+def goto(app, page: str):
+    """Pick a page from the sidebar: its section first, then the page."""
+    from pdcat.ui.main import sections
+    section = next(name for name, pages in sections().items() if page in pages)
+    app.sidebar.selectbox(key="nav-section").set_value(section).run()
+    app.sidebar.radio(key=f"nav-{section}").set_value(page).run()
+    return app
+
+
 @pytest.fixture
 def app(catalogue, monkeypatch):
     monkeypatch.setenv("PDCAT_DB", str(catalogue.path))
@@ -38,14 +47,16 @@ def test_detail_page_add_note(app, catalogue):
 
 def test_other_views_render(app):
     app.run()
-    for view in ["Needs notes", "Recent notes", "Unmatched tables"]:
-        app.sidebar.radio[0].set_value(view).run()
-        assert not app.exception, view
+    from pdcat.ui.main import sections
+    for pages in sections().values():
+        for view in pages:
+            goto(app, view)
+            assert not app.exception, (view, app.exception)
 
 
 def test_add_sql_page_saves_and_opens_snippet(app, catalogue):
     app.run()
-    app.sidebar.radio[0].set_value("Add SQL").run()
+    goto(app, "Add SQL")
     assert not app.exception
     app.text_input[0].input("Store regions")
     [t for t in app.text_area if t.label == "SQL"][0].input("SELECT Region FROM dbo.Store")
@@ -64,7 +75,7 @@ def test_data_folder_page_adds_and_scans(app, catalogue, tmp_path):
     folder.mkdir()
     pd.DataFrame({"StoreId": [1, 2], "Units": [3.0, 4.0]}).to_csv(folder / "sales.csv", index=False)
     app.run()
-    app.sidebar.radio[0].set_value("Data folders").run()
+    goto(app, "Data folders")
     [t for t in app.text_input if t.label == "Folder path"][0].input(f'"{folder}"')
     [t for t in app.text_input if t.label == "Short name"][0].input("extracts")
     [b for b in app.button if b.label == "Add and scan"][0].click().run()
@@ -100,8 +111,10 @@ def test_review_page_comment_marks_done(app, catalogue):
     refresh_tasks(catalogue)
     before = len(open_tasks(catalogue, limit=1000))
     app.run()
-    app.sidebar.radio[0].set_value("To review").run()
+    goto(app, "To review")
     assert not app.exception
+    assert len(app.dataframe) == 1  # the compact table is the default
+    app.toggle[0].set_value(True).run()  # cards
     [t for t in app.text_area if t.label == "Your comment"][0].input("Checked: this is the store master.")
     [b for b in app.button if b.label == "Save"][0].click().run()
     assert not app.exception
@@ -113,14 +126,14 @@ def test_review_page_comment_marks_done(app, catalogue):
 
 def test_hotspots_page_renders(app):
     app.run()
-    app.sidebar.radio[0].set_value("Issue hotspots").run()
+    goto(app, "Issue hotspots")
     assert not app.exception
     assert len(app.dataframe) == 1
 
 
 def test_code_map_page_renders(app, catalogue):
     app.run()
-    app.sidebar.radio[0].set_value("Code map").run()
+    goto(app, "Code map")
     assert not app.exception
     app.selectbox[0].set_value("forecasting").run()
     assert not app.exception
