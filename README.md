@@ -231,6 +231,34 @@ one at a time, and every query is logged:
   covers (from the profiles), row counts and any columns only one has. On the code map
   and in lineage the pair shows as one table with a "main + backup" badge, so a script
   that reads both is clear about why.
+- **Copilot round trip**: export a "gaps pack" of items with no description, with their
+  code and columns, for your Copilot agent to draft descriptions; import its answers as
+  suggestions you accept or edit. No AI service is connected to the catalogue.
+- **Descriptions from comments**: draft descriptions from SQL comments, docstrings,
+  notebook markdown and comments next to column renames, as suggestions.
+- **Column renames in lineage**: `rename({"Units": "qty"})` or `SELECT Units AS qty`
+  links the two columns. Both names are shown, with the script and line where it was
+  renamed, and the new column inherits the old one's description as a suggestion.
+  Column lineage follows the chain through every rename.
+- **Report labels**: Power BI display names and visual titles suggested as business
+  names for the SQL columns behind them.
+- **Git history**: who last changed a script, when, and the commit messages, used to
+  suggest owners and show a change log.
+- **Freshness and old items**: output files' modified dates show whether the scripts
+  that write them still run. Outputs that keep refreshing earn a "refreshing" badge and
+  drop out of your way; ones that stop go on the To review list asking for a refresh or
+  a note on whether they're still needed. Scripts and projects nobody has touched or
+  run in a long time are flagged the same way. You can mark projects, scripts and files
+  as old, which hides them from the code map and diagrams (a switch shows them again)
+  without deleting their notes.
+- **Rules become checks**: a rule you write ("Units is never negative", "loaded daily
+  by 7am") becomes a check run with each profile; failures go to review.
+- **Questions for colleagues**: a share file holding only your open questions, which a
+  colleague answers in their catalogue and merges back into yours.
+- **Five quick questions**: a short daily list of the highest-value gaps, each answerable
+  in under a minute, mostly by confirming a suggestion.
+- **Learn from your queries**: joins and filters that come up again and again in pasted
+  SQL and scripts become "how this table is usually used" notes and join hints.
 - **Suggested metrics**: the Metric glossary suggests metrics found in your code and
   reports: functions such as `wape()` or `forecast_accuracy()`, named calculations
   (`mape = ...`), computed SQL columns (`SUM(x) / SUM(y) AS fill_rate`), and Power BI
