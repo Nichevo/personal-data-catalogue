@@ -166,10 +166,6 @@ http.response.start", which comes from older Streamlit clashing with a newer Sta
 To update just Streamlit: `pip install -U "streamlit>=1.62"` (or
 `conda install -c conda-forge "streamlit>=1.62"` in a conda environment).
 
-Every page from version 1 is still there. The sidebar now groups them: **Find** (Search),
-**Map** (Code map), **Review** (To review, Issue hotspots, Data issues, Needs notes,
-Recent notes, Unmatched tables) and **Add** (Add SQL, Data folders).
-
 ## What it does
 
 - **Scans SQL Server** with your Windows login: tables, views and stored procedures,

@@ -1,4 +1,4 @@
-"""Page layout: the whole menu in the sidebar, grouped by section, and an item page when one is open."""
+"""Page layout: a section picker and a page list in the sidebar, an item page when one is open."""
 from __future__ import annotations
 
 from typing import Callable
@@ -20,7 +20,6 @@ def sections() -> dict[str, dict[str, Page]]:
     return {
         "🔎 Find": {"Search": search.search_page, "Company-wide keys": keys_pages.keys_page,
                    "Packages": code.packages_page},
-        "🗺️ Map": {"Code map": code.code_map_page, "Database diagrams": erd_page.erd_page},
         "📚 Knowledge": {"Knowledge": knowledge_pages.knowledge_page, "Business projects": bproject_pages.bprojects_page,
                         "Question library": knowledge_pages.questions_page,
                         "Metric glossary": knowledge_pages.metrics_page, "Feature dictionary": ml_pages.features_page},
@@ -30,6 +29,7 @@ def sections() -> dict[str, dict[str, Page]]:
                      "Recent notes": search.recent_notes_page, "Unmatched tables": search.unmatched_page,
                      "Unlinked data": lists.unlinked_page, "Recent changes": lists.changes_page,
                      "Sensitive data": keys_pages.sensitive_page, "Duplicates": lists.duplicates_page},
+        "🗺️ Map": {"Code map": code.code_map_page, "Database diagrams": erd_page.erd_page},
         "➕ Add": {"Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
                   "SQL scanning": scanning.scanning_page},
         "📤 Share": {"Share with colleagues": share.sharing_page, "Copilot pack": share.copilot_page,
@@ -42,44 +42,22 @@ NEEDS_DATA = {"Search", "Data issues", "Needs notes", "Recent notes", "Unmatched
               "Describe columns", "Edit many items"}
 
 
-# Tight rows for the menu: Streamlit spaces buttons for forms, not for a list of links.
-MENU_CSS = """<style>
-[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stVerticalBlock"] { gap: 0; }
-[data-testid="stSidebar"] [data-testid="stExpander"] button { min-height: 1.9rem; padding: 0.1rem 0; }
-[data-testid="stSidebar"] [data-testid="stExpander"] details > div { padding-top: 0.2rem; padding-bottom: 0.4rem; }
-</style>"""
-
-
-def open_page(name: str) -> None:
-    """Show a menu page, leaving any item page that is open. The page name goes in the link, so a refresh
-    or a bookmark comes back to it."""
-    st.session_state["nav-page"] = name
+def leave_item() -> None:
+    """Picking a page from the menu closes the item page that is open, so the page shows."""
     st.query_params.pop("asset", None)
     st.query_params.pop("fn", None)
-    st.query_params["page"] = name
-
-
-def current_page(secs: dict[str, dict[str, Page]]) -> str:
-    names = {n for pages in secs.values() for n in pages}
-    name = st.session_state.get("nav-page") or st.query_params.get("page")
-    return name if name in names else "Search"
 
 
 def sidebar(cat: Catalogue) -> tuple[str, Page]:
     from pdcat.review import count_open
     secs = sections()
-    name = current_page(secs)
-    on_item = bool(st.query_params.get("asset"))
     with st.sidebar:
         st.header("Data catalogue")
-        st.html(MENU_CSS)
-        # Every page is listed, so nothing hides behind a picker. Fold away the sections you don't use.
-        for section, pages in secs.items():
-            with st.expander(section, expanded=True):
-                for page in pages:
-                    here = page == name and not on_item
-                    st.button(f"**{page}**" if here else page, key=f"nav-{page}", on_click=open_page,
-                              args=(page,), type="tertiary", icon=":material/chevron_right:" if here else None)
+        section = st.selectbox("Section", list(secs), key="nav-section", label_visibility="collapsed",
+                               on_change=leave_item)
+        pages = secs[section]
+        page = st.radio("Page", list(pages), key=f"nav-{section}", label_visibility="collapsed",
+                        on_change=leave_item)
         st.divider()
         stats = cat.stats()
         kinds = stats["kinds"]
@@ -88,7 +66,7 @@ def sidebar(cat: Catalogue) -> tuple[str, Page]:
         st.caption(f"📝 {stats['notes']} notes · 📋 {count_open(cat)} to review")
         for source, at in stats["last_scans"].items():
             st.caption(f"{source}: scanned {at[:16].replace('T', ' ')} UTC")
-    return name, next(pages[name] for pages in secs.values() if name in pages)
+    return page, pages[page]
 
 
 def session_start(cat: Catalogue) -> None:
