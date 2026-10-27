@@ -71,7 +71,26 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
     with cat.scan(name):
         cat.upsert_asset(folder_key, "folder", name, name, attrs={"path": str(root), "recursive": recursive})
         counts = ingest_files(cat, root, sorted(iter_data_files(root, recursive)), folder_key, name, max_rows)
-    return {"files": counts["files"], "series": counts["series"], "errors": counts["errors"]}
+        office = ingest_office(cat, root, folder_key, name, recursive)
+        counts = {**office, **counts, "errors": counts["errors"] + office["errors"]}
+    return {k: counts[k] for k in ("files", "series", "reports", "workbooks", "errors")}
+
+
+def ingest_office(cat: Catalogue, root: Path, parent_key: str, source: str, recursive: bool = True,
+                  skip: set[str] | None = None) -> dict[str, int]:
+    """Power BI reports and Excel workbooks under a folder."""
+    from .scan_excel import find_workbooks, ingest_workbook
+    from .scan_powerbi import find_reports, ingest_report
+    counts = {"reports": 0, "workbooks": 0, "errors": 0}
+    for path in find_reports(root, recursive, skip):
+        rel = path.relative_to(root).as_posix()
+        counts["errors"] += bool(ingest_report(cat, path, f"{parent_key}/{rel}", rel, source, parent_key))
+        counts["reports"] += 1
+    for path in find_workbooks(root, recursive, skip):
+        rel = path.relative_to(root).as_posix()
+        counts["errors"] += bool(ingest_workbook(cat, path, f"{parent_key}/{rel}", rel, source, parent_key))
+        counts["workbooks"] += 1
+    return counts
 
 
 def grouping_on(cat: Catalogue, source: str) -> bool:

@@ -18,6 +18,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Optional readers: the compressed model inside .pbix files, and exact reading of Excel macros.
+office = ["pbixray", "olefile"]
 
 [project.scripts]
 pdcat = "pdcat.cli:main"

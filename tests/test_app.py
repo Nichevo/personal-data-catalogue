@@ -206,3 +206,25 @@ def test_knowledge_item_pages(app, catalogue):
         app.run()
         assert not app.exception, (key, app.exception)
     assert any("Sales forecasting" in b.label for b in app.button)  # the table shows its business project
+
+
+def test_report_workbook_and_measure_pages(app, catalogue, tmp_path):
+    from test_office import write_pbit, write_xlsx
+
+    from pdcat.scan_files import scan_folder
+    folder = tmp_path / "reports"
+    folder.mkdir()
+    write_pbit(folder / "Sales.pbit")
+    write_xlsx(folder / "Sales.xlsm")
+    scan_folder(catalogue, "reports", folder)
+    measure = [c["key"] for c in catalogue.children("files://reports/Sales.pbit") if c["kind"] == "measure"][0]
+    for key in ["files://reports/Sales.pbit", "files://reports/Sales.xlsm", measure, SALES]:
+        app.query_params["asset"] = key
+        app.run()
+        assert not app.exception, (key, app.exception)
+    app.query_params["asset"] = measure
+    app.run()
+    [b for b in app.button if b.label == "Save"][0].click().run()  # add it to the metric glossary
+    assert not app.exception
+    from pdcat.knowledge import list_metrics
+    assert list_metrics(catalogue)[0]["from_measure"] == measure

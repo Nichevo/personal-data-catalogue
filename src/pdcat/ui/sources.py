@@ -21,8 +21,10 @@ def folders_page(cat: Catalogue) -> None:
     from pdcat.scan_files import scan_folder
 
     st.title("Data folders")
-    st.caption("Point the catalogue at any folder and it records every CSV and Parquet file in it: size, "
-               "modified date, row count, columns and value ranges. Re-scan whenever the files change.")
+    st.caption("Point the catalogue at any folder and it records every CSV and Parquet file in it (size, "
+               "modified date, row count, columns and value ranges), every Power BI report (.pbix, .pbit, .pbip: "
+               "pages, visuals, measures and what they load) and every Excel workbook (sheets, Power Query, "
+               "Microsoft Query connections, pivot tables and SQL in macros). Re-scan whenever the files change.")
     for i, f in enumerate(cat.folders()):
         with st.container(border=True):
             c1, c2, c3 = st.columns([4, 1, 1])
@@ -70,6 +72,8 @@ def _run_folder_scan(cat: Catalogue, scan_folder, name: str, path: str, recursiv
             st.error(f"Scan failed: {type(e).__name__}: {e}")
             return
     msg = f"Scanned {counts['files']} file(s)" + (f" ({counts['series']} dated series)" if counts.get("series") else "") \
+        + (f", {counts['reports']} Power BI report(s)" if counts.get("reports") else "") \
+        + (f", {counts['workbooks']} Excel workbook(s)" if counts.get("workbooks") else "") \
         + (f", {counts['errors']} couldn't be read" if counts["errors"] else "")
     from pdcat.postscan import after_scan
     after_scan(cat)

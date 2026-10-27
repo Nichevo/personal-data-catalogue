@@ -76,6 +76,9 @@ def detail(cat: Catalogue, key: str) -> None:
 
     from .extras import item_extras_top
     item_extras_top(cat, key, asset)
+    if asset["kind"] in ("report", "measure", "workbook"):
+        from .office_pages import office_section
+        office_section(cat, key, asset)
 
     mine = open_tasks(cat, asset_key=key, limit=1000)
     if mine:
@@ -130,7 +133,8 @@ def detail(cat: Catalogue, key: str) -> None:
             if attrs.get(field):
                 st.markdown(f"**{label}:** " + ", ".join(f"`{x}`" for x in attrs[field]))
         hidden = ("definition", "imports", "functions", "classes", "function_info", "import_map", "environment",
-                  "import_details", "queries", "measures", "model", "files")
+                  "import_details", "queries", "measures", "model", "files", "pages", "tables", "relationships",
+                  "sheets", "connections", "pivots", "vba_sql", "expression", "used_on")
         rest = {k: v for k, v in attrs.items() if k not in hidden and v not in (None, "", [])}
         st.json(rest, expanded=False)
         st.caption(f"First seen {asset['first_seen'][:10]} · last seen {asset['last_seen'][:10]}")

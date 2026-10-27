@@ -663,7 +663,8 @@ class Catalogue:
         """
         files = []
         for row in self.conn.execute(
-                "SELECT key, source, attrs FROM assets WHERE kind IN ('data_file', 'series_file') AND status = 'active'"):
+                "SELECT key, source, attrs FROM assets WHERE kind IN ('data_file', 'series_file', 'workbook') "
+                "AND status = 'active'"):
             a = json.loads(row["attrs"])
             # A file in a dated series links to the series, not to one month's copy.
             files.append({"key": a.get("in_series") or row["key"], "source": row["source"],
