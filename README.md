@@ -209,6 +209,12 @@ one at a time, and every query is logged:
   path), paths looked up in a config dictionary, `pd.ExcelWriter`, `Path.write_text` and
   `Path.open`, `np.save`, `shutil.copy`, polars `write_csv`/`write_parquet` and openpyxl
   `wb.save`.
+- **Suggested metrics**: the Metric glossary suggests metrics found in your code and
+  reports: functions such as `wape()` or `forecast_accuracy()`, named calculations
+  (`mape = ...`), computed SQL columns (`SUM(x) / SUM(y) AS fill_rate`), and Power BI
+  measures not yet in the glossary. Each suggestion shows where it was found and the
+  formula, and you tick the ones to add; the rest can be dismissed so they don't come
+  back.
 
 ## Upgrading from version 1
 
