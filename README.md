@@ -279,6 +279,12 @@ one at a time, and every query is logged:
   lets you mark agreed exceptions. New objects that break a rule go on To review, the
   results export to CSV, and the rules go in the Copilot pack so queries Copilot
   writes follow them.
+  Rules can also be worked out from what's already there: for a database or a Python
+  project, the app looks for the habits most names follow (say 92% of views start with
+  `vw_`, columns are PascalCase, date columns end in `Date`, scripts are `snake_case.py`,
+  output files are named `<thing>_<yyyymmdd>.csv`) and suggests each as a rule, with how
+  many names follow it and examples of the ones that don't. You accept, edit or reject
+  each suggestion; accepted ones are audited like pasted rules.
 - **A tidier menu**: To review takes in Data issues, Needs notes, Unmatched tables,
   Unlinked data and Duplicates as filter tabs; Coverage and Issue hotspots become one
   Health page; Recent notes and Recent changes become one What's new page; Describe
