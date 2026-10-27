@@ -162,6 +162,10 @@ one at a time, and every query is logged:
   possible wrong folder (today the folders must match). When the same file name turns up
   in several folders, say so on the link and on the script and file pages (today the
   newest is picked without a word).
+- **Business projects**: add a whole folder (a project, a sub-folder like
+  `forecasting/src`, or a data folder) in one go, with an option to keep adding new files
+  that appear there. Start a new business project straight from a table or script page,
+  with that item already in it.
 
 ## Upgrading from version 1
 
