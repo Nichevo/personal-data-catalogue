@@ -1,0 +1,231 @@
+"""The search page, and the plain lists (data issues, needs notes, recent notes, unmatched tables)."""
+from __future__ import annotations
+
+import json
+
+import pandas as pd
+import streamlit as st
+
+from pdcat.export import rows_to_csv
+from pdcat.store import Catalogue
+
+from .common import (asset_button, badges, first_line, go, icon, kind_label, note_meta, result_list, row_get,
+                     size_label)
+
+DETAILED = 15  # results shown with their matching columns; the rest stay one line each
+
+
+def search_page(cat: Catalogue) -> None:
+    st.title("Search")
+    c1, c2, c3, c4 = st.columns([4, 1.2, 1.2, 1.2])
+    text = c1.text_input("Search", placeholder="table, column, script, note, rule or tag…",
+                         label_visibility="collapsed")
+    mode = c2.selectbox("Show", ["Items", "Columns only"], label_visibility="collapsed",
+                        help="Columns only: every matching column in every table and file, as one list.")
+    kind = c3.selectbox("Kind", ["Any kind", *cat.kinds(), "knowledge", "question", "metric", "feature"],
+                        label_visibility="collapsed",
+                        format_func=lambda k: k if k == "Any kind" else kind_label(k))
+    source = c4.selectbox("Source", ["Any source", *cat.sources()], label_visibility="collapsed")
+    if mode == "Columns only":
+        columns_only(cat, text)
+        return
+    rows = [dict(r) for r in cat.search(text, kind=None if kind == "Any kind" else kind,
+                                        source=None if source == "Any source" else source)]
+    if not rows:
+        st.info("No matches." if text else "Nothing here yet.")
+        return
+    st.download_button(f"⬇️ Download these {len(rows)} results (CSV)",
+                       rows_to_csv([{k: r.get(k) for k in ("key", "kind", "source", "name", "description",
+                                                            "note_count")} for r in rows]),
+                       "search-results.csv", "text/csv")
+    related_knowledge(cat, text)
+    for i, r in enumerate(rows):
+        result_card(cat, r, text, i, detailed=bool(text) and i < DETAILED)
+
+
+def result_card(cat: Catalogue, r: dict, text: str, i: int, *, detailed: bool) -> None:
+    with st.container(border=detailed):
+        left, right = st.columns([4, 2])
+        with left:
+            asset_button(r["key"], r["name"], r["kind"], f"search-{i}")
+        bits = [kind_label(r["kind"])] + ([r["source"]] if r.get("source") else [])
+        if r.get("note_count"):
+            bits.append(f"📝 {r['note_count']}")
+        if r.get("status") == "missing":
+            bits.append("⚠️ missing")
+        bits += badges(r)
+        right.caption(" · ".join(bits))
+        about = r.get("purpose") or first_line(r.get("description"))
+        if about:
+            st.caption(about)
+        if not detailed:
+            return
+        if r.get("snippet") and "**" in r["snippet"]:
+            st.caption("Matched on: " + _clean_snippet(r["snippet"]))
+        asset = cat.get_asset(r["key"]) if r["kind"] not in ("knowledge", "question", "metric", "feature",
+                                                               "key", "bproject", "note") else None
+        if asset:
+            line = _facts_line(cat, asset)
+            if line:
+                st.caption(line)
+            cols = cat.matching_columns(r["key"], text)
+            for c in cols[:6]:
+                column_line(c)
+            if len(cols) > 6:
+                st.caption(f"…and {len(cols) - 6} more matching columns")
+            all_cols = cat.columns(r["key"])
+            if all_cols and len(all_cols) > len(cols):
+                with st.expander(f"All columns ({len(all_cols)})"):
+                    st.dataframe(pd.DataFrame([{"column": c["name"], "type": c["data_type"],
+                                                "description": c["description"] or ""} for c in all_cols]),
+                                 hide_index=True, width="stretch")
+
+
+def _clean_snippet(snippet: str) -> str:
+    # The index stores names twice (as written and split into words); show it once.
+    return " ".join(snippet.split())[:300]
+
+
+def _facts_line(cat: Catalogue, asset: dict) -> str:
+    attrs = asset["attrs"]
+    bits = []
+    if attrs.get("row_count") is not None:
+        bits.append(f"{'' if attrs.get('row_count_exact', True) else '≈ '}{attrs['row_count']:,} rows")
+    if attrs.get("size_bytes") is not None:
+        bits.append(size_label(attrs["size_bytes"]))
+    bits.append(f"last scanned {asset['last_seen'][:10]}")
+    makers = [l for l in cat.links_to(asset["key"]) if l["relation"] == "writes"]
+    if makers:
+        names = ", ".join(dict.fromkeys(l["src_name"] or l["src_key"] for l in makers))
+        bits.append(f"created or loaded by {names}")
+    return " · ".join(bits)
+
+
+def column_line(c: dict) -> None:
+    """One matching column with its details: type, description, nulls, distinct, range and common values."""
+    p = c.get("profile")
+    bits = [f"`{c['name']}`", c.get("data_type") or ""]
+    if c.get("sensitive"):
+        bits.append("🔒 sensitive")
+    if p:
+        n = p["row_count"] or 0
+        if n and p["null_count"] is not None:
+            bits.append(f"{p['null_count'] / n:.0%} empty")
+        if p["distinct_count"] is not None:
+            bits.append(f"{p['distinct_count']:,} distinct")
+        if p["min_value"] is not None:
+            bits.append(f"{p['min_value']} → {p['max_value']}")
+        top = json.loads(p["top_values"] or "[]")
+        if top:
+            bits.append("common: " + ", ".join(str(v) for v, _ in top[:4]))
+    st.markdown("↳ " + " · ".join(b for b in bits if b) + (f"  \n&nbsp;&nbsp;&nbsp;{c['description']}"
+                                                           if c.get("description") else ""))
+    if p and p.get("histogram"):
+        from .charts import range_chart
+        range_chart(p, height=70)
+
+
+def columns_only(cat: Catalogue, text: str) -> None:
+    if not text.strip():
+        st.caption("Type a column name or a word from its description.")
+        return
+    rows = cat.search_columns(text)
+    if not rows:
+        st.info("No matching columns.")
+        return
+    table = []
+    for r in rows:
+        n = r["row_count"] or 0
+        hidden = bool(r["sensitive"])
+        table.append({"column": r["column_name"], "in": r["item"], "kind": kind_label(r["kind"]),
+                      "source": r["source"], "type": r["data_type"], "description": r["description"] or "",
+                      "empty": f"{r['null_count'] / n:.0%}" if n and r["null_count"] is not None else "",
+                      "distinct": r["distinct_count"],
+                      "min": "🔒" if hidden else (r["min_value"] or ""), "max": "🔒" if hidden else (r["max_value"] or ""),
+                      "common values": "🔒" if hidden else ", ".join(str(v) for v, _ in json.loads(r["top_values"] or "[]")[:4]),
+                      "key": r["asset_key"]})
+    st.caption(f"{len(table)} matching column(s). Pick a row to open its table or file.")
+    df = pd.DataFrame(table)
+    event = st.dataframe(df.drop(columns=["key"]), hide_index=True, width="stretch", on_select="rerun",
+                         selection_mode="single-row", key="colsearch")
+    sel = event.selection.rows if event and hasattr(event, "selection") else []
+    if sel:
+        go(table[sel[0]]["key"])
+        st.rerun()
+    st.download_button("⬇️ These columns (CSV)", rows_to_csv([{k: v for k, v in t.items()} for t in table]),
+                       "columns.csv", "text/csv")
+
+
+def related_knowledge(cat: Catalogue, text: str) -> None:
+    """Knowledge notes whose trigger words appear in the search."""
+    if not text.strip():
+        return
+    from pdcat.knowledge import triggered
+    hits = triggered(cat, text)
+    if hits:
+        with st.container(border=True):
+            st.markdown("**💡 Related knowledge**")
+            for k in hits[:5]:
+                st.button(f"💡 {k['title']}", key=f"kbhit-{k['uid']}", on_click=go, args=(f"kb://{k['uid']}",),
+                          type="tertiary")
+                st.caption(first_line(k["body"], 240))
+
+
+# ---- plain lists ---------------------------------------------------------------
+
+def data_issues_page(cat: Catalogue) -> None:
+    st.title("Data issues")
+    st.caption("Open data issues logged on tables, columns and files. Resolve them from the item's page.")
+    issues = cat.open_issues()
+    if not issues:
+        st.success("No open data issues.")
+    for i, n in enumerate(issues):
+        _note_card(n, f"issue-{i}")
+
+
+def needs_notes_page(cat: Catalogue) -> None:
+    st.title("Needs notes")
+    st.caption("Tables and views with no description and no notes, the ones your code uses most first.")
+    result_list(cat.needs_documentation(), "todo",
+                extra=lambda r: f"used by {r['used_by']} file(s)" if r["used_by"] else "")
+
+
+def recent_notes_page(cat: Catalogue) -> None:
+    st.title("Recent notes")
+    notes = cat.recent_notes()
+    if not notes:
+        st.info("No notes yet. Open any table or script to add one.")
+    for i, n in enumerate(notes):
+        _note_card(n, f"recent-{i}")
+
+
+def _note_card(n, key: str) -> None:
+    base, _, column = n["asset_key"].partition("#")
+    with st.container(border=True):
+        label = (n["asset_name"] or base) + (f" › {column}" if column else "")
+        asset_button(base, label, n["asset_kind"] or "note", key)
+        st.markdown(n["body"])
+        st.caption(note_meta(n))
+
+
+def unmatched_page(cat: Catalogue) -> None:
+    st.title("Unmatched tables")
+    st.caption("Table names found in your code that don't match any scanned table. They may live on a server "
+               "you haven't added, be built dynamically, or be a false positive from the SQL detector.")
+    rows = cat.unresolved_refs()
+    if rows:
+        st.dataframe(pd.DataFrame([{"table": r["dst_ref"][6:], "used by files": r["used_by"],
+                                    "example": r["example"]} for r in rows]),
+                     hide_index=True, width="stretch")
+    else:
+        st.success("Every table name in your code matched a scanned table.")
+
+
+def empty_catalogue() -> None:
+    st.title("Your catalogue is empty")
+    st.write("Run `pdcat scan` in a terminal to scan the databases and projects in your config, or add a data "
+             "folder or some SQL from the sidebar.")
+
+
+__all__ = ["search_page", "data_issues_page", "needs_notes_page", "recent_notes_page", "unmatched_page",
+           "column_line", "icon", "row_get"]

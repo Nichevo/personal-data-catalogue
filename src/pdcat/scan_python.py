@@ -9,13 +9,15 @@ works out which tables and files the code reads and writes by looking at:
 from __future__ import annotations
 
 import ast
+import contextvars
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import PythonSource
 from .sqlrefs import extract_refs, looks_like_sql
-from .scan_files import ingest_data_file, iter_data_files
+from .scan_files import ingest_files, iter_data_files
 from .envinfo import read_environment
 from .store import Catalogue
 
@@ -34,6 +36,7 @@ class Found:
     refs: list[tuple[str, str, int]] = field(default_factory=list)
     description: str | None = None
     attrs: dict = field(default_factory=dict)
+    how: dict[tuple[str, str], str] = field(default_factory=dict)  # how each link was found
 
 
 def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
@@ -44,6 +47,15 @@ def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
     skip = SKIP_DIRS | set(src.exclude)
     counts = {"files": 0, "data files": 0, "links": 0, "errors": 0}
 
+    token = _CONFIG.set(read_config_values(root))
+    try:
+        return _scan_project(cat, src, root, project_key, skip, counts)
+    finally:
+        _CONFIG.reset(token)
+
+
+def _scan_project(cat: Catalogue, src: PythonSource, root: Path, project_key: str, skip: set[str],
+                  counts: dict[str, int]) -> dict[str, int]:
     with cat.scan(src.name):
         readme = _readme_summary(root)
         cat.upsert_asset(project_key, "project", src.name, src.name, description=readme,
@@ -57,18 +69,22 @@ def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
             key = f"{project_key}/{rel}"
             cat.upsert_asset(key, kind, rel, src.name, parent=project_key,
                              description=found.description, attrs=found.attrs)
-            for relation, dst_ref, line in found.refs:
+            for relation, raw_ref, line in found.refs:
+                dst_ref = _normalise_ref(raw_ref)
+                how = found.how.get((relation, raw_ref)) or ""
+                if dst_ref != raw_ref:
+                    how = f"{how}, relative path" if how else "relative path"
                 cat.add_link(key, relation, dst_ref, src.name, hint=src.default_database,
-                             evidence=f"{rel}:{line}" if line else rel)
+                             evidence=f"{rel}:{line}" if line else rel, how=how or None)
                 counts["links"] += 1
             counts["files"] += 1
             counts["errors"] += bool(found.attrs.get("parse_error"))
+        from .mlfeatures import scan_models
+        counts["models"] = scan_models(cat, root, project_key, src.name, skip)
         if src.data_files:
-            for path in sorted(iter_data_files(root, skip=skip)):
-                rel = path.relative_to(root).as_posix()
-                error = ingest_data_file(cat, path, f"{project_key}/{rel}", rel, src.name, project_key, src.max_rows)
-                counts["data files"] += 1
-                counts["errors"] += bool(error)
+            got = ingest_files(cat, root, sorted(iter_data_files(root, skip=skip)), project_key, src.name, src.max_rows)
+            counts["data files"] += got["files"]
+            counts["errors"] += got["errors"]
     return counts
 
 
@@ -115,7 +131,7 @@ def _scan_notebook(text: str) -> Found:
         found.attrs["parse_error"] = f"Not valid notebook JSON: {e}"
         return found
     cells = nb.get("cells", [])
-    funcs, imports, errors, import_details = [], set(), [], []
+    funcs, imports, errors, import_details, feature_rows = [], set(), [], [], []
     merged: dict[str, dict] = {"function_info": {}, "import_map": {}, "function_refs": {}}
     for i, cell in enumerate(cells, start=1):
         source = "".join(cell.get("source", []))
@@ -136,6 +152,7 @@ def _scan_notebook(text: str) -> Found:
         funcs += cell_found.attrs.get("functions", [])
         imports.update(cell_found.attrs.get("imports", []))
         import_details += cell_found.attrs.get("import_details", [])
+        feature_rows += cell_found.attrs.get("feature_assignments", [])
         for name, value in merged.items():
             for k, v in cell_found.attrs.get(name, {}).items():
                 if name == "function_info":
@@ -145,6 +162,8 @@ def _scan_notebook(text: str) -> Found:
     found.refs = list(dict.fromkeys(found.refs))
     found.attrs.update({"cells": len(cells), "functions": funcs, "imports": sorted(imports),
                         "import_details": import_details, **{k: v for k, v in merged.items() if v}})
+    if feature_rows:
+        found.attrs["feature_assignments"] = feature_rows
     if errors:
         found.attrs["parse_error"] = "Could not parse " + ", ".join(errors)
     return found
@@ -174,17 +193,24 @@ def scan_python_source(text: str) -> Found:
     # Docstrings are prose, and the literal pieces inside an f-string are handled with the f-string.
     skip = _docstring_nodes(tree) | {id(v) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for v in n.values}
     consts = _module_constants(tree)
-    found.refs = [(rel, ref, line) for (rel, ref), line in _collect_refs(tree, skip, consts).items()]
+    env = _assignment_env(tree)
+    collected = _collect_refs(tree, skip, consts, env)
+    found.refs = [(rel, ref, line) for (rel, ref), (line, _) in collected.items()]
+    found.how = {k: how for k, (_, how) in collected.items() if how}
 
     # Which function touches which data, so a project calling one library function
     # can be traced to exactly the tables and files that function uses.
     function_refs = {}
     for name, node in _functions(tree):
-        refs = sorted({(rel, ref) for (rel, ref) in _collect_refs(node, skip, consts)})
+        refs = sorted({(rel, ref) for (rel, ref) in _collect_refs(node, skip, consts, env)})
         if refs:
             function_refs[name] = [list(r) for r in refs]
     if function_refs:
         found.attrs["function_refs"] = function_refs
+    from .mlfeatures import feature_assignments
+    feats = feature_assignments(tree)
+    if feats:
+        found.attrs["feature_assignments"] = feats
     found.attrs["import_details"] = _import_details(tree)
     found.attrs["import_map"] = _import_map(tree)
     found.attrs["function_info"] = _function_info(tree)
@@ -194,18 +220,201 @@ def scan_python_source(text: str) -> Found:
     return found
 
 
-def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str]) -> dict[tuple[str, str], int]:
-    refs: dict[tuple[str, str], int] = {}
+def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str], env: dict[str, ast.AST] | None = None
+                  ) -> dict[tuple[str, str], tuple[int, str]]:
+    """{(relation, ref): (line, how)} for everything this code reads and writes."""
+    env = env or {}
+    refs: dict[tuple[str, str], tuple[int, str]] = {}
     for node in ast.walk(root):
         if isinstance(node, (ast.Constant, ast.JoinedStr)) and id(node) not in skip:
             s = _string_value(node, consts)
             if s and looks_like_sql(s):
                 for r in extract_refs(s):
-                    refs.setdefault((r.relation, f"table:{r.name}"), node.lineno)
+                    refs.setdefault((r.relation, f"table:{r.name}"), (node.lineno, "SQL in the code"))
+            elif s and s.lstrip().lower().startswith("bcp "):
+                for rel, ref in _bcp_refs(s.split()):
+                    refs.setdefault((rel, ref), (node.lineno, "bcp command"))
+        elif isinstance(node, (ast.List, ast.Tuple)) and node.elts and \
+                isinstance(node.elts[0], ast.Constant) and str(node.elts[0].value).lower() in ("bcp", "bcp.exe"):
+            parts = [_expr_value(e, env)[0] or "{}" for e in node.elts]
+            for rel, ref in _bcp_refs(parts):
+                refs.setdefault((rel, ref), (node.lineno, "bcp command"))
         elif isinstance(node, ast.Call):
-            for relation, ref in _call_refs(node):
-                refs.setdefault((relation, ref), node.lineno)
+            for relation, ref, how in _call_refs(node, env):
+                refs.setdefault((relation, ref), (node.lineno, how))
     return refs
+
+
+def _bcp_refs(parts: list[str]) -> list[tuple[str, str]]:
+    """bcp dbo.Sales in sales.csv … loads the file into the table; out/queryout does the reverse."""
+    if len(parts) < 4:
+        return []
+    table, direction, path = parts[1].strip('"'), parts[2].lower(), parts[3].strip('"')
+    if direction == "in":
+        return [("writes", f"table:{table.lower()}"), ("reads", f"file:{path}")]
+    if direction == "out":
+        return [("reads", f"table:{table.lower()}"), ("writes", f"file:{path}")]
+    if direction == "queryout":
+        return [(r.relation, f"table:{r.name}") for r in extract_refs(table)] + [("writes", f"file:{path}")]
+    return []
+
+
+# ---- following paths and names through variables, os.path.join, pathlib and config files ----
+
+_CONFIG: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("pdcat_config_values", default={})
+CONFIG_FILES = ("config.yaml", "config.yml", "config.json", "config.toml", "settings.yaml", "settings.yml",
+                "settings.json", "settings.toml", "config.ini", "settings.ini", "paths.yaml", "paths.json")
+
+
+def read_config_values(root: Path) -> dict[str, str]:
+    """String values from the project's config files, by key ("sales_path" -> "data/sales.csv"),
+    so cfg["sales_path"] in code can be followed to the file."""
+    values: dict[str, str] = {}
+    candidates = [root / n for n in CONFIG_FILES] + [root / "config" / n for n in CONFIG_FILES] + \
+        list((root / "config").glob("*.y*ml")) if (root / "config").is_dir() else [root / n for n in CONFIG_FILES]
+    for path in dict.fromkeys(candidates):
+        if not path.is_file():
+            continue
+        try:
+            data = _load_config_file(path)
+        except Exception:
+            continue
+        _flatten(data, values)
+    return values
+
+
+def _load_config_file(path: Path):
+    text = path.read_text(encoding="utf-8", errors="replace")
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        return json.loads(text)
+    if suffix == ".toml":
+        import tomllib
+        return tomllib.loads(text)
+    if suffix == ".ini":
+        import configparser
+        cp = configparser.ConfigParser()
+        cp.read_string(text)
+        return {sec: dict(cp[sec]) for sec in cp.sections()}
+    try:
+        import yaml
+        return yaml.safe_load(text)
+    except ImportError:
+        from .envinfo import _mini_yaml
+        return _mini_yaml(text)
+
+
+def _flatten(data, out: dict[str, str]) -> None:
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if isinstance(v, str):
+                out.setdefault(str(k), v)
+            else:
+                _flatten(v, out)
+    elif isinstance(data, list):
+        for v in data:
+            _flatten(v, out)
+
+
+def _assignment_env(tree: ast.AST) -> dict[str, ast.AST]:
+    """name -> the expression first assigned to it, anywhere in the file."""
+    env: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            env.setdefault(node.targets[0].id, node.value)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            env.setdefault(node.target.id, node.value)
+    return env
+
+
+def _join(*parts: str) -> str:
+    out = ""
+    for p in parts:
+        p = p.replace("\\", "/")
+        out = p if not out or re.match(r"^([A-Za-z]:/|/)", p) else out.rstrip("/") + "/" + p.lstrip("/")
+    return out
+
+
+def _expr_value(node: ast.AST, env: dict[str, ast.AST], depth: int = 0) -> tuple[str | None, str]:
+    """Work out a string an expression builds, as far as the code shows it. Parts that can't be known
+    (a date, a loop variable) become "{}". Returns (value, how it was found)."""
+    if depth > 8 or node is None:
+        return None, ""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value, ""
+    if isinstance(node, ast.JoinedStr):
+        out, how = [], "f-string"
+        for v in node.values:
+            if isinstance(v, ast.Constant):
+                out.append(str(v.value))
+            elif isinstance(v, ast.FormattedValue):
+                val, _ = _expr_value(v.value, env, depth + 1) if isinstance(v.value, (ast.Name, ast.Subscript)) \
+                    else (None, "")
+                out.append(val if val is not None and "{}" not in val else "{}")
+        text = "".join(out)
+        return text, "f-string pattern" if "{}" in text else how
+    if isinstance(node, ast.Name):
+        if node.id in env:
+            val, how = _expr_value(env[node.id], env, depth + 1)
+            return val, how or "variable"
+        return None, ""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div, ast.Mod)):
+        left, lh = _expr_value(node.left, env, depth + 1)
+        if isinstance(node.op, ast.Mod) and left is not None:
+            return re.sub(r"%[sdif]", "{}", left), "string formatting"
+        right, rh = _expr_value(node.right, env, depth + 1)
+        if left is None or right is None:
+            return None, ""
+        if isinstance(node.op, ast.Div):
+            return _join(left, right), "pathlib path"
+        return left + right, lh or rh
+    if isinstance(node, ast.Subscript):
+        key = node.slice.value if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str) else None
+        if key is not None and key in _CONFIG.get():
+            return _CONFIG.get()[key], "config file"
+        return None, ""
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+        args = [_expr_value(a, env, depth + 1)[0] for a in node.args]
+        if name == "join" and isinstance(func, ast.Attribute) and isinstance(func.value, ast.Attribute) \
+                and func.value.attr == "path" or name in ("joinpath",):
+            base = [] if name == "join" else [_expr_value(func.value, env, depth + 1)[0]]
+            parts = base + args
+            if all(p is not None for p in parts) and parts:
+                return _join(*parts), "os.path.join" if name == "join" else "pathlib path"
+            return None, ""
+        if name in ("Path", "PurePath", "WindowsPath", "PureWindowsPath", "PosixPath", "str", "abspath",
+                    "normpath", "expanduser") and args and all(a is not None for a in args):
+            return _join(*args), "pathlib path" if "Path" in name else "variable"
+        if name in ("resolve", "absolute", "expanduser", "strip") and isinstance(func, ast.Attribute):
+            return _expr_value(func.value, env, depth + 1)
+        if name == "format" and isinstance(func, ast.Attribute):
+            base, _ = _expr_value(func.value, env, depth + 1)
+            return (re.sub(r"\{[^}]*\}", "{}", base), "string formatting") if base is not None else (None, "")
+        if name == "get" and node.args and isinstance(node.args[0], ast.Constant) and \
+                isinstance(node.args[0].value, str) and node.args[0].value in _CONFIG.get():
+            return _CONFIG.get()[node.args[0].value], "config file"
+    return None, ""
+
+
+def _normalise_ref(ref: str) -> str:
+    """file:./data/../out/x.csv -> file:out/x.csv, so relative paths match the files they point at."""
+    if not ref.startswith("file:"):
+        return ref
+    path = ref[5:].replace("\\", "/")
+    if re.match(r"^([A-Za-z]:/|/|//)", path):
+        return "file:" + path
+    parts: list[str] = []
+    for part in path.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    return "file:" + "/".join(parts)
 
 
 def _functions(tree: ast.AST, prefix: str = ""):
@@ -395,40 +604,43 @@ def module_names(rel: str, root: Path) -> list[str]:
     return names
 
 
-def _call_refs(call: ast.Call) -> list[tuple[str, str]]:
+def _call_refs(call: ast.Call, env: dict[str, ast.AST] | None = None) -> list[tuple[str, str, str]]:
+    """(relation, ref, how) for one call such as pd.read_csv(path) or df.to_sql("Sales", …)."""
+    env = env or {}
     func = call.func
     name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
     if name is None:
         return []
     owner = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else None
 
-    def arg(pos: int, *kw: str) -> str | None:
+    def arg(pos: int, *kw: str) -> tuple[str | None, str]:
         for k in call.keywords:
             if k.arg in kw:
-                return _string_value(k.value)
-        return _string_value(call.args[pos]) if len(call.args) > pos else None
+                return _expr_value(k.value, env)
+        return _expr_value(call.args[pos], env) if len(call.args) > pos else (None, "")
 
     if name in ("read_sql_table", "to_sql"):
-        table = arg(0, "table_name", "name")
-        if not table or "{" in table:
+        table, how = arg(0, "table_name", "name")
+        if not table:
             return []
-        schema = arg(99, "schema")
+        schema, _ = arg(99, "schema")
         full = f"{schema}.{table}" if schema else table
-        return [("reads" if name == "read_sql_table" else "writes", f"table:{full.lower()}")]
+        return [("reads" if name == "read_sql_table" else "writes", f"table:{full.lower()}",
+                 how or f"pandas {name}")]
 
     if name == "open":
-        path = arg(0, "file")
-        mode = arg(1, "mode") or "r"
+        path, how = arg(0, "file")
+        mode = arg(1, "mode")[0] or "r"
         if path:
-            return [("writes" if any(c in mode for c in "wax+") else "reads", f"file:{path}")]
+            return [("writes" if any(c in mode for c in "wax+") else "reads", f"file:{path}", how or "open()")]
         return []
     if owner == "joblib" and name in ("dump", "load"):
-        path = arg(1, "filename") if name == "dump" else arg(0, "filename")
-        return [("writes" if name == "dump" else "reads", f"file:{path}")] if path else []
+        path, how = arg(1, "filename") if name == "dump" else arg(0, "filename")
+        return [("writes" if name == "dump" else "reads", f"file:{path}", how or f"joblib.{name}")] if path else []
     if name in FILE_READERS or name in FILE_WRITERS:
-        path = arg(0, "path", "path_or_buf", "filepath_or_buffer", "io", "excel_writer", "fname", "filename")
+        path, how = arg(0, "path", "path_or_buf", "filepath_or_buffer", "io", "excel_writer", "fname", "filename")
         if path and _looks_like_path(path):
-            return [("reads" if name in FILE_READERS else "writes", f"file:{path}")]
+            return [("reads" if name in FILE_READERS else "writes", f"file:{path}", how or f"pandas {name}")]
     return []
 
 

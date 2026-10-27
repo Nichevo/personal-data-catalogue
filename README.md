@@ -1,9 +1,10 @@
 # Personal data catalogue
 
 A small tool that runs on your own laptop and catalogues **your** data: the SQL Server
-tables you can reach with your own login, and your own Python projects. You can
-search all of it, see which scripts read and write which tables, and keep notes
-alongside it.
+tables you can reach with your own login, your own Python projects, data files, Power BI
+reports and Excel workbooks. You can search all of it, see which scripts and reports
+read and write which tables, and build up what you know about it into a knowledge base
+you can share with colleagues and hand to Copilot.
 
 Nothing leaves your machine. The catalogue is one SQLite file, and your server names
 and folder paths live only in a local `config.toml` that git ignores.
@@ -56,6 +57,61 @@ environment.yml or pyproject.toml, compared with what the code really imports:
 **Data folders**: point it at any folder of CSV/Parquet files:
 
 ![Data folders page](docs/screenshots/folders.png)
+
+## New in version 2
+
+- **Gentle SQL Server scanning.** Queries go one at a time with a pause between them, a
+  time limit each, an optional quiet-hours window and a cap per run (all on the Settings
+  page; defaults 3 s, 60 s, 25 tables). Tables are only profiled when you ask, through
+  an approval queue, and tables over 500,000 rows are sampled. Every query is logged.
+- **Faster pages** after big scans, with an optional timings panel.
+- **Value ranges for SQL tables** as well as files, with range charts, and **data type
+  checks** ("this text column holds dates", "whole numbers stored as float").
+- **Company-wide keys** such as PlantID: suggested from column names across databases or
+  marked by you, shown as badges, used to suggest joins.
+- **Sensitive columns**: values are never stored, shown or exported.
+- **Dated file series**: `sales_2026-01.csv`, `sales_2026-02.csv`… become one entry with
+  the date range, gaps and layout changes. Dates in folder names work too.
+- **Better links between code and data**: paths through variables, `os.path.join`,
+  `pathlib`, f-strings, config files and `bcp`, each link saying how it was found; add or
+  hide links by hand.
+- **Duplicates**: the same file in two places, copied folders, mapped drives versus
+  network paths, overlapping folder sources.
+- **Power BI** (`.pbix`, `.pbit`, `.pbip`): pages, visuals and the measures they show,
+  DAX, model tables, relationships, and the SQL tables and files each report loads.
+  **Excel workbooks**: Power Query, Microsoft Query connections, which sheet each loads
+  into, pivot tables, and SQL in macros.
+- **Knowledge base**: knowledge notes that stand alone or appear wherever their trigger
+  words do ("Freight is always sea freight"), a question library with worked queries, a
+  metric glossary (Power BI measures can become metrics), business projects that group
+  tables, scripts and reports, and an **ML feature dictionary** filled from your
+  feature code and LightGBM models (with leakage, unused-feature and drift checks).
+- **Keeping it tidy**: purpose, grain, refresh, status, trust and owner for every item,
+  with drafts worked out from the scan; describe a column once and apply it everywhere;
+  edit many items in one grid; a coverage score and "document these next"; notes that
+  may be out of date are flagged; change history and freshness.
+- **Code map and database diagrams you can zoom**: groups for projects, folders and
+  databases that open and close, third-party packages kept in one group, PNG/SVG/Mermaid
+  export. Database diagrams split tables into subject areas worked out from their joins.
+- **Share and merge with colleagues**: send your notes and knowledge (and optionally
+  scans) as one file; merging previews what's new, keeps your words where you differ,
+  and can be undone.
+- **Copilot pack**: everything the catalogue knows as Markdown or Word documents for a
+  Microsoft 365 Copilot agent, with instructions and starter prompts to paste.
+- **OpenMetadata export** with a loader script.
+- **Backups** to a folder you choose (off until you pick one), and a safe upgrade from
+  version 1 that keeps an untouched copy of your old catalogue.
+- **Get started page** and an optional **no-install Windows build** for colleagues who
+  don't use Python.
+
+## Upgrading from version 1
+
+Install the new version the same way as before (`pip install -e .` or
+`conda env update -f environment.yml --prune` then `pip install -e . --no-deps`) and run
+`pdcat ui`. The first time it opens your catalogue it upgrades it in place and keeps an
+untouched copy of the old file next to it (the path is shown in the app and on the
+Settings page). Nothing is removed; every note is kept. Rescan to fill in the new
+details (`pdcat scan`).
 
 ## What it does
 
@@ -203,13 +259,18 @@ If your server uses Azure AD sign-in instead of Windows login, add
 pdcat scan                      # scan everything in the config
 pdcat scan --source forecasting # or just one source
 pdcat ui                        # opens the catalogue in your browser
-pdcat profile dbo.SalesDaily    # measure value ranges of a table (read-only)
-pdcat profile --used            # ...or of every table your code or pasted SQL uses
+pdcat scan --plan               # print the SQL Server queries a scan would send, without connecting
+pdcat profile dbo.SalesDaily    # measure value ranges of a table (read-only, paced)
+pdcat profile --queue           # run the tables approved on the SQL scanning page
 pdcat review --used             # what needs your attention, starting with what your code uses
 pdcat diagram --project forecasting --level projects --out map.mmd   # flow diagram as Mermaid
 pdcat search "store sales"      # quick search from the terminal
 pdcat export --format csv       # writes one CSV per table to .\catalogue-export
 pdcat export --format json --out C:\temp\catalogue
+pdcat share --out mine.json     # your notes and knowledge, for a colleague
+pdcat merge theirs.json --preview   # see what merging a colleague's file would change
+pdcat ai-export --out C:\temp\copilot-pack [--docx] [--hide-locations]
+pdcat openmetadata --out om.zip # tables, descriptions, glossary and lineage for OpenMetadata
 ```
 
 Re-run `pdcat scan` whenever your code or databases change. Anything that has
@@ -242,9 +303,13 @@ Keys look like `sql://warehouse/yourdatabase/dbo.sales`,
   missing servers or false positives.
 - The scanner only reads system catalogue views, so it sees exactly what your login
   can see and changes nothing on the server.
-- `pdcat profile` runs one aggregate query per table (with `NOLOCK`, so it never blocks
-  anyone) plus a `TOP 10000` sample for most-common values. On very large tables the
-  aggregate still scans the whole table, so profile those deliberately.
+- Profiling runs a few aggregate queries per table (with `NOLOCK`, so it never blocks
+  anyone), one at a time at the pace set on the Settings page. Tables over the sampling
+  threshold (500,000 rows by default) are measured from a `TOP (n)` sample.
+- Power BI `.pbix` files keep their model compressed. Pages, visuals and queries are
+  always read; for the DAX and model tables install the optional readers
+  (`pip install -e ".[office]"`, which adds `pbixray` and `olefile`), or save a copy as
+  `.pbit` or `.pbip`.
 - Large data files are profiled from their first 200,000 rows (`max_rows` in the
   config). Parquet row counts are always exact; for big CSVs the count is a line count.
   Unchanged files are not re-read on the next scan.
@@ -259,7 +324,14 @@ python scripts/make_demo.py C:\temp\pdcat-demo     # sample catalogue to try the
 streamlit run src/pdcat/app.py -- --db C:\temp\pdcat-demo\catalogue.db
 ```
 
-## Ideas for later
+## No-install Windows build (optional)
 
-- Power BI: read `.pbix` / `.pbip` files to list which tables each report uses.
-- Export straight into OpenMetadata if the team pilot goes ahead.
+For colleagues who don't use Python, `packaging/windows/build.ps1` makes a zip holding a
+complete Python environment (conda-pack) and a **Start catalogue** launcher. They unzip
+it and double-click; the Get started page does the rest. GitHub Actions builds it and
+attaches it to each release (`.github/workflows/windows-build.yml`). Their catalogue
+lives in `%USERPROFILE%\.pdcat`, so a newer zip just replaces the old folder. They
+still need Microsoft's ODBC driver to scan SQL Server.
+
+The graph viewer's JavaScript (Cytoscape, ELK and two Cytoscape extensions) is copied
+into `src/pdcat/ui/graph/vendor` with its licences, so the app needs no internet.

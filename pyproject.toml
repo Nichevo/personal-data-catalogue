@@ -18,12 +18,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Optional readers: the compressed model inside .pbix files, and exact reading of Excel macros.
+office = ["pbixray", "olefile"]
 
 [project.scripts]
 pdcat = "pdcat.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+pdcat = ["ui/graph/*.html", "ui/graph/*.js", "ui/graph/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

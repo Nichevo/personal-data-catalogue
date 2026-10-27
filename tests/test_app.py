@@ -10,6 +10,15 @@ APP = str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py")
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 
 
+def goto(app, page: str):
+    """Pick a page from the sidebar: its section first, then the page."""
+    from pdcat.ui.main import sections
+    section = next(name for name, pages in sections().items() if page in pages)
+    app.sidebar.selectbox(key="nav-section").set_value(section).run()
+    app.sidebar.radio(key=f"nav-{section}").set_value(page).run()
+    return app
+
+
 @pytest.fixture
 def app(catalogue, monkeypatch):
     monkeypatch.setenv("PDCAT_DB", str(catalogue.path))
@@ -38,14 +47,16 @@ def test_detail_page_add_note(app, catalogue):
 
 def test_other_views_render(app):
     app.run()
-    for view in ["Needs notes", "Recent notes", "Unmatched tables"]:
-        app.sidebar.radio[0].set_value(view).run()
-        assert not app.exception, view
+    from pdcat.ui.main import sections
+    for pages in sections().values():
+        for view in pages:
+            goto(app, view)
+            assert not app.exception, (view, app.exception)
 
 
 def test_add_sql_page_saves_and_opens_snippet(app, catalogue):
     app.run()
-    app.sidebar.radio[0].set_value("Add SQL").run()
+    goto(app, "Add SQL")
     assert not app.exception
     app.text_input[0].input("Store regions")
     [t for t in app.text_area if t.label == "SQL"][0].input("SELECT Region FROM dbo.Store")
@@ -64,7 +75,7 @@ def test_data_folder_page_adds_and_scans(app, catalogue, tmp_path):
     folder.mkdir()
     pd.DataFrame({"StoreId": [1, 2], "Units": [3.0, 4.0]}).to_csv(folder / "sales.csv", index=False)
     app.run()
-    app.sidebar.radio[0].set_value("Data folders").run()
+    goto(app, "Data folders")
     [t for t in app.text_input if t.label == "Folder path"][0].input(f'"{folder}"')
     [t for t in app.text_input if t.label == "Short name"][0].input("extracts")
     [b for b in app.button if b.label == "Add and scan"][0].click().run()
@@ -100,8 +111,10 @@ def test_review_page_comment_marks_done(app, catalogue):
     refresh_tasks(catalogue)
     before = len(open_tasks(catalogue, limit=1000))
     app.run()
-    app.sidebar.radio[0].set_value("To review").run()
+    goto(app, "To review")
     assert not app.exception
+    assert len(app.dataframe) == 1  # the compact table is the default
+    app.toggle[0].set_value(True).run()  # cards
     [t for t in app.text_area if t.label == "Your comment"][0].input("Checked: this is the store master.")
     [b for b in app.button if b.label == "Save"][0].click().run()
     assert not app.exception
@@ -113,14 +126,14 @@ def test_review_page_comment_marks_done(app, catalogue):
 
 def test_hotspots_page_renders(app):
     app.run()
-    app.sidebar.radio[0].set_value("Issue hotspots").run()
+    goto(app, "Issue hotspots")
     assert not app.exception
     assert len(app.dataframe) == 1
 
 
 def test_code_map_page_renders(app, catalogue):
     app.run()
-    app.sidebar.radio[0].set_value("Code map").run()
+    goto(app, "Code map")
     assert not app.exception
     app.selectbox[0].set_value("forecasting").run()
     assert not app.exception
@@ -164,3 +177,54 @@ def test_project_page_shows_environment(app, catalogue, project):
     assert not app.exception
     assert any(s.value == "Environment and libraries" for s in app.subheader)
     assert any(t.label.startswith("Declared, not imported (1)") for t in app.tabs)
+
+
+def test_item_pages_for_keys_packages_and_knowledge(app, catalogue):
+    from pdcat import keys as K
+    from pdcat.knowledge import save_knowledge
+    K.mark_key(catalogue, "StoreId", SALES, "StoreId")
+    uid = save_knowledge(catalogue, "Freight is always sea freight", "Air is separate.", triggers="sales")
+    for key in ["key://StoreId", "pkg://pandas", SALES]:
+        app.query_params["asset"] = key
+        app.run()
+        assert not app.exception, (key, app.exception)
+    assert any("Freight is always sea freight" in b.label for b in app.button)  # related knowledge on the table
+
+
+def test_knowledge_item_pages(app, catalogue):
+    from pdcat import bprojects as B
+    from pdcat import mlfeatures as M
+    from pdcat.knowledge import save_metric, save_question
+    uid = B.save_project(catalogue, "Sales forecasting", purpose="Weekly forecast")
+    B.set_member(catalogue, uid, SALES)
+    fuid = M.save_feature(catalogue, "sales_lag_7", project="forecasting", sources=[f"{SALES}#Units"],
+                          known_at_prediction="yes")
+    q = save_question(catalogue, "Weekly sales by region?", sql="SELECT * FROM dbo.SalesDaily")
+    m = save_metric(catalogue, "Forecast accuracy", definition="1 - WAPE", sources=[SALES])
+    for key in [f"bp://{uid}", f"feature://{fuid}", f"q://{q}", f"metric://{m}", SALES]:
+        app.query_params["asset"] = key
+        app.run()
+        assert not app.exception, (key, app.exception)
+    assert any("Sales forecasting" in b.label for b in app.button)  # the table shows its business project
+
+
+def test_report_workbook_and_measure_pages(app, catalogue, tmp_path):
+    from test_office import write_pbit, write_xlsx
+
+    from pdcat.scan_files import scan_folder
+    folder = tmp_path / "reports"
+    folder.mkdir()
+    write_pbit(folder / "Sales.pbit")
+    write_xlsx(folder / "Sales.xlsm")
+    scan_folder(catalogue, "reports", folder)
+    measure = [c["key"] for c in catalogue.children("files://reports/Sales.pbit") if c["kind"] == "measure"][0]
+    for key in ["files://reports/Sales.pbit", "files://reports/Sales.xlsm", measure, SALES]:
+        app.query_params["asset"] = key
+        app.run()
+        assert not app.exception, (key, app.exception)
+    app.query_params["asset"] = measure
+    app.run()
+    [b for b in app.button if b.label == "Save"][0].click().run()  # add it to the metric glossary
+    assert not app.exception
+    from pdcat.knowledge import list_metrics
+    assert list_metrics(catalogue)[0]["from_measure"] == measure

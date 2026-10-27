@@ -33,7 +33,15 @@ RULES: dict[str, tuple[str, str, int]] = {
     "stale": ("File may be out of date", "warning", 15),
     "columns": ("Columns need descriptions", "docs", 12),
     "unmatched": ("Table in code not found", "warning", 10),
+    "data_type": ("Data type doesn't fit the values", "warning", 18),
+    "stale_note": ("Note may be out of date", "docs", 22),
+    "sensitive": ("Possibly sensitive values", "warning", 20),
+    "stale_data": ("Data looks out of date", "warning", 24),
+    "layout_change": ("File layout changed", "change", 28),
+    "duplicate": ("Same file in two places", "warning", 14),
 }
+# Checks where "dismiss" means "it's like this on purpose".
+BY_DESIGN = {"data_type", "sensitive", "stale_data", "duplicate"}
 CATEGORY_LABELS = {"docs": "Document", "change": "Check a change", "warning": "Possible data problem"}
 QUANTITY_NAME = re.compile(r"(qty|quantity|units?|amount|price|cost|revenue|sales|count|weight|volume)", re.I)
 STALE_DAYS = 90
@@ -78,16 +86,17 @@ def refresh_tasks(cat: Catalogue) -> dict[str, int]:
 
 
 def open_tasks(cat: Catalogue, *, rule: str | None = None, category: str | None = None,
-               only_used: bool = False, limit: int = 200) -> list[dict[str, Any]]:
+               only_used: bool = False, limit: int = 200, asset_key: str | None = None) -> list[dict[str, Any]]:
     """Open tasks (including snoozed ones whose snooze has ended), highest priority first."""
     ts = now()
     rows = cat.conn.execute(
-        """SELECT t.*, a.name AS asset_name, a.kind AS asset_kind, a.source AS source,
+        f"""SELECT t.*, a.name AS asset_name, a.kind AS asset_kind, a.source AS source,
                   (SELECT COUNT(DISTINCT l.src_key) FROM links l WHERE l.dst_key = t.asset_key) AS used_by
            FROM review_tasks t LEFT JOIN assets a ON a.key = t.asset_key
-           WHERE t.status = 'open' OR (t.status = 'snoozed' AND t.snooze_until <= ?)
+           WHERE (t.status = 'open' OR (t.status = 'snoozed' AND t.snooze_until <= ?))
+           {"AND t.asset_key = ?" if asset_key else ""}
            ORDER BY t.priority DESC, t.title""",
-        (ts,)).fetchall()
+        (ts, asset_key) if asset_key else (ts,)).fetchall()
     out = []
     for r in rows:
         r = dict(r)
@@ -110,6 +119,26 @@ def set_task_status(cat: Catalogue, task_id: str, status: str, snooze_days: int 
     with cat.conn:
         cat.conn.execute("UPDATE review_tasks SET status = ?, snooze_until = ?, updated_at = ? WHERE id = ?",
                          (status, until, now(), task_id))
+
+
+def set_tasks_status(cat: Catalogue, task_ids: list[str], status: str, snooze_days: int = 30) -> None:
+    for tid in task_ids:
+        set_task_status(cat, tid, status, snooze_days)
+
+
+def count_open(cat: Catalogue) -> int:
+    """How many tasks are open, without loading them (for the sidebar)."""
+    return cat.conn.execute(
+        "SELECT COUNT(*) FROM review_tasks WHERE status = 'open' OR (status = 'snoozed' AND snooze_until <= ?)",
+        (now(),)).fetchone()[0]
+
+
+def ensure_fresh(cat: Catalogue) -> None:
+    """Recompute the review list only when the catalogue changed since the last time."""
+    rev = cat.revision()
+    if cat.setting("tasks_revision") != rev:
+        refresh_tasks(cat)
+        cat.set_setting("tasks_revision", rev, quiet=True)
 
 
 def task_counts(cat: Catalogue) -> dict[str, int]:
@@ -264,12 +293,58 @@ def _candidates(cat: Catalogue) -> list[Task]:
             if stale:
                 tasks.append(task("stale", key, f"{name} may be out of date", stale))
 
+    tasks += _v2_candidates(cat, assets, profiles, used_by, task)
+
     for r in cat.unresolved_refs():
         ref = r["dst_ref"]
         tasks.append(Task(f"unmatched:{ref}", "unmatched", ref, f"Table {ref[6:]} (used in code) not found",
                           f"Used by {r['used_by']} file(s), e.g. {r['example']}. A server you haven't added, "
                           "a typo, or a false match?", RULES["unmatched"][2] + 5 * min(r["used_by"], 5)))
     return tasks
+
+
+def _v2_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: Counter, task) -> list[Task]:
+    from .curation import sensitive_suggestions
+    from .history import freshness
+    from .staleness import all_stale
+
+    out: list[Task] = []
+    for key, prof in profiles.items():
+        a = assets.get(key)
+        if not a or a["status"] != "active":
+            continue
+        for p in prof:
+            for h in json.loads(p.get("hints") or "[]"):
+                out.append(task("data_type", key, f"{p['column_name']} in {a['name']}: {h['text']}",
+                                f"Declared {p['data_type'] or '?'}. Fix the type at the source, note why, or "
+                                "dismiss it as by design.", version=f"{p['column_name']}:{h['code']}"))
+        f = freshness(cat, key)
+        if f and f["stale"] and (used_by[key] or (a["attrs"].get("row_count") or 0) > 0):
+            out.append(task("stale_data", key, f"{a['name']}: newest {f['column']} is {f['latest']}",
+                            f"{f['age_days']} days old when last measured ({f['measured']}); expected within "
+                            f"{f['limit_days']} days. Is the load still running?", version=f["latest"]))
+    for n in all_stale(cat):
+        a = assets.get(n["asset_key"])
+        out.append(task("stale_note", n["asset_key"], f"Check a note on {a['name'] if a else n['asset_key']}",
+                        "; ".join(n["reasons"]).capitalize() + ". Confirm it, edit it or archive it.",
+                        version=str(n["note_id"])))
+    for c in sensitive_suggestions(cat):
+        out.append(task("sensitive", c["asset_key"], f"{c['name']} in {c['item']} may hold personal data",
+                        "Mark it sensitive on the item's page (values are then never kept or exported), or dismiss.",
+                        version=c["name"]))
+    from .duplicates import report
+    for group in report(cat)["same_file"]:
+        first, *copies = group["files"]
+        for c in copies:
+            key = c["series"] or c["key"]
+            out.append(task("duplicate", key, f"{c['name']} is the same file as {first['name']}",
+                            f"{c['path']} and {first['path']} are identical. Keep one, or note which is the master.",
+                            version=c["key"]))
+    for key, a in assets.items():
+        for change in a["attrs"].get("layout_changes", []):
+            out.append(task("layout_change", key, f"{a['name']}: layout changed in {change['file']}",
+                            change["detail"], version=change["file"]))
+    return out
 
 
 def _odd_values(profile: list[dict]) -> list[str]:

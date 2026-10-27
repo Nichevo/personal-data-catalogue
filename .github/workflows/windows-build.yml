@@ -1,0 +1,51 @@
+# Builds the optional no-install Windows zip and attaches it to a release.
+name: Windows build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label for the zip"
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          auto-activate-base: true
+          activate-environment: ""
+      - name: Test
+        run: |
+          conda env create --prefix .\build\test-env --file environment.yml --yes
+          conda run --prefix .\build\test-env python -m pip install --no-deps -e .
+          conda run --prefix .\build\test-env python -m pytest -q
+      - name: Build
+        run: |
+          $version = if ("${{ github.event_name }}" -eq "release") { "${{ github.event.release.tag_name }}" } else { "${{ inputs.version }}" }
+          Remove-Item -Recurse -Force .\build\test-env
+          ./packaging/windows/build.ps1 -Version $version
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "dist/pdcat-windows-$env:VERSION.zip" --clobber
+      - name: Keep the zip
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdcat-windows-${{ env.VERSION }}
+          path: dist/pdcat-windows-${{ env.VERSION }}.zip

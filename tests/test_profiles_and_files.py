@@ -82,11 +82,14 @@ def test_project_data_files_are_profiled_and_linked(catalogue, project):
     assert {p["column_name"]: p["null_count"] for p in catalogue.profile(feat)} == {"StoreId": 0, "Units": 1}
     assert "read_error" in catalogue.get_asset("py://forecasting/outputs/broken.parquet")["attrs"]
 
-    # features.py writes outputs/features.parquet; the wildcard f-string picks the newest monthly file.
+    # features.py writes outputs/features.parquet; the wildcard f-string links to the monthly series.
     writes = {l["dst_key"] for l in catalogue.links_from("py://forecasting/src/features.py") if l["relation"] == "writes"}
     assert feat in writes
     monthly = [l["dst_key"] for l in catalogue.links_from("py://forecasting/src/export.py")]
-    assert monthly == ["py://forecasting/outputs/forecast_2026-02.csv"]
+    assert monthly == ["py://forecasting/~series/outputs/forecast_{yyyy}{mm}.csv"]
+    series = catalogue.get_asset(monthly[0])
+    assert series["kind"] == "file_series" and series["attrs"]["frequency"] == "monthly"
+    assert series["attrs"]["row_count"] == 2 and [f["rows"] for f in series["attrs"]["files"]] == [1, 2]
 
     # Lineage back from the file: written by features.py, which reads dbo.SalesDaily and dbo.Store.
     assert SALES in catalogue.upstream(feat)
@@ -111,7 +114,8 @@ def test_folder_scan_and_remove(tmp_path):
     pd.DataFrame({"a": [1]}).to_csv(folder / "top.csv", index=False)
     pd.DataFrame({"a": [1]}).to_csv(folder / "sub" / "deep.csv", index=False)
     cat.add_folder("extracts", str(folder), recursive=False)
-    assert scan_folder(cat, "extracts", folder, recursive=False) == {"files": 1, "errors": 0}
+    assert scan_folder(cat, "extracts", folder, recursive=False) == {"files": 1, "series": 0, "reports": 0, "workbooks": 0,
+                                                                    "errors": 0}
     assert scan_folder(cat, "extracts", folder, recursive=True)["files"] == 2
     assert cat.get_asset("files://extracts/sub/deep.csv")["attrs"]["row_count"] == 1
     assert [r["name"] for r in cat.folders()] == ["extracts"]

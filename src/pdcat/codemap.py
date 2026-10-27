@@ -129,11 +129,15 @@ def uncatalogued_libraries(cat: Catalogue) -> list[dict[str, Any]]:
             if top:
                 imported[top].add(row["key"])
 
+    from .libclass import THIRD, Classifier
+    clf = Classifier(cat)
     out = []
     for name, users in imported.items():
         if name in modules or name in _STDLIB:
             continue
         path, how = _locate(name, sys_paths)
+        if path is None and clf.classify(name) == THIRD:
+            continue  # declared by a project or a well-known package: not yours
         if how == "installed package":
             continue
         out.append({"name": name, "used_by": len(users), "path": path, "how": how})
@@ -535,3 +539,97 @@ def function_graph(cat: Catalogue, key: str, focus: str | None = None, *, depth:
             g.edges[(node(ck, cfn), fid, "call")]
         g.nodes[fid]["kind"] = "focus"
     return g
+
+
+# ---- the interactive viewer ---------------------------------------------------------
+
+def _edge_label(labels: set[str], limit: int = 3) -> str:
+    items = sorted(labels)
+    return ", ".join(items[:limit]) + (f" +{len(items) - limit}" if len(items) > limit else "")
+
+
+def cyto_elements(cat: Catalogue, project: str | None = None, *, level: str = "modules", include_data: bool = True,
+                  include_packages: bool = False) -> list[dict[str, Any]]:
+    """Elements for the graph viewer: files grouped by project and sub-folder, tables grouped by
+    database, files by folder, and third-party packages in one group (closed to start with)."""
+    g = build_graph(cat, project, level=level, include_data=include_data)
+    assets = _assets(cat)
+    roles = {a["source"]: a["attrs"].get("role", "project") for a in assets.values() if a["kind"] == "project"}
+    nodes: dict[str, dict[str, Any]] = {}
+    count: dict[str, int] = defaultdict(int)
+
+    def group(gid: str, label: str, parent: str | None = None, kind: str = "group") -> str:
+        if gid not in nodes:
+            nodes[gid] = {"data": {"id": gid, "label": label, "kind": kind, **({"parent": parent} if parent else {})}}
+        return gid
+
+    def place(nid: str, parent: str | None) -> None:
+        while parent:
+            count[parent] += 1
+            parent = nodes[parent]["data"].get("parent")
+
+    for nid, n in g.nodes.items():
+        a = assets.get(nid)
+        data: dict[str, Any] = {"id": nid, "label": n["label"]}
+        parent = None
+        if n["kind"] == "code" and a:
+            role = roles.get(a["source"], "project")
+            data["kind"] = "library" if role == "library" else "code"
+            data["key"] = nid
+            data["functions"] = bool(a["attrs"].get("function_info"))
+            parent = group(f"grp:{a['source']}", ("📚 " if role == "library" else "📁 ") + a["source"])
+            parts = a["name"].split("/")[:-1]
+            for i in range(len(parts)):
+                parent = group(f"grp:{a['source']}/{'/'.join(parts[:i + 1])}", parts[i] + "/", parent)
+            data["label"] = a["name"].split("/")[-1]
+        elif n["kind"] in ("project", "library"):
+            data.update({"kind": n["kind"], "key": f"py://{n['label']}"})
+        else:
+            data["kind"] = "file" if n["kind"] == "file" else "table"
+            if a:
+                data["key"] = nid
+                data["kind"] = {"view": "view", "report": "report", "workbook": "workbook"}.get(a["kind"], data["kind"])
+                db = a["attrs"].get("database")
+                if a["kind"] in ("table", "view") and db:
+                    parent = group(f"grp:db:{a['source']}/{db}", f"🛢️ {db}")
+                elif a["kind"] in ("data_file", "file_series", "workbook", "report"):
+                    parent = group(f"grp:files:{a['source']}", f"🗂️ {a['source']}")
+            else:
+                parent = group("grp:unmatched", "Not catalogued")
+        if parent:
+            data["parent"] = parent
+            place(nid, parent)
+        nodes[nid] = {"data": data}
+    edges = [{"data": {"id": f"e{i}", "source": a, "target": b, "relation": rel,
+                       "label": _edge_label(labels) if rel == "imports" else ""}}
+             for i, ((a, b, rel), labels) in enumerate(g.edges.items())]
+    if include_packages and level == "modules":
+        from .libclass import THIRD, Classifier, normalise
+        clf = Classifier(cat)
+        pkg_group = group("grp:packages", "📦 Third-party packages", kind="group")
+        nodes[pkg_group]["data"]["closed"] = True
+        seen = set()
+        for nid in list(g.nodes):
+            a = assets.get(nid)
+            if not a or a["kind"] not in CODE_KINDS:
+                continue
+            for imp in a["attrs"].get("import_details", []):
+                if imp.get("level"):
+                    continue
+                top = imp["module"].split(".")[0]
+                if clf.classify(top, a["source"]) != THIRD:
+                    continue
+                pkg = normalise(clf.package(top))
+                pid = f"pkg://{pkg}"
+                if pid not in nodes:
+                    nodes[pid] = {"data": {"id": pid, "label": clf.package(top), "kind": "package", "key": pid,
+                                           "parent": pkg_group}}
+                    place(pid, pkg_group)
+                if (nid, pid) not in seen:
+                    seen.add((nid, pid))
+                    edges.append({"data": {"id": f"p{len(edges)}", "source": nid, "target": pid,
+                                           "relation": "uses", "label": ""}})
+    for gid, c in count.items():
+        nodes[gid]["data"]["count"] = c
+    # Groups with nothing in them would draw as empty boxes.
+    return [n for n in nodes.values() if not n["data"]["id"].startswith("grp:") or count.get(n["data"]["id"])] + edges

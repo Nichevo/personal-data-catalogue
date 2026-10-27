@@ -37,12 +37,20 @@ def cmd_scan(args: argparse.Namespace) -> int:
         return 2
 
     cat = Catalogue(cfg.db_path)
+    if args.plan:
+        from .scan_sqlserver import plan_scan
+        plan = [p for s in cfg.sqlserver if not wanted or s.name in wanted for p in plan_scan(cat, s, args.database)]
+        for p in plan:
+            print(f"-- {p['source']} / {p['database']}: {p['purpose']}\n{p['query']};\n")
+        print(f"{len(plan)} queries, sent one at a time with a pause between. Nothing was sent.")
+        cat.close()
+        return 0
     failures = 0
     app_folders = [r for r in cat.folders() if r["name"] not in cfg.source_names()]
     app_libraries = [PythonSource(name=r["name"], path=Path(r["path"]), role="library", data_files=False)
                      for r in cat.libraries() if r["name"] not in cfg.source_names()]
     # SQL Server first, so table names in code can be matched straight away.
-    jobs = [(s.name, lambda s=s: scan_server(cat, s)) for s in cfg.sqlserver]
+    jobs = [(s.name, lambda s=s: scan_server(cat, s, args.database)) for s in cfg.sqlserver]
     jobs += [(f.name, lambda f=f: scan_folder(cat, f.name, f.path, f.recursive, f.max_rows)) for f in cfg.folders]
     jobs += [(r["name"], lambda r=r: scan_folder(cat, r["name"], r["path"], bool(r["recursive"]))) for r in app_folders]
     jobs += [(p.name, lambda p=p: scan_project(cat, p)) for p in [*app_libraries, *cfg.python]]  # last, so file links can match
@@ -58,9 +66,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
             continue
         print("  " + ", ".join(f"{v} {k}" for k, v in counts.items()))
 
-    from .review import refresh_tasks
+    from .postscan import after_scan
 
-    review = refresh_tasks(cat)
+    done = after_scan(cat, progress=print)
+    review = {k.removeprefix("review "): v for k, v in done.items() if k.startswith("review ")}
     print(f"Review list: {review['open']} open ({review['new']} new, {review['closed']} closed automatically). "
           "See 'To review' in the app or run `pdcat review`.")
     from .codemap import uncatalogued_libraries
@@ -80,8 +89,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_profile(args: argparse.Namespace) -> int:
-    """Profile SQL tables: the ones named, or with --used, every table your code or pasted SQL uses."""
-    from .scan_sqlserver import profile_tables
+    """Profile SQL tables at the controlled pace: the ones named, every table your code uses (--used),
+    or whatever is approved in the app's queue (--queue). --plan prints the queries without connecting."""
+    from .pacing import plan_profile, queue, request_profiles, used_tables
+    from .scan_sqlserver import run_queue
 
     cfg = load_config(find_config(args.config))
     cat = Catalogue(cfg.db_path)
@@ -94,29 +105,29 @@ def cmd_profile(args: argparse.Namespace) -> int:
             print(f"No scanned table called {name}")
         keys += matches
     if args.used:
-        keys += [r[0] for r in cat.conn.execute(
-            """SELECT DISTINCT l.dst_key FROM links l JOIN assets a ON a.key = l.dst_key
-               JOIN assets s ON s.key = l.src_key
-               WHERE a.kind IN ('table', 'view') AND s.kind NOT IN ('table', 'view', 'procedure')""")]
+        keys += used_tables(cat)
+    if args.source:
+        keys = [k for k in keys if any(k.startswith(f"sql://{s.lower()}/") for s in args.source)]
     keys = list(dict.fromkeys(keys))
-    if not keys:
-        print("Nothing to profile. Name tables (e.g. dbo.SalesDaily) or use --used.")
+    if args.plan:
+        plan = plan_profile(cat, keys or [q["asset_key"] for q in queue(cat, ("approved",))])
+        for p in plan:
+            print(f"-- {p['table']}: {p['purpose']}\n{p['query']};\n")
+        print(f"{len(plan)} queries, sent one at a time. Nothing was sent.")
+        cat.close()
+        return 0
+    if keys:
+        request_profiles(cat, keys, approve=True)  # naming them here is the approval
+    elif not args.queue:
+        print("Nothing to profile. Name tables (e.g. dbo.SalesDaily), use --used, or --queue for the app's queue.")
+        cat.close()
         return 2
-    failures = 0
-    for src in cfg.sqlserver:
-        if args.source and src.name not in args.source:
-            continue
-        mine = [k for k in keys if k.startswith(f"sql://{src.name.lower()}/")]
-        if not mine:
-            continue
-        print(f"Profiling {len(mine)} table(s) on {src.name} ...", flush=True)
-        try:
-            failures += len(profile_tables(cat, src, mine, sample_rows=args.sample_rows))
-        except Exception as e:
-            failures += 1
-            print(f"  failed: {type(e).__name__}: {e}")
+    result = run_queue(cat, cfg.sqlserver)
+    print(f"Profiled {result['done']} table(s), {result['failed']} failed, {result['left']} still waiting.")
+    if result["stopped"]:
+        print(f"Stopped early: {result['stopped']}")
     cat.close()
-    return 1 if failures else 0
+    return 1 if result["failed"] else 0
 
 
 def cmd_review(args: argparse.Namespace) -> int:
@@ -175,14 +186,77 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_share(args: argparse.Namespace) -> int:
+    from .sharing import to_share_json
+
+    cat = Catalogue(load_config(find_config(args.config)).db_path)
+    Path(args.out).write_text(to_share_json(cat, args.scan or []), encoding="utf-8")
+    print(f"Wrote {args.out}. Send it to a colleague to merge with `pdcat merge`.")
+    cat.close()
+    return 0
+
+
+def cmd_merge(args: argparse.Namespace) -> int:
+    from .sharing import merge, preview, read_share, suggest_mapping
+
+    cat = Catalogue(load_config(find_config(args.config)).db_path)
+    pack = read_share(Path(args.file).read_text(encoding="utf-8"))
+    mapping = suggest_mapping(cat, pack)
+    for m in args.map or []:
+        theirs, _, mine = m.partition("=")
+        mapping[theirs.strip()] = mine.strip()
+    p = preview(cat, pack, mapping)
+    print(f"From {pack.get('author') or 'someone'} ({pack.get('made_at', '')[:10]}). Their sources: "
+          + ", ".join(f"{k} -> {v}" for k, v in mapping.items()))
+    for table, c in p["sections"].items():
+        if any(c.values()):
+            print(f"  {table}: {c['new']} new, {c['fills']} fill gaps, {c['different']} different, {c['same']} same")
+    for source, s in p["scans"].items():
+        print(f"  scan of {source} into {s['into']}: {s['new']} of {s['items']} items new")
+    if args.preview:
+        print("Preview only: nothing was changed.")
+        return 0
+    result = merge(cat, pack, mapping, take_theirs=args.take_theirs, file_name=Path(args.file).name)
+    print(f"Merged as batch {result['batch']}. Undo it on the app's Share page.")
+    cat.close()
+    return 0
+
+
+def cmd_ai_export(args: argparse.Namespace) -> int:
+    from .aipack import write
+
+    cat = Catalogue(load_config(find_config(args.config)).db_path)
+    files = write(cat, Path(args.out), hide_locations=args.hide_locations, include_values=args.values,
+                  fmt="docx" if args.docx else "md")
+    print(f"Wrote {len(files)} files to {args.out}. Put the folder on OneDrive or SharePoint and add it to a "
+          "Copilot agent as knowledge; agent-instructions has the text to paste.")
+    cat.close()
+    return 0
+
+
+def cmd_openmetadata(args: argparse.Namespace) -> int:
+    from .openmeta import to_zip
+
+    cat = Catalogue(load_config(find_config(args.config)).db_path)
+    Path(args.out).write_bytes(to_zip(cat))
+    print(f"Wrote {args.out}. Unzip it and run load_openmetadata.py against your OpenMetadata server.")
+    cat.close()
+    return 0
+
+
 def cmd_ui(args: argparse.Namespace) -> int:
+    from .firstrun import ensure_config
     cfg_path = find_config(args.config)
+    if not cfg_path.exists():  # first run: the app's Get started page fills it in
+        ensure_config(cfg_path)
+        print(f"Created {cfg_path}")
     cfg = load_config(cfg_path)
+    cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
     app = Path(__file__).with_name("app.py")
     cmd = [sys.executable, "-m", "streamlit", "run", str(app),
            "--server.address", "localhost", "--browser.gatherUsageStats", "false",
            "--client.toolbarMode", "minimal",
-           "--", "--db", str(cfg.db_path)]
+           "--", "--db", str(cfg.db_path), "--config", str(cfg_path)]
     if args.port:
         cmd[5:5] = ["--server.port", str(args.port)]
     return subprocess.call(cmd)
@@ -197,13 +271,16 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("scan", help="scan your databases and projects")
     s.add_argument("--source", action="append", help="only scan this source (repeatable)")
+    s.add_argument("--database", action="append", help="only this SQL Server database (repeatable)")
+    s.add_argument("--plan", action="store_true", help="print the SQL Server queries that would run, without connecting")
     s.set_defaults(fn=cmd_scan)
 
     pr = sub.add_parser("profile", help="measure value ranges, nulls and common values of SQL tables (read-only)")
     pr.add_argument("tables", nargs="*", help="table names like dbo.SalesDaily")
     pr.add_argument("--used", action="store_true", help="every table your code or pasted SQL uses")
     pr.add_argument("--source", action="append", help="only this SQL Server source")
-    pr.add_argument("--sample-rows", type=int, default=10_000, help="rows sampled for most-common values")
+    pr.add_argument("--queue", action="store_true", help="run the tables approved in the app's queue")
+    pr.add_argument("--plan", action="store_true", help="print the queries that would run, without connecting")
     pr.set_defaults(fn=cmd_profile)
 
     r = sub.add_parser("review", help="list what needs your attention, most important first")
@@ -229,6 +306,29 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--format", choices=["csv", "json"], default="csv")
     e.add_argument("--out", default="catalogue-export", help="folder to write to (default: ./catalogue-export)")
     e.set_defaults(fn=cmd_export)
+
+    sh = sub.add_parser("share", help="write your notes and knowledge to a file a colleague can merge")
+    sh.add_argument("--out", default="catalogue-share.json")
+    sh.add_argument("--scan", action="append", help="also include your scan of this source (repeatable)")
+    sh.set_defaults(fn=cmd_share)
+
+    mg = sub.add_parser("merge", help="merge a colleague's share file into your catalogue")
+    mg.add_argument("file")
+    mg.add_argument("--map", action="append", help="their source = yours, e.g. dw=warehouse (repeatable)")
+    mg.add_argument("--take-theirs", action="store_true", help="where you both wrote something different, use theirs")
+    mg.add_argument("--preview", action="store_true", help="show what would change, change nothing")
+    mg.set_defaults(fn=cmd_merge)
+
+    ai = sub.add_parser("ai-export", help="write the Copilot pack: what the catalogue knows, as documents")
+    ai.add_argument("--out", default="copilot-pack")
+    ai.add_argument("--docx", action="store_true", help="Word files instead of Markdown")
+    ai.add_argument("--hide-locations", action="store_true", help="leave out server names and file locations")
+    ai.add_argument("--values", action="store_true", help="include value ranges and common values (never sensitive)")
+    ai.set_defaults(fn=cmd_ai_export)
+
+    om = sub.add_parser("openmetadata", help="export tables, descriptions, glossary and lineage for OpenMetadata")
+    om.add_argument("--out", default="openmetadata-export.zip")
+    om.set_defaults(fn=cmd_openmetadata)
 
     u = sub.add_parser("ui", help="open the catalogue in your browser")
     u.add_argument("--port", type=int)
