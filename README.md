@@ -151,6 +151,13 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## Planned for version 2.1
+
+- **"Called by" on script pages**: every other script that uses a script, in one list.
+  That means scripts that import it (and which of its functions they call), and scripts
+  that run it with `subprocess`, `os.system`, `runpy`, `python -m`, `%run` or
+  `!python`. Run links also show on the code map.
+
 ## Upgrading from version 1
 
 Install the new version the same way as before (`pip install -e .` or
