@@ -276,6 +276,12 @@ one at a time, and every query is logged:
   regroups the results: by the script that creates them (so ten outputs of one script
   sit under that script, with anything nothing creates under "Not linked to a script"),
   by family, by folder or database, by business project, or not at all.
+- **Remove or downplay links**: every link on an item's page (uses, created by, read by)
+  gets a small menu: *Remove* for a link the scanner got wrong, or *Not important* for
+  one that's right but noise (a script that only reads a lookup table, say). Unimportant
+  links stay listed but greyed out, and are left out of grouping, diagrams, lineage and
+  "used by" counts. Both survive rescans, show who set them, and can be undone from a
+  "Removed and unimportant links" list.
 - **Recently viewed** items in the sidebar.
 - **Edit history** on notes and descriptions: who changed what and when, with undo.
 - **Schedule scans from the app**: a Settings button that creates (or removes) the
