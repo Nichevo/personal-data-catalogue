@@ -30,8 +30,12 @@ def detail(cat: Catalogue, key: str) -> None:
     asset = cat.get_asset(key)
     if asset is None:
         # Notes can be attached to files and unmatched tables that aren't scanned assets.
-        st.title(f"{icon('note')} {key}")
-        st.caption("Not a scanned item. You can still keep notes on it.")
+        kind, _, name = key.partition(":")
+        if kind in ("table", "file") and name:
+            unmatched_ref(cat, key, kind, name)
+        else:
+            st.title(f"{icon('note')} {key}")
+            st.caption("Not a scanned item. You can still keep notes on it.")
         notes_section(cat, key, [])
         return
 
@@ -127,6 +131,8 @@ def detail(cat: Catalogue, key: str) -> None:
             st.caption(" ".join(f"#{t.strip()}" for t in attrs["tags"].split(",") if t.strip()))
         with st.expander("Edit or delete this SQL"):
             snippet_form(cat, asset)
+        from .sql_pages import snippet_box
+        snippet_box(cat, asset)
 
     about_form(cat, key, asset, info)
     columns = cat.columns(key)
@@ -200,6 +206,30 @@ def detail(cat: Catalogue, key: str) -> None:
         rest = {k: v for k, v in attrs.items() if k not in hidden and v not in (None, "", [])}
         st.json(rest, expanded=False)
         st.caption(f"First seen {asset['first_seen'][:10]} · last seen {asset['last_seen'][:10]}")
+
+
+def unmatched_ref(cat: Catalogue, key: str, kind: str, name: str) -> None:
+    """A table or file that code and pasted SQL use but that isn't in the catalogue: what uses it, with the SQL."""
+    st.title(f"{'📄' if kind == 'file' else '❔'} {name}")
+    what = "file" if kind == "file" else "table"
+    st.caption(f"Not in the catalogue yet: no scanned {what} matches this name. Once you scan the "
+               f"{'folder' if kind == 'file' else 'database'} it's in, everything below links to it.")
+    rows = [dict(r) for r in cat.conn.execute(
+        "SELECT l.src_key, l.relation, l.evidence, a.name, a.kind, a.attrs FROM links l LEFT JOIN assets a "
+        "ON a.key = l.src_key WHERE l.dst_ref = ? ORDER BY a.name", (key,))]
+    if not rows:
+        return
+    st.subheader(f"Used by ({len(rows)})")
+    for i, r in enumerate(rows):
+        rel = RELATION_LABELS.get(r["relation"], r["relation"]).lower()
+        c1, c2 = st.columns([2, 3])
+        with c1:
+            asset_button(r["src_key"], r["name"] or r["src_key"], r["kind"] or "script", f"unref-{i}")
+        c2.caption(f"{rel}" + (f" · {r['evidence']}" if r["evidence"] else ""))
+        sql = json.loads(r["attrs"] or "{}").get("sql") if r["kind"] == "sql_snippet" else None
+        if sql:
+            with st.expander("The SQL"):
+                st.code(sql, language="sql")
 
 
 def about_form(cat: Catalogue, key: str, asset: dict | None, info: dict) -> None:

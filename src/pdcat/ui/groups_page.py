@@ -160,6 +160,8 @@ def suggestion_picker(cat: Catalogue, kind: str, *, prefix: str = "sp") -> None:
     if not rows:
         st.caption("Nothing waiting.")
         return
+    what, does = suggestions.help_for(kind)
+    st.info(f"**What these are:** {what}  \n**Accept** {does} **Reject** means it isn't suggested again.", icon="💡")
     c1, c2, _ = st.columns([1.4, 1.4, 4])
     picked = []
     for s in rows:
@@ -167,11 +169,15 @@ def suggestion_picker(cat: Catalogue, kind: str, *, prefix: str = "sp") -> None:
         if cc1.checkbox("pick", key=f"{prefix}-{s['id']}", label_visibility="collapsed"):
             picked.append(s["id"])
         with cc2:
-            st.markdown(s["title"])
+            item = cat.get_asset(s["subject"]) if s["subject"] and "://" in s["subject"] else None
+            title = s["title"]
+            if item and item["name"] not in title.replace("**", ""):  # "Owner: Sam" -> about which item
+                title = f"{item['name']}: {title}"
+            st.markdown(title)
             if s.get("detail"):
                 st.caption(s["detail"])
-            if s["subject"] and not s["subject"].startswith(("rule:", "naming:")):
-                st.button("Open the item", key=f"{prefix}o-{s['id']}", on_click=go, args=(s["subject"],),
+            if item:
+                st.button(f"Open {item['name']}", key=f"{prefix}o-{s['id']}", on_click=go, args=(s["subject"],),
                           type="tertiary")
     if c1.button(f"Accept {len(picked) or 'ticked'}", key=f"{prefix}acc-{kind}", disabled=not picked, type="primary"):
         for sid in picked:

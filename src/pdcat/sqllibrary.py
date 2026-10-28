@@ -122,7 +122,7 @@ def _auto_name(places: list[dict[str, Any]], tables: list[dict[str, Any]], uid: 
 def build_library(cat: Catalogue) -> int:
     """Gather SQL from everything catalogued into the query library. Returns how many queries it holds;
     `cat.setting("sql_library_counts")` has the details (new, places, missing)."""
-    from .sqlparser import analyse
+    from .sqlparser import VERSION, analyse
     places = gather(cat)
     by_uid: dict[str, list[dict[str, Any]]] = {}
     for p in places:
@@ -137,7 +137,9 @@ def build_library(cat: Catalogue) -> int:
             ps.sort(key=lambda p: (p["item"], p["location"]))
             sql = max((p["sql"] for p in ps), key=len)
             old = existing.get(uid)
-            analysis = json.loads(old["analysis"]) if old and old["analysis"] not in (None, "", "{}") else analyse(sql)
+            analysis = json.loads(old["analysis"]) if old and old["analysis"] not in (None, "", "{}") else {}
+            if analysis.get("version") != VERSION:  # read again with the latest reading (joins in WHERE, ...)
+                analysis = analyse(sql)
             hint = next((p["database"] for p in ps if p.get("database")), None) or \
                 next((hints[p["item"]] for p in ps if p["item"] in hints), None)
             if not hint:  # an Access query's bare names are that file's own tables first

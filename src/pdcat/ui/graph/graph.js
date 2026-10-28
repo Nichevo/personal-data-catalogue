@@ -87,6 +87,13 @@
     return el.clientHeight ? el.clientWidth / el.clientHeight : 1.6;
   }
 
+  // Room between columns of boxes for the longest line label ("PlantId = PlantId (inner)").
+  function betweenLayers() {
+    const longest = Math.max(0, ...(args.elements || []).filter((e) => e.data.source)
+      .map((e) => String(e.data.label || "").length));
+    return Math.max(60, Math.min(longest * 5.5 + 30, 260));
+  }
+
   function layoutOptions(fit) {
     if (args.packed) {
       return {
@@ -102,7 +109,7 @@
       elk: {
         "algorithm": args.algorithm || "layered", "elk.direction": args.direction || "RIGHT",
         "elk.hierarchyHandling": "INCLUDE_CHILDREN", "elk.spacing.nodeNode": 28,
-        "elk.layered.spacing.nodeNodeBetweenLayers": 60, "elk.spacing.edgeNode": 18,
+        "elk.layered.spacing.nodeNodeBetweenLayers": betweenLayers(), "elk.spacing.edgeNode": 18,
         "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF", "elk.padding": "[top=28,left=12,bottom=12,right=12]",
         "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
         "elk.separateConnectedComponents": true, "elk.aspectRatio": 1.6,
@@ -146,6 +153,8 @@
       dedupe();
       cy.layout(Object.assign(layoutOptions(true), { stop: () => {
         document.getElementById("busy").style.display = "none";
+        // A few boxes would otherwise be blown up to fill the viewer, hiding the lines between them.
+        if (cy.zoom() > 1.3) { cy.zoom(1.3); cy.center(); }
       } })).run();
     }, 0);
 

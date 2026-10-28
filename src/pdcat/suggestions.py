@@ -19,8 +19,52 @@ KIND_LABELS = {
     "sap": "SAP meanings", "metric": "Metrics found in code", "naming": "Naming rules",
     "description": "Descriptions", "owner": "Owners", "rename": "Renamed columns", "label": "Report labels",
     "schedule": "Schedule matches", "series": "Files a script writes", "folder_role": "Folder roles",
-    "join": "Usual joins", "check": "Checks from rules",
+    "join": "Usual joins", "check": "Checks from rules", "copilot": "From Copilot",
 }
+
+# For each kind: what the suggestion is, and what Accept changes. Shown above each list and on each card.
+KIND_HELP = {
+    "versions": ("Scripts that look like copies of one script (train.py, train_v2.py, train_old.py).",
+                 "groups them as versions of one script and marks the newest-looking one as the current one, so "
+                 "searches and diagrams show that one first. No file is changed."),
+    "family": ("Data files that hold the same data at different levels (daily, weekly, by store, by region).",
+               "groups them as one family, so each file's page lists the others."),
+    "backup": ("Two tables with the same name and columns in different places: one looks like the main one, "
+               "the other like a backup or copy.",
+               "marks which is the main table and which the backup, so searches point at the main one."),
+    "sap": ("Columns or tables whose names match SAP fields or tables (WERKS, MATNR, MARC...).",
+            "records the SAP name on that column or table, so it can be found by either name and the Copilot "
+            "pack can explain it."),
+    "metric": ("Calculations in your code or Power BI measures that look like business metrics.",
+               "adds the metric, with its formula and where it was found, to the Metric glossary."),
+    "naming": ("Naming patterns most of your tables or columns already follow.",
+               "adds the pattern as a naming rule. New names that break it then show on To review."),
+    "description": ("A description drafted from the item itself (its docstring, comments or file name).",
+                    "saves that text as the item's purpose. You can change it later on the item's page."),
+    "owner": ("Who looks like the owner, from who made the most commits to it in git.",
+              "fills in the item's owner, so you know who to ask about it."),
+    "rename": ("A column that is the same data as a column in another item, under a new name.",
+               "adds a description to the column saying where it comes from and what it was called there."),
+    "label": ("A friendlier name for a column, taken from the label a report shows for it.",
+              "saves that label as the column's business name, so searching for the label finds the column."),
+    "schedule": ("Scripts matched to rows of your schedule sheet.",
+                 "records when that script runs."),
+    "series": ("Several files one script writes from the same name pattern (a file per day or per region).",
+               "groups the files under that pattern and links the group to the script."),
+    "folder_role": ("A new subfolder in a folder you set roles for, and what it looks like (code, data, archive...).",
+                    "gives the subfolder that role. Archive and ignore folders drop out of searches."),
+    "join": ("Two tables your SQL often joins on the same columns.",
+             "records the join between the tables, so the diagrams draw it and the Copilot pack knows it."),
+    "check": ("A rule in a note or description that can be turned into a check on the data.",
+              "adds the check to the item. It runs when you profile the item and shows failures on To review."),
+    "copilot": ("A description or naming rule your Copilot agent drafted from the gaps pack.",
+                "saves the description on the item or column, or turns the rule into checkable naming rules."),
+}
+
+
+def help_for(kind: str) -> tuple[str, str]:
+    return KIND_HELP.get(kind, ("Something the catalogue worked out.", "applies it."))
+
 
 Handler = Callable[[Catalogue, dict[str, Any]], None]
 _HANDLERS: dict[str, Handler] = {}

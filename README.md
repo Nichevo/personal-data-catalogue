@@ -463,6 +463,14 @@ Version 2.1 adds the 46 items below. Some things to know first:
   formula, and you tick the ones to add; the rest can be dismissed so they don't come
   back.
 
+## Ideas for a later version
+
+Asked for while testing 2.1, and kept here to build in the next version:
+
+- **Likely values for metrics**: show the values a metric usually takes (its typical range,
+  from the profiles of the columns it is calculated from) when it is suggested or shown in
+  the Metric glossary.
+
 ## Upgrading from version 1
 
 Install the new version the same way as before (`pip install -e .` or

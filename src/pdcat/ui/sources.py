@@ -219,6 +219,9 @@ def snippet_form(cat: Catalogue, existing: dict | None = None) -> None:
         key = cat.save_snippet(title, sql, description=description, tags=tags,
                                database=None if database == options[0] else database,
                                key=existing["key"] if existing else None)
+        from pdcat import sqllibrary
+        with st.spinner("Adding it to the SQL library…"):
+            sqllibrary.build_library(cat)  # so its tables list it and its page can draw its diagram
         go(key)
         st.rerun()
     if deleted:
