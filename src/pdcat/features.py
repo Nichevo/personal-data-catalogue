@@ -25,6 +25,7 @@ FEATURES: dict[str, str] = {
     "report_labels": "Suggest business names for columns from Power BI report labels",
     "learned_joins": "Learn usual joins from your queries",
     "freshness": "Track whether output files keep refreshing",
+    "bproject_folders": "Add new files to business projects that follow a folder",
 }
 
 

@@ -69,4 +69,5 @@ V21_STEPS = [
     ("report_labels", "labels", "find_labels", "report labels"),
     ("learned_joins", "learned", "learn_joins", "usual joins"),
     ("freshness", "freshness", "track", "freshness"),
+    ("bproject_folders", "bprojects", "sync_folders", "new files in business project folders"),
 ]

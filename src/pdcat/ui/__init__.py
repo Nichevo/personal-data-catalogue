@@ -27,6 +27,9 @@ def pages_for_key(key: str) -> Callable | None:
     if key.startswith("query://"):
         from .sql_pages import query_page
         return query_page
+    if key.startswith("doc://"):
+        from .documents_page import document_page
+        return document_page
     if key.startswith("bp://"):
         from .bproject_pages import bproject_page
         return bproject_page

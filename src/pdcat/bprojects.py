@@ -130,3 +130,71 @@ def suggest(cat: Catalogue, uid: str, limit: int = 40) -> list[dict[str, Any]]:
     names = {r["key"]: dict(r) for r in cat.conn.execute("SELECT key, name, kind, source FROM assets")}
     return [{"key": k, "why": why, **names.get(k, {"name": k, "kind": "note", "source": ""})}
             for k, (_, why) in ranked]
+
+
+# ---- whole folders --------------------------------------------------------------------------
+
+FOLDER_KINDS = ("script", "notebook", "sql_script", "data_file", "file_series", "workbook", "report", "access_db",
+                "model", "table", "view", "procedure")
+
+
+def folder_choices(cat: Catalogue) -> dict[str, str]:
+    """Folders that can be added whole: Python projects and their subfolders, data folders and theirs,
+    databases. prefix -> label with how many items are in it."""
+    counts: dict[str, int] = {}
+    for r in cat.conn.execute(f"SELECT key FROM assets WHERE status = 'active' AND kind IN "
+                              f"({', '.join('?' * len(FOLDER_KINDS))})", FOLDER_KINDS):
+        scheme, _, rest = r[0].partition("://")
+        parts = rest.split("/")
+        for i in range(1, len(parts)):
+            prefix = f"{scheme}://{'/'.join(parts[:i])}"
+            counts[prefix] = counts.get(prefix, 0) + 1
+    return {p: f"{p.split('://', 1)[1]} ({n} items)" for p, n in sorted(counts.items())}
+
+
+def add_folder(cat: Catalogue, uid: str, prefix: str, *, follow: bool = True) -> int:
+    """Add everything under a folder (or project, or database). With `follow`, files that appear there
+    later are added after each scan. Returns how many items were added."""
+    if follow:
+        followed = cat.setting("bproject_folders", {})
+        if prefix not in followed.setdefault(uid, []):
+            followed[uid].append(prefix)
+        cat.set_setting("bproject_folders", followed, quiet=True)
+    return _add_under(cat, uid, prefix)
+
+
+def _add_under(cat: Catalogue, uid: str, prefix: str) -> int:
+    from .curation import hidden_keys
+    hidden = hidden_keys(cat)
+    have = {r[0] for r in cat.conn.execute("SELECT asset_key FROM bproject_members WHERE project_uid = ?", (uid,))}
+    keys = [r[0] for r in cat.conn.execute(
+        f"SELECT key FROM assets WHERE status = 'active' AND kind IN ({', '.join('?' * len(FOLDER_KINDS))}) AND "
+        "substr(key, 1, ?) = ?", (*FOLDER_KINDS, len(prefix) + 1, prefix + "/"))]
+    new = [k for k in keys if k not in have and k not in hidden]  # rejected ones stay out
+    with cat.conn:
+        cat.conn.executemany("INSERT OR IGNORE INTO bproject_members (project_uid, asset_key, state) VALUES "
+                             "(?, ?, 'confirmed')", [(uid, k) for k in new])
+    if new:
+        cat.changed()
+    return len(new)
+
+
+def followed_folders(cat: Catalogue, uid: str) -> list[str]:
+    return cat.setting("bproject_folders", {}).get(uid, [])
+
+
+def stop_following(cat: Catalogue, uid: str, prefix: str) -> None:
+    followed = cat.setting("bproject_folders", {})
+    followed[uid] = [p for p in followed.get(uid, []) if p != prefix]
+    cat.set_setting("bproject_folders", followed, quiet=True)
+
+
+def sync_folders(cat: Catalogue) -> int:
+    """After a scan: add new items in the folders business projects follow."""
+    total = 0
+    for uid, prefixes in cat.setting("bproject_folders", {}).items():
+        if get_project(cat, uid) is None:
+            continue
+        for prefix in prefixes:
+            total += _add_under(cat, uid, prefix)
+    return total

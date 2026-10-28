@@ -159,3 +159,26 @@ def unknown_files_box(cat: Catalogue, key: str) -> None:
             if c3.button("Not a data file", key=f"ufx-{u['id']}"):
                 answer(cat, u, None)
                 st.rerun()
+
+
+def backup_link_box(cat: Catalogue, key: str, asset: dict) -> None:
+    """Link a table with its copy on another server, by hand."""
+    if any(g and g["type"] == "backup" for g in groups.for_item(cat, key)):
+        return
+    obj = (asset["attrs"].get("object") or "").lower()
+    others = [dict(r) for r in cat.conn.execute(
+        "SELECT key, name, source FROM assets WHERE kind = 'table' AND status = 'active' AND key != ? AND source != ? "
+        "AND lower(json_extract(attrs, '$.object')) = ? ORDER BY source", (key, asset["source"], obj))] if obj else []
+    if not others:
+        return
+    with st.popover("🪞 Link its backup copy"):
+        st.caption("The same table on another server. Mark which one is the main one.")
+        pick = st.selectbox("Copy", [o["key"] for o in others],
+                            format_func=lambda k: next(f"{o['name']} on {o['source']}" for o in others if o["key"] == k),
+                            key=f"bk-pick-{key}")
+        main = st.radio("Main one", ["this one", "the copy"], horizontal=True, key=f"bk-main-{key}")
+        if st.button("Link them", key=f"bk-link-{key}", type="primary"):
+            from pdcat.backups import pair_with
+            uid = pair_with(cat, key, pick) if main == "this one" else pair_with(cat, pick, key)
+            go(f"group://{uid}")
+            st.rerun()

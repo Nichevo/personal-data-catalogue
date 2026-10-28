@@ -66,6 +66,9 @@ def detail(cat: Catalogue, key: str) -> None:
     from .item_boxes import groups_box, item_actions, suggestions_box
     item_actions(cat, key, info)
     groups_box(cat, key)
+    if asset["kind"] == "table":
+        from .item_boxes import backup_link_box
+        backup_link_box(cat, key, asset)
     if info.get("lifecycle") in ("deprecated", "retired"):
         msg = f"This is marked **{info['lifecycle']}**."
         if info.get("replaced_by"):
@@ -103,6 +106,8 @@ def detail(cat: Catalogue, key: str) -> None:
 
     from .extras import item_extras_top
     item_extras_top(cat, key, asset)
+    from .documents_page import in_documents_box
+    in_documents_box(cat, key)
     if asset["kind"] in ("report", "measure", "workbook"):
         from .office_pages import office_section
         office_section(cat, key, asset)

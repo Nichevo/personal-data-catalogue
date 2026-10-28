@@ -69,3 +69,23 @@ def test_apo_items_are_flagged_with_the_ibp_equivalent(cat):
     assert "APO Demand Planning" in flags
     assert [r["key"] for r in sapterms.apo_items(cat)] == ["sql://dw/db/dbo.apo_dp_history"]
     assert sapterms.apo_flags(cat, "sql://dw/db/dbo.sales") == []
+
+
+def test_main_and_backup_tables_are_suggested(cat):
+    from pdcat import backups, groups
+    for src, rows in (("onprem", 1000), ("azure", 5000)):
+        key = f"sql://{src}/salesdb/dbo.sales"
+        cat.upsert_asset(key, "table", "dbo.Sales", src, attrs={"object": "sales", "schema": "dbo", "row_count": rows})
+        cols = ["SaleDate", "StoreId", "Units"] + (["ArchivedAt"] if src == "azure" else [])
+        cat.set_columns(key, [{"name": c, "ordinal": i} for i, c in enumerate(cols)])
+    cat.add_link("py://p/a.py", "reads", "table:dbo.sales", "p", dst_key="sql://onprem/salesdb/dbo.sales")
+    cat.conn.commit()
+    backups.find_backups(cat)
+    [s] = suggestions.open_suggestions(cat, "backup")
+    assert s["payload"]["main_key"] == "sql://onprem/salesdb/dbo.sales" and "ArchivedAt" in s["detail"]
+    suggestions.accept(cat, s["id"])
+    [g] = groups.all_groups(cat, "backup")
+    assert g["members"] == 2 and groups.main_of(cat, "sql://azure/salesdb/dbo.sales", "backup") == \
+        "sql://onprem/salesdb/dbo.sales"
+    backups.find_backups(cat)
+    assert suggestions.open_suggestions(cat, "backup") == []

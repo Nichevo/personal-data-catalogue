@@ -991,7 +991,7 @@ class Catalogue:
         with self.conn:
             # Knowledge, questions, metrics and the like have their own rows, which this leaves alone.
             self.conn.execute("DELETE FROM search_idx WHERE key = ? AND kind NOT IN ('knowledge', 'question', "
-                              "'metric', 'feature', 'key', 'bproject')", (key,))
+                              "'metric', 'feature', 'key', 'bproject', 'document')", (key,))
             self.conn.executemany("INSERT INTO search_idx (key, kind, source, name, body) VALUES (?, ?, ?, ?, ?)", rows)
         self.changed()
 
@@ -1012,7 +1012,10 @@ class Catalogue:
                 ("SELECT name AS id, name, COALESCE(description, '') || ' ' || aliases AS body FROM keys "
                  "WHERE state = 'active'", "key://", "key"),
                 ("SELECT uid AS id, name, COALESCE(purpose, '') || ' ' || COALESCE(notes, '') AS body FROM bprojects",
-                 "bp://", "bproject")):
+                 "bp://", "bproject"),
+                ("SELECT d.uid AS id, d.title AS name, COALESCE(v.text, '') || ' ' || COALESCE(v.file_name, '') AS body "
+                 "FROM documents d JOIN document_versions v ON v.doc_uid = d.uid AND v.version = (SELECT MAX(version) "
+                 "FROM document_versions x WHERE x.doc_uid = d.uid)", "doc://", "document")):
             for r in self.conn.execute(sql):
                 rows.append((f"{prefix}{r['id']}", kind, "", _searchable(r["name"]), _searchable(r["body"] or "")))
         with self.conn:

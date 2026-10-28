@@ -80,6 +80,10 @@ def gather(cat: Catalogue) -> list[dict[str, Any]]:
         elif kind in ("view", "procedure") and a.get("definition"):
             out.append(_place(a["definition"], key, f"{kind} definition", r["name"], src,
                               database=f"{src}/{a.get('database', '')}".lower()))
+    from .documents import all_latest, sql_blocks
+    for d in all_latest(cat):
+        for i, sql in enumerate(sql_blocks(d["text"] or "")):
+            out.append(_place(sql, f"doc://{d['uid']}", f"SQL block {i + 1}", d["title"], "documents"))
     return [p for p in out if p]
 
 
