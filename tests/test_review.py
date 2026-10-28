@@ -2,13 +2,12 @@ import copy
 import os
 
 import pandas as pd
+from conftest import FAKE_DB, SRC
 
 from pdcat.config import PythonSource
 from pdcat.review import hotspots, open_tasks, refresh_tasks, set_task_status
 from pdcat.scan_python import scan_project
 from pdcat.scan_sqlserver import ingest
-
-from conftest import FAKE_DB, SRC
 
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 STORE = "sql://warehouse/forecastdb/dbo.store"

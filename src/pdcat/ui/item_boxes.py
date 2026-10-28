@@ -178,7 +178,7 @@ def backup_link_box(cat: Catalogue, key: str, asset: dict) -> None:
                             key=f"bk-pick-{key}")
         main = st.radio("Main one", ["this one", "the copy"], horizontal=True, key=f"bk-main-{key}")
         if st.button("Link them", key=f"bk-link-{key}", type="primary"):
-            from pdcat.backups import pair_with
+            from pdcat.tablepairs import pair_with
             uid = pair_with(cat, key, pick) if main == "this one" else pair_with(cat, pick, key)
             go(f"group://{uid}")
             st.rerun()

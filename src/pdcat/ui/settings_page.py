@@ -60,7 +60,7 @@ def settings_page(cat: Catalogue) -> None:
             st.toast("Saved")
 
     st.subheader("Data files")
-    group = st.checkbox("Group files that differ only by a date into one dated series", 
+    group = st.checkbox("Group files that differ only by a date into one dated series",
                         value=bool(cat.setting("series_grouping", True)),
                         help="sales_2026-01.csv, sales_2026-02.csv… become one entry. Takes effect on the next scan.")
     if group != bool(cat.setting("series_grouping", True)):

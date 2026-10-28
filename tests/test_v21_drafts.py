@@ -1,7 +1,7 @@
 """Version 2.1: descriptions drafted from comments, docstrings and rename comments."""
 from pathlib import Path
 
-from pdcat import drafts2, suggestions
+from pdcat import commentdrafts, suggestions
 from pdcat.config import PythonSource
 from pdcat.scan_python import scan_project
 
@@ -9,10 +9,10 @@ from pdcat.scan_python import scan_project
 def test_sql_header_and_column_comments():
     sql = ("/* Author: someone\n * Daily sales by store, net of returns.\n */\nCREATE VIEW dbo.vSales AS\n"
            "SELECT s.StoreId,  -- the store\n       s.Units AS qty, -- units sold\n  FROM dbo.Sales s")
-    assert drafts2.header_comment(sql) == "Daily sales by store, net of returns."
-    assert drafts2.header_comment("-- Loads the stock table\n-- every night\nCREATE PROCEDURE x AS") == \
+    assert commentdrafts.header_comment(sql) == "Daily sales by store, net of returns."
+    assert commentdrafts.header_comment("-- Loads the stock table\n-- every night\nCREATE PROCEDURE x AS") == \
         "Loads the stock table every night"
-    assert drafts2.column_comments(sql) == {"StoreId": "the store", "qty": "units sold"}
+    assert commentdrafts.column_comments(sql) == {"StoreId": "the store", "qty": "units sold"}
 
 
 def test_suggestions_from_views_scripts_and_renames(catalogue, tmp_path: Path):
@@ -33,7 +33,7 @@ def test_suggestions_from_views_scripts_and_renames(catalogue, tmp_path: Path):
     scan_project(catalogue, PythonSource(name="r", path=root))
     from pdcat import colrenames
     colrenames.find_renames(catalogue)
-    drafts2.find_descriptions(catalogue)
+    commentdrafts.find_descriptions(catalogue)
     found = {(s["payload"]["key"], s["payload"].get("column")): s for s in suggestions.open_suggestions(
         catalogue, "description")}
     assert found[(view, None)]["payload"]["text"] == "Latest forecast per store"
@@ -44,6 +44,6 @@ def test_suggestions_from_views_scripts_and_renames(catalogue, tmp_path: Path):
     suggestions.accept(catalogue, found[(view, None)]["id"])
     from pdcat.curation import item_info
     assert item_info(catalogue, view)["purpose"] == "Latest forecast per store"
-    drafts2.find_descriptions(catalogue)
+    commentdrafts.find_descriptions(catalogue)
     assert (view, None) not in {(s["payload"]["key"], s["payload"].get("column"))
                                 for s in suggestions.open_suggestions(catalogue, "description")}

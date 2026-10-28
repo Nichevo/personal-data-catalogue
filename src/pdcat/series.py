@@ -136,7 +136,7 @@ def parse(rel: str) -> DatedPath | None:
     template = "/".join([*folder_templates, name_template + (f".{ext}" if dot else "")])
     try:
         dp = DatedPath(rel, template, found["y"], found.get("m"), found.get("d"), found.get("q"), mismatch)
-        dp.date  # validates
+        _ = dp.date  # working the date out checks that the parts make one
     except (ValueError, TypeError):
         return None
     return dp
@@ -260,11 +260,6 @@ def _period(m: DatedPath) -> str:
     if m.granularity == "quarter":
         return f"{m.year} Q{m.quarter}"
     return str(m.year)
-
-
-def period_of(rel: str) -> str:
-    dp = parse(rel)
-    return _period(dp) if dp else ""
 
 
 def layout_changes(files: list[dict[str, Any]]) -> list[dict[str, str]]:

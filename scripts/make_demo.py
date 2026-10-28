@@ -16,12 +16,12 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from pdcat.config import PythonSource, SqlServerSource  # noqa: E402
-from pdcat.scan_files import scan_folder  # noqa: E402
-from pdcat.scan_python import scan_project  # noqa: E402
-from pdcat.review import refresh_tasks  # noqa: E402
-from pdcat.scan_sqlserver import ingest  # noqa: E402
-from pdcat.store import Catalogue  # noqa: E402
+from pdcat.config import PythonSource, SqlServerSource
+from pdcat.review import refresh_tasks
+from pdcat.scan_files import scan_folder
+from pdcat.scan_python import scan_project
+from pdcat.scan_sqlserver import ingest
+from pdcat.store import Catalogue
 
 SERVER = SqlServerSource(name="warehouse", server="DEMO-SQL01", databases=["SalesDW"])
 

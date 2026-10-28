@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("streamlit")
-from streamlit.testing.v1 import AppTest  # noqa: E402
+from streamlit.testing.v1 import AppTest
 
 APP = str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py")
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
@@ -207,7 +207,7 @@ def test_item_pages_for_keys_packages_and_knowledge(app, catalogue):
     from pdcat import keys as K
     from pdcat.knowledge import save_knowledge
     K.mark_key(catalogue, "StoreId", SALES, "StoreId")
-    uid = save_knowledge(catalogue, "Freight is always sea freight", "Air is separate.", triggers="sales")
+    save_knowledge(catalogue, "Freight is always sea freight", "Air is separate.", triggers="sales")
     for key in ["key://StoreId", "pkg://pandas", SALES]:
         app.query_params["asset"] = key
         app.run()

@@ -10,16 +10,24 @@ from pdcat import curation
 from pdcat.review import open_tasks
 from pdcat.store import NOTE_TYPES, Catalogue
 
-from .common import (NOTE_ICONS, RELATION_LABELS, asset_button, badges, go, icon, kind_label, note_meta,
-                     result_list, size_label)
+from .common import (
+    NOTE_ICONS,
+    RELATION_LABELS,
+    asset_button,
+    badges,
+    go,
+    icon,
+    kind_label,
+    note_meta,
+    result_list,
+    size_label,
+)
 
 TABLE_LIKE = ("table", "view", "data_file", "file_series")
 
 
 def detail(cat: Catalogue, key: str) -> None:
     st.button("← Back", on_click=go, args=(None,))
-    from pdcat.followups import viewed
-    viewed(cat, key)
     from . import pages_for_key
     special = pages_for_key(key)
     if special:

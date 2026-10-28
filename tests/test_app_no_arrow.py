@@ -4,10 +4,10 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("streamlit")
-from streamlit.testing.v1 import AppTest  # noqa: E402
+from streamlit.testing.v1 import AppTest
+from test_app import sidebar_search
 
-from pdcat.ui import arrowsafe  # noqa: E402
-from test_app import sidebar_search  # noqa: E402
+from pdcat.ui import arrowsafe
 
 APP = str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py")
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"

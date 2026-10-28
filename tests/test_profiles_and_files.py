@@ -1,8 +1,8 @@
-import json
 import os
 import sqlite3
 
 import pandas as pd
+from conftest import SRC  # noqa: F401
 
 from pdcat.config import PythonSource
 from pdcat.export import export_data
@@ -10,8 +10,6 @@ from pdcat.profiling import combine_sql_profile, profile_dataframe, profile_file
 from pdcat.scan_files import scan_folder
 from pdcat.scan_python import scan_project
 from pdcat.store import Catalogue
-
-from conftest import SRC  # noqa: F401
 
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 

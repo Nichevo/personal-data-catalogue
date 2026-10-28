@@ -13,7 +13,6 @@ import csv
 import io
 import re
 import zipfile
-from typing import Any
 from xml.etree import ElementTree as ET
 
 from .scan_excel import NS, _rels, _shared_strings

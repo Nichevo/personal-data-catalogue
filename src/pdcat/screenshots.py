@@ -46,11 +46,6 @@ def remove(cat: Catalogue, report_key: str, page: str, name: str) -> None:
         (folder(cat) / name).unlink(missing_ok=True)
 
 
-def all_files(cat: Catalogue) -> list[Path]:
-    d = folder(cat)
-    return sorted(d.glob("*")) if d.is_dir() else []
-
-
 def index_rows(cat: Catalogue) -> list[dict[str, Any]]:
     """One row per screenshot kept: report, page, file, caption, when and by whom."""
     out = []

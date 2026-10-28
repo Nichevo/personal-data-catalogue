@@ -208,11 +208,11 @@ def test_function_graph_zooms_in_and_out(libs, project):
 
     zoomed = function_graph(libs, key, "run", depth=3)
     assert zoomed.nodes[f"{key}::run"]["kind"] == "focus"
-    assert f"py://deep/deep/util.py::stash" in zoomed.nodes          # tidy -> stash, two files away
+    assert "py://deep/deep/util.py::stash" in zoomed.nodes          # tidy -> stash, two files away
     assert ("table:ml.deep") in zoomed.nodes                           # and the table stash writes
     assert (f"{key}::(script)", f"{key}::run", "call") in zoomed.edges  # caller shown
     assert "Job.go" not in {n["label"] for n in zoomed.nodes.values()}
     shallow = function_graph(libs, key, "run", depth=1, include_data=False)
-    assert f"py://deep/deep/util.py::stash" not in shallow.nodes
+    assert "py://deep/deep/util.py::stash" not in shallow.nodes
     assert "(['run'])" not in to_mermaid(zoomed) and '(["run"])' in to_mermaid(zoomed)
     assert "fillcolor=\"#fde68a\"" in to_dot(zoomed)

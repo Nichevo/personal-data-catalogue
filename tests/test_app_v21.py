@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("streamlit")
-from streamlit.testing.v1 import AppTest  # noqa: E402
+from streamlit.testing.v1 import AppTest
 
-from pdcat import groups, suggestions  # noqa: E402
+from pdcat import groups, suggestions
 
 APP = str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py")
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
@@ -107,8 +107,8 @@ def test_database_page_naming_rules(app, catalogue):
 
 
 def test_knowledge_packs_and_sap_page(app, catalogue):
-    from tests.test_app import goto
     from pdcat import packs
+    from tests.test_app import goto
     app.run()
     goto(app, "Knowledge")
     assert not app.exception

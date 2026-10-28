@@ -2,7 +2,8 @@
 import io
 import zipfile
 
-from pdcat import aipack, copilot_roundtrip as R, curation, naming, suggestions
+from pdcat import aipack, curation, naming, suggestions
+from pdcat import copilot_roundtrip as R
 
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 
@@ -25,7 +26,7 @@ def test_pack_has_the_new_files(catalogue):
 
 
 def test_test_questions_cover_different_things(catalogue):
-    from pdcat.aipack21 import test_questions
+    from pdcat.aipack import test_questions
     from pdcat.knowledge import save_metric
     save_metric(catalogue, "Fill rate", definition="Shipped over ordered")
     curation.set_item_info(catalogue, SALES, grain="store per day")

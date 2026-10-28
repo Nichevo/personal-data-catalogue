@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import PythonSource
-from .sqlrefs import extract_refs, looks_like_sql
-from .scan_files import ingest_files, iter_data_files
 from .envinfo import read_environment
+from .scan_files import ingest_files, iter_data_files
+from .sqlrefs import extract_refs, looks_like_sql
 from .store import Catalogue
 
 SKIP_DIRS = {".git", ".hg", ".svn", "__pycache__", ".venv", "venv", "env", ".env", "site-packages",
@@ -73,7 +73,9 @@ def _scan_project(cat: Catalogue, src: PythonSource, root: Path, project_key: st
         from .mlfeatures import scan_models
         counts["models"] = scan_models(cat, root, project_key, src.name, skip)
         if src.data_files:
-            got = ingest_files(cat, root, sorted(iter_data_files(root, skip=skip)), project_key, src.name, src.max_rows)
+            data_paths = [p for p in iter_data_files(root, skip=skip)
+                          if not under(p.relative_to(root).as_posix(), ignored)]
+            got = ingest_files(cat, root, sorted(data_paths), project_key, src.name, src.max_rows)
             counts["data files"] += got["files"]
             counts["errors"] += got["errors"]
     return counts
@@ -347,7 +349,7 @@ def _builds_string(node: ast.AST) -> bool:
     return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format"
 
 
-def _sql_refs(node: ast.AST, s: str, refs: dict, env: "Env", how: str) -> None:
+def _sql_refs(node: ast.AST, s: str, refs: dict, env: Env, how: str) -> None:
     """Tables in a SQL string the code puts together; names it couldn't fill in are left as patterns."""
     for r in extract_refs(s, dynamic=True):
         refs.setdefault((r.relation, f"table:{r.name}"), (node.lineno, how))
@@ -533,7 +535,7 @@ MAX_SQL = 200          # SQL strings kept per file
 MAX_SQL_LEN = 20_000
 
 
-def _sql_name(node: ast.AST, env: "Env") -> str | None:
+def _sql_name(node: ast.AST, env: Env) -> str | None:
     """A name for a SQL string: the variable holding it, or the comment just above it."""
     if id(node) in env.assigned_to:
         return env.assigned_to[id(node)]

@@ -10,7 +10,8 @@ said (makes the group, writes the description...).
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from .store import Catalogue, now
 
@@ -203,11 +204,20 @@ def counts(cat: Catalogue) -> dict[str, int]:
 
 
 def _load_handlers() -> None:
-    """Handlers live next to the finders; import them so accepting works from any page."""
-    import importlib
-    for mod in ("groups", "sapterms", "metricfind", "naming", "drafts2", "schedules", "colrenames", "folderroles",
-                "learned", "rulechecks", "gitinfo", "backups", "copilot_roundtrip", "labels"):
-        try:
-            importlib.import_module(f"pdcat.{mod}")
-        except ImportError:
-            pass
+    """Handlers live next to the finders (each registers with @handler); import them so accepting works from
+    any page. Imported here, not at the top, because those modules import this one."""
+    from . import (  # noqa: F401
+        colrenames,
+        commentdrafts,
+        copilot_roundtrip,
+        folderroles,
+        gitinfo,
+        groups,
+        labels,
+        learned,
+        metricfind,
+        naming,
+        rulechecks,
+        sapterms,
+        tablepairs,
+    )

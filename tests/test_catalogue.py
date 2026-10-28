@@ -1,9 +1,8 @@
-from pdcat.config import PythonSource
+from conftest import FAKE_DB, SRC
+
+from pdcat.config import PythonSource, SqlServerSource
 from pdcat.scan_python import scan_project
 from pdcat.scan_sqlserver import connection_string, ingest
-from pdcat.config import SqlServerSource
-
-from conftest import FAKE_DB, SRC
 
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 OUTPUT = "sql://warehouse/forecastdb/ml.forecastoutput"

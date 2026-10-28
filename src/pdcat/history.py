@@ -86,17 +86,6 @@ def recent_changes(cat: Catalogue, days: int = 30, limit: int = 500) -> list[dic
            ORDER BY h.at DESC, h.id DESC LIMIT ?""", (cutoff, limit))]
 
 
-def row_count_trend(cat: Catalogue, key: str) -> list[tuple[str, int]]:
-    out = []
-    for r in cat.conn.execute("SELECT at, detail FROM schema_history WHERE asset_key = ? AND change = 'row count' "
-                              "ORDER BY at", (key,)):
-        try:
-            out.append((r["at"][:10], int(r["detail"].split("→")[-1].strip().replace(",", ""))))
-        except ValueError:
-            continue
-    return out
-
-
 # ---- freshness -------------------------------------------------------------------
 
 def _as_date(value: Any) -> date | None:

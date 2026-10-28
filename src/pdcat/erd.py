@@ -207,14 +207,6 @@ def move_tables(cat: Catalogue, keys: list[str], area_uid: str) -> None:
     cat.changed()
 
 
-def delete_area(cat: Catalogue, uid: str) -> None:
-    """Remove an area; its tables are placed again next time areas are suggested."""
-    with cat.conn:
-        cat.conn.execute("DELETE FROM subject_areas WHERE uid = ?", (uid,))
-        cat.conn.execute("DELETE FROM area_members WHERE area_uid = ?", (uid,))
-    cat.changed()
-
-
 def _rels(cat: Catalogue, keys: set[str]) -> list[dict[str, Any]]:
     from .relationships import relationships
     return relationships(cat, keys)

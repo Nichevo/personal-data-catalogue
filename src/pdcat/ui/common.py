@@ -7,8 +7,9 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Callable
+from typing import Any
 
 import streamlit as st
 
@@ -30,22 +31,25 @@ LIFECYCLE_BADGES = {"experimental": "🧪 experimental", "deprecated": "⛔ depr
 TRUST_BADGES = {"trusted": "✅ trusted", "caution": "⚠️ use with caution", "do not use": "🚫 don't use"}
 
 
-def db_path() -> str:
+def _app_args() -> argparse.Namespace:
+    """What `pdcat ui` passed after "--": the catalogue file and the config file."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=os.environ.get("PDCAT_DB"))
     parser.add_argument("--config", default=os.environ.get("PDCAT_CONFIG"))
     args, _ = parser.parse_known_args(sys.argv[1:])
-    if not args.db:
+    return args
+
+
+def db_path() -> str:
+    db = _app_args().db
+    if not db:
         st.error("No catalogue given. Start the app with `pdcat ui`.")
         st.stop()
-    return args.db
+    return db
 
 
 def config_path() -> str | None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default=os.environ.get("PDCAT_CONFIG"))
-    args, _ = parser.parse_known_args(sys.argv[1:])
-    return args.config
+    return _app_args().config
 
 
 def open_catalogue() -> Catalogue:

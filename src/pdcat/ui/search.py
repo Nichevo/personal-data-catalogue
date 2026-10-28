@@ -9,8 +9,18 @@ import streamlit as st
 from pdcat.export import rows_to_csv
 from pdcat.store import Catalogue
 
-from .common import (asset_button, badges, first_line, go, icon, kind_label, note_meta, page_title, result_list,
-                     row_get, size_label)
+from .common import (
+    asset_button,
+    badges,
+    first_line,
+    go,
+    icon,
+    kind_label,
+    note_meta,
+    page_title,
+    result_list,
+    size_label,
+)
 
 DETAILED = 15  # results shown with their matching columns; the rest stay one line each
 
@@ -274,12 +284,3 @@ def unmatched_page(cat: Catalogue) -> None:
     else:
         st.success("Every table name in your code matched a scanned table.")
 
-
-def empty_catalogue() -> None:
-    st.title("Your catalogue is empty")
-    st.write("Run `pdcat scan` in a terminal to scan the databases and projects in your config, or add a data "
-             "folder or some SQL from the sidebar.")
-
-
-__all__ = ["search_page", "data_issues_page", "needs_notes_page", "recent_notes_page", "unmatched_page",
-           "column_line", "icon", "row_get"]

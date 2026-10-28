@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdcat"
-version = "2.1.0"
+dynamic = ["version"]
 description = "A personal, local data catalogue for SQL Server tables and Python projects"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.5"]
 # Optional readers: the compressed model inside .pbix files, and exact reading of Excel macros.
 office = ["pbixray", "olefile"]
 # Optional: exact SQL reading (falls back to a simpler reader without it), Access databases on Windows,
@@ -33,9 +33,41 @@ pdcat = "pdcat.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.dynamic]
+version = {attr = "pdcat.__version__"}
+
 [tool.setuptools.package-data]
 pdcat = ["ui/graph/*.html", "ui/graph/*.js", "ui/graph/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Bugs and dead code (F, B), modern syntax for Python 3.11+ (UP), and a few simplifications (SIM).
+# Style-only rules are left out on purpose: the code is read more than it is linted.
+select = ["F", "E9", "W", "I", "B", "UP", "SIM", "PLE", "PLW", "RUF100"]
+ignore = [
+    "B007",    # unused loop variables are fine in `for key, value in …` when one side is ignored
+    "B905",    # zip() without strict= is fine for the row/column pairs used here
+    "SIM102",  # nested ifs read better than long combined conditions
+    "SIM105",  # try/except/pass with a comment is clearer than contextlib.suppress
+    "SIM117",  # nested `with` blocks read better in Streamlit layouts
+    "PLW2901", # reassigning a loop variable is a common idiom in the scanners
+    "PLW1510", # subprocess.run without check= is deliberate: the return code is inspected
+    "UP017",   # datetime.timezone.utc is clear enough
+    "PLW0108", # lambdas as on_click handlers
+    "SIM108",  # an if/else block is often clearer than a long conditional expression
+    "SIM112",  # ProgramData is the Windows spelling of that environment variable
+    "SIM118",  # `in row.keys()` is needed for sqlite3.Row, which has no `in` on its names
+    "B039",    # the ContextVar defaults are read, never changed in place
+    "SIM114",  # two short branches read better than one long combined condition
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+"scripts/*" = ["E402"]
