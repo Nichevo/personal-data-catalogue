@@ -27,9 +27,12 @@ GROUP_NAMES = {"api": "🌐 APIs and web services", "web_scraping": "🕸️ Web
 
 
 def flow_graph(cat: Catalogue, project: str | None = None, *, level: str = "files", show_old: bool = False,
-               hops: int = 3, focus: str | None = None) -> Graph:
+               hops: int = 3, focus: str | None = None, start: set[str] | None = None,
+               downstream: bool = True) -> Graph:
     """The flow for one project or folder source (followed `hops` steps up- and downstream), or everything.
     focus: one script, notebook or report instead of a project, drawn highlighted.
+    start: any set of scripts and reports to start from instead (the Power BI map starts from every report);
+    downstream=False follows the data upstream only.
     level="projects" shows each project as one box instead of one per script."""
     assets = _assets(cat)
     hidden = hidden_from_map(cat, show_old)
@@ -67,13 +70,18 @@ def flow_graph(cat: Catalogue, project: str | None = None, *, level: str = "file
             writes[src].add(d)
             writers[d].add(src)
 
-    if project or focus:
-        start = {focus} & processes if focus else {k for k in processes if assets[k]["source"] == project}
+    if project or focus or start is not None:
+        if start is not None:
+            start = set(start) & processes
+        else:
+            start = {focus} & processes if focus else {k for k in processes if assets[k]["source"] == project}
         scope = set(start)
         # Downstream only from what is downstream, and upstream only from what is upstream, so a report
         # reading the project's output doesn't pull in everything else that report reads.
-        for step in (lambda p: {r for d in writes[p] for r in readers[d]} | runs[p],
-                     lambda p: {w for d in reads[p] for w in writers[d]}):
+        steps = [lambda p: {w for d in reads[p] for w in writers[d]}]
+        if downstream:
+            steps.append(lambda p: {r for d in writes[p] for r in readers[d]} | runs[p])
+        for step in steps:
             frontier = set(start)
             for _ in range(hops):
                 frontier = {q for p in frontier for q in step(p)} - scope
@@ -157,8 +165,9 @@ def flow_elements(g: Graph) -> list[dict[str, Any]]:
         data: dict[str, Any] = {"id": nid, "label": n["label"], "kind": n["kind"]}
         if n.get("key"):
             data["key"] = n["key"]
-        if n.get("focus"):
-            data["focus"] = True
+        for extra in ("focus", "weight", "flag"):
+            if n.get(extra):
+                data[extra] = n[extra]
         if n["group"]:
             gid = f"grp:flow:{n['group']}"
             nodes.setdefault(gid, {"data": {"id": gid, "label": n["group"], "kind": "group"}})

@@ -66,6 +66,8 @@
       { selector: ".faded", style: { "opacity": 0.18 } },
       { selector: "edge.dup", style: { "display": "none" } },
       { selector: "edge[bundle > 1]", style: { "width": (e) => Math.min(1.4 + e.data("bundle") * 0.5, 6) } },
+      { selector: "node[weight]", style: { "font-size": "mapData(weight, 1, 100, 11, 17)" } },
+      { selector: "node[?flag]", style: { "border-style": "dashed", "border-color": "#d64545", "border-width": 2.5 } },
       { selector: "node[?focus]", style: { "border-width": 3.5, "border-color": "#b45309", "font-weight": "bold" } },
       { selector: "node:selected", style: { "border-width": 3, "border-color": "#ff4b4b" } },
       { selector: "edge:selected", style: { "width": 3 } },

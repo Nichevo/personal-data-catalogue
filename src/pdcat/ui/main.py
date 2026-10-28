@@ -45,6 +45,7 @@ def sections() -> dict[str, dict[str, Page]]:
         lists,
         menu_guide,
         ml_pages,
+        powerbi_map_page,
         scan_log,
         scanning,
         setup_page,
@@ -73,6 +74,7 @@ def sections() -> dict[str, dict[str, Page]]:
                 "Edit many items": curation_pages.bulk_edit_page}),
         },
         "🗺️ Map": {"Code map": code.code_map_page, "Data flow": dataflow_page.data_flow_page,
+                   "Power BI map": powerbi_map_page.powerbi_map_page,
                    "Database diagrams": erd_page.erd_page,
                    "Packages": code.packages_page},
         "➕ Add": {
