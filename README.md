@@ -48,10 +48,10 @@ trigger words do:
 
 ![Knowledge page](docs/screenshots/knowledge.png)
 
-**Feature dictionary**: every model input, filled from your feature code and LightGBM
+**ML model features**: the inputs to your machine learning models, filled from your feature code and LightGBM
 models, with checks for leakage, unused features and drift:
 
-![Feature dictionary](docs/screenshots/features.png)
+![ML model features](docs/screenshots/features.png)
 
 ### Review
 

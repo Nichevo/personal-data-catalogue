@@ -132,3 +132,22 @@ def test_item_page_rule_checks(app, catalogue):
     assert c["rule"]["check"] == "min"
     [b for b in app.button if b.label == "Remove"][0].click().run()
     assert not rulechecks.checks_for(catalogue, SALES)
+
+
+def test_ml_model_features_page_links(app, catalogue):
+    from test_app import goto
+
+    from pdcat import mlfeatures as M
+    M.save_feature(catalogue, "sales_lag_7", project="forecasting", sources=[f"{SALES}#Units"],
+                   built_by="py://forecasting/src/features.py::build", models=["model://forecasting/lgbm.txt"])
+    app.run()
+    goto(app, "ML model features")
+    assert not app.exception
+    assert app.title[0].value == "ML model features"
+    labels = [b.label for b in app.button]
+    assert "🧬 sales_lag_7" in labels
+    assert any(lb.startswith("🐍 features.py › build()") for lb in labels)
+    assert any(lb.startswith("🗄️ ") and "Units" in lb for lb in labels)
+    [b for b in app.button if b.label.startswith("🗄️ ")][0].click().run()
+    assert not app.exception
+    assert app.query_params.get("asset") in (SALES, [SALES])
