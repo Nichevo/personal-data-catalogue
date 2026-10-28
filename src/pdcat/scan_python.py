@@ -158,6 +158,7 @@ def _scan_notebook(text: str) -> Found:
     unknown: list[dict] = []
     patterns: list[str] = []
     sql_strings: list[dict] = []
+    renames: list[dict] = []
     merged: dict[str, dict] = {"function_info": {}, "import_map": {}, "function_refs": {}}
     for i, cell in enumerate(cells, start=1):
         source = "".join(cell.get("source", []))
@@ -188,6 +189,7 @@ def _scan_notebook(text: str) -> Found:
         runs += [{**r, "line": 0, "how": f"{r['how']} (cell {i})"} for r in cell_found.attrs.get("runs", [])]
         unknown += [{**u, "cell": i} for u in cell_found.attrs.get("unknown_files", [])]
         sql_strings += [{**q, "cell": i} for q in cell_found.attrs.get("sql_strings", [])]
+        renames += [{**r, "cell": i} for r in cell_found.attrs.get("column_renames", [])]
         patterns += cell_found.attrs.get("write_patterns", [])
         for name, value in merged.items():
             for k, v in cell_found.attrs.get(name, {}).items():
@@ -206,6 +208,8 @@ def _scan_notebook(text: str) -> Found:
         found.attrs["unknown_files"] = unknown
     if sql_strings:
         found.attrs["sql_strings"] = sql_strings[:MAX_SQL]
+    if renames:
+        found.attrs["column_renames"] = renames[:500]
     if patterns:
         found.attrs["write_patterns"] = sorted(set(patterns))
     if errors:
@@ -270,6 +274,8 @@ def scan_python_source(text: str) -> Found:
         found.attrs["write_patterns"] = sorted(set(env.patterns))
     if env.sql:
         found.attrs["sql_strings"] = sorted(env.sql.values(), key=lambda q: q["line"])
+    if env.renames:
+        found.attrs["column_renames"] = env.renames[:500]
     return found
 
 
@@ -300,7 +306,25 @@ def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str], env: di
         elif isinstance(node, ast.Call):
             for relation, ref, how in _call_refs(node, env):
                 refs.setdefault((relation, ref), (node.lineno, how))
+            if isinstance(env, Env) and isinstance(node.func, ast.Attribute) and node.func.attr == "rename":
+                env.renames += _renames(node)
     return refs
+
+
+def _renames(call: ast.Call) -> list[dict]:
+    """df.rename(columns={"Units": "qty"}) -> [{"old": "Units", "new": "qty", "line"}]."""
+    mapping = next((k.value for k in call.keywords if k.arg == "columns"), None)
+    if mapping is None and call.args and not any(k.arg == "index" for k in call.keywords):
+        mapping = call.args[0] if any(k.arg == "axis" and isinstance(k.value, ast.Constant)
+                                      and k.value.value in (1, "columns") for k in call.keywords) else None
+    if not isinstance(mapping, ast.Dict):
+        return []
+    out = []
+    for k, v in zip(mapping.keys, mapping.values):
+        if isinstance(k, ast.Constant) and isinstance(v, ast.Constant) and isinstance(k.value, str) \
+                and isinstance(v.value, str) and k.value != v.value:
+            out.append({"old": k.value, "new": v.value, "line": call.lineno})
+    return out
 
 
 def _bcp_refs(parts: list[str]) -> list[tuple[str, str]]:
@@ -489,6 +513,7 @@ class Env(dict):
         self.unknown: dict[tuple, dict] = {}
         self.patterns: list[str] = []
         self.sql: dict[tuple, dict] = {}
+        self.renames: list[dict] = []
         self.assigned_to: dict[int, str] = {}
         self.lines: list[str] = []
 

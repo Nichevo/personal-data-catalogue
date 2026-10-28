@@ -87,3 +87,20 @@ def test_sql_queries_page_and_query_page(app, catalogue):
     app.run()
     assert not app.exception
     assert any("SQL using this table" in e.label for e in app.expander)
+
+
+def test_database_page_naming_rules(app, catalogue):
+    from pdcat import naming
+    db = "sql://warehouse/forecastdb"
+    assert catalogue.get_asset(db)
+    app.query_params["asset"] = db
+    app.run()
+    assert not app.exception
+    app.text_area(key=f"nr-text-{db}").input("Tables are PascalCase")
+    [b for b in app.button if b.label == "Read the rules"][0].click().run()
+    assert not app.exception
+    [r] = [r for r in naming.rules(catalogue, db, all_states=True) if r["state"] == "proposed"]
+    [b for b in app.button if b.label == "✓"][0].click().run()
+    assert not app.exception
+    assert naming.rules(catalogue, db)[0]["uid"] == r["uid"]
+    assert any(d for d in app.dataframe)

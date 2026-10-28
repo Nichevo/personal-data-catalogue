@@ -125,7 +125,8 @@ def detail(cat: Catalogue, key: str) -> None:
         compare_section(cat, key)
 
     lineage_section(cat, key, asset)
-    from .sql_pages import queries_in_box, using_table_box
+    from .sql_pages import queries_in_box, renames_box, using_table_box
+    renames_box(cat, key)
     if asset["kind"] in ("table", "view", "procedure"):
         using_table_box(cat, key)
     if asset["kind"] in ("script", "notebook", "sql_script", "workbook", "report", "access_db"):
@@ -147,6 +148,9 @@ def detail(cat: Catalogue, key: str) -> None:
         from .code import functions_section
         functions_section(cat, key, asset)
 
+    if asset["kind"] in ("database", "project"):
+        from .naming_box import naming_box
+        naming_box(cat, key)
     if asset["kind"] == "project":
         from .code import diagram_block, environment_section
         environment_section(cat, asset)

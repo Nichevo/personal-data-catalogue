@@ -145,3 +145,57 @@ def test_each_check(sql, rule):
 
 def test_checks_ignore_text_inside_strings():
     assert sqlchecks.check_sql("SELECT a FROM t WHERE note = 'x = null with (nolock)'") == ()
+
+
+def test_usual_joins_and_usage(cat, tmp_path: Path):
+    for i in range(3):
+        cat.save_snippet(f"q{i}", f"SELECT s.Units, st.Region FROM dbo.Sales s JOIN dbo.Stores st "
+                                  f"ON st.StoreId = s.StoreId WHERE s.Week = {i}")
+    sqllibrary.build_library(cat)
+    from pdcat import learned, suggestions
+    from pdcat.relationships import relationships
+    u = learned.usage(cat, SALES)
+    assert u["queries"] == 3 and ("week", 3) in [(c.lower(), n) for c, n in u["filters"]]
+    assert u["joins"][0]["other_key"] == STORES and u["joins"][0]["n"] == 3
+    assert "Joined to dbo.stores" in learned.usage_note(cat, SALES)
+    learned.learn_joins(cat)
+    [s] = suggestions.open_suggestions(cat, "join")
+    suggestions.accept(cat, s["id"])
+    assert [r["state"] for r in relationships(cat) if {r["src_key"], r["dst_key"]} == {SALES, STORES}] == ["confirmed"]
+    learned.learn_joins(cat)
+    assert suggestions.open_suggestions(cat, "join") == []
+
+
+def test_column_renames_link_through_scripts_and_sql(cat, tmp_path: Path):
+    from pdcat import colrenames, suggestions
+    from pdcat.curation import column_info, set_column_info
+    cat.set_columns(SALES, [{"name": "Units", "data_type": "int", "ordinal": 1},
+                            {"name": "StoreId", "data_type": "int", "ordinal": 2}])
+    set_column_info(cat, SALES, "Units", description="Units sold in the week")
+    root = tmp_path / "proj"
+    (root / "out").mkdir(parents=True)
+    (root / "out" / "weekly.csv").write_text("qty,store\n1,2\n")
+    (root / "job.py").write_text(
+        'import pandas as pd\n'
+        'df = pd.read_sql("SELECT Units, StoreId FROM dbo.Sales", con)\n'
+        'df = df.rename(columns={"Units": "qty", "StoreId": "store"})\n'
+        'df.to_csv("out/weekly.csv")\n')
+    scan_project(cat, PythonSource(name="proj", path=root))
+    sqllibrary.build_library(cat)
+    assert colrenames.find_renames(cat) >= 2
+    out = cat.conn.execute("SELECT dst_key FROM links WHERE relation = 'writes'").fetchone()[0]
+    r = colrenames.renames_for(cat, out)
+    assert {(x["src_item"], x["src_column"], x["dst_column"]) for x in r["from"]} >= {(SALES, "Units", "qty")}
+    assert colrenames.column_lineage(cat, out, "qty")["upstream"][0]["item"] == SALES
+    [s] = [s for s in suggestions.open_suggestions(cat, "rename") if s["payload"]["column"] == "qty"]
+    suggestions.accept(cat, s["id"])
+    assert column_info(cat, out)["qty"]["description"] == "Units sold in the week"
+
+
+def test_sql_alias_into_a_table_is_a_rename(cat):
+    cat.set_columns(STORES, [{"name": "Region", "data_type": "varchar", "ordinal": 1}])
+    cat.save_snippet("load", "INSERT INTO dbo.Stores (Region) SELECT s.Area AS Region FROM dbo.Sales s")
+    sqllibrary.build_library(cat)
+    from pdcat import colrenames
+    colrenames.find_renames(cat)
+    assert colrenames.renames_for(cat, STORES)["from"][0]["src_column"] == "Area"
