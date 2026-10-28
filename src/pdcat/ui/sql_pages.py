@@ -151,8 +151,14 @@ def _findings_box(cat: Catalogue, q: dict) -> None:
             elif c1.button("Fine here", key=f"qf-ok-{q['uid']}-{i}", help="Don't flag this for this query again"):
                 sqlchecks.mark_ok(cat, q["uid"], f["rule"], f.get("about", ""))
                 st.rerun()
-            if f.get("article"):
-                c2.markdown(f"[Why this matters]({f['article']})")
+            from pdcat.packs import article_for_rule
+            kb = article_for_rule(cat, f["rule"])
+            if kb:
+                c2.button("📚 Why this matters", key=f"qf-kb-{q['uid']}-{i}", on_click=go, args=(f"kb://{kb}",),
+                          type="tertiary")
+            elif f.get("article"):
+                c2.markdown(f"[Why this matters]({f['article']}) · load the SQL Server good-practice pack in "
+                            "Knowledge to read it here")
 
 
 def using_table_box(cat: Catalogue, key: str) -> None:

@@ -69,6 +69,10 @@ def key_page(cat: Catalogue, key: str) -> None:
     for problem in K.checks(cat, k["name"]):
         st.warning(problem)
     confirmed = K.key_columns(cat, k["name"], "confirmed")
+    from pdcat.sapterms import column_sap_names, meaning
+    saps = sorted({column_sap_names(cat, c["asset_key"]).get(c["column_name"]) for c in confirmed} - {None})
+    if saps:
+        st.caption("In SAP: " + ", ".join(f"`{s}` ({meaning(s)})" if meaning(s) else f"`{s}`" for s in saps))
     with st.expander("✏️ Edit this key"):
         with st.form(f"edit-key-{name}"):
             new_name = st.text_input("Name", value=k["name"])

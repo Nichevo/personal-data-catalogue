@@ -58,6 +58,10 @@ def detail(cat: Catalogue, key: str) -> None:
     role = role_of(attrs.get("full_path") or attrs.get("path"), stored(cat))
     if role:
         meta.append(f"📂 in a {role} folder")
+    if info.get("sap_name"):
+        from pdcat.sapterms import meaning
+        sap_m = meaning(info["sap_name"])
+        meta.append(f"SAP {info['sap_name']}" + (f" ({sap_m})" if sap_m else ""))
     st.caption(" · ".join(str(m) for m in meta if m) + f"  \n`{key}`")
     from .item_boxes import groups_box, item_actions, suggestions_box
     item_actions(cat, key, info)
@@ -74,6 +78,12 @@ def detail(cat: Catalogue, key: str) -> None:
     if attrs.get("imported_from"):
         st.info(f"From {attrs['imported_from']}'s scan, merged from a share file. Scan the source yourself to "
                 "replace it with your own.", icon="📥")
+    if asset["kind"] in ("table", "view", "procedure", "data_file", "script", "notebook", "sql_script", "report",
+                         "workbook"):
+        from pdcat.sapterms import apo_flags
+        flags = apo_flags(cat, key)
+        if flags:
+            st.warning("Still uses APO: " + "; ".join(f"{a} → in IBP: {b}" for a, b in flags), icon="🔁")
     if attrs.get("parse_error"):
         st.warning(f"Couldn't fully read this file: {attrs['parse_error']}")
     if attrs.get("read_error"):
@@ -217,10 +227,13 @@ def about_form(cat: Catalogue, key: str, asset: dict | None, info: dict) -> None
                                          index=opts.index(cur) if cur in opts else 0)
             sensitive = c7.checkbox("🔒 Whole item is sensitive", value=bool(info.get("sensitive")),
                                     help="Values are never stored or shown, and it's left out of every export.")
+            sap = st.text_input("SAP: what this is in SAP", value=info.get("sap_name") or "",
+                                placeholder="e.g. MARC, or an extract of VBAP",
+                                help="The SAP table (or object) this holds or was extracted from")
             if st.form_submit_button("Save", type="primary"):
                 curation.set_item_info(cat, key, purpose=purpose, grain=grain, refresh=refresh, lifecycle=lifecycle,
                                        trust=trust, owner=owner, replaced_by=replaced_by,
-                                       freshness_column=freshness, sensitive=sensitive)
+                                       freshness_column=freshness, sensitive=sensitive, sap_name=sap)
                 st.toast("Saved")
                 st.rerun()
 

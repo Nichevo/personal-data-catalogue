@@ -104,3 +104,17 @@ def test_database_page_naming_rules(app, catalogue):
     assert not app.exception
     assert naming.rules(catalogue, db)[0]["uid"] == r["uid"]
     assert any(d for d in app.dataframe)
+
+
+def test_knowledge_packs_and_sap_page(app, catalogue):
+    from tests.test_app import goto
+    from pdcat import packs
+    app.run()
+    goto(app, "Knowledge")
+    assert not app.exception
+    [b for b in app.button if b.key == "pack-sqlserver"][0].click().run()
+    assert not app.exception
+    assert packs.status(catalogue)["sqlserver"] == len(packs.SQLSERVER_NOTES)
+    goto(app, "SAP links")
+    assert not app.exception
+    assert app.title[0].value == "SAP links"
