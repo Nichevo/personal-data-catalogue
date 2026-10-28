@@ -18,7 +18,7 @@ KIND_ICONS = {"table": "🗃️", "view": "👁️", "procedure": "⚙️", "dat
               "script": "🐍", "notebook": "📓", "sql_script": "📜", "sql_snippet": "✍️", "note": "📝",
               "data_file": "📄", "folder": "🗂️", "file_series": "🗓️", "package": "📦", "report": "📊",
               "workbook": "📗", "model": "🧠", "measure": "🧮", "bproject": "🧭", "knowledge": "💡",
-              "question": "❓", "metric": "📏", "feature": "🧬", "key": "🔑", "group": "👪", "query": "🔍",
+              "question": "❓", "metric": "📏", "feature": "🧬", "key": "🔑", "group": "👪", "query": "🧾",
               "environment": "🐍", "access_db": "🗄️", "document": "📑"}
 KIND_LABELS = {"data_file": "data file", "sql_snippet": "pasted SQL", "sql_script": "SQL file",
                "file_series": "file series", "bproject": "business project", "workbook": "Excel workbook",

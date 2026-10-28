@@ -828,6 +828,18 @@ class Catalogue:
         and then the dbo schema break the tie; if it is still ambiguous the
         reference stays unresolved rather than guessing.
         """
+        index = self.table_index()
+        updates = []
+        for link in self.conn.execute("SELECT rowid, dst_ref, hint FROM links WHERE dst_ref LIKE 'table:%'"):
+            cands = self.match_table(link["dst_ref"][len("table:"):], link["hint"], index)
+            updates.append((cands[0]["key"] if len(cands) == 1 else None,
+                            f"{len(cands)} tables have this name" if len(cands) > 1 else None, link["rowid"]))
+        updates += self._resolve_file_refs()
+        with self.conn:
+            self.conn.executemany("UPDATE links SET dst_key = ?, match_note = ? WHERE rowid = ?", updates)
+
+    def table_index(self) -> dict[str, list[dict[str, str]]]:
+        """Scanned tables, views and procedures by their bare (object) name, for `match_table`."""
         by_object: dict[str, list[dict[str, str]]] = defaultdict(list)
         for row in self.conn.execute(
             "SELECT key, source, attrs FROM assets WHERE kind IN ('table', 'view', 'procedure') AND status = 'active'"
@@ -838,31 +850,30 @@ class Catalogue:
                 "database": a.get("database", "").lower(), "schema": a.get("schema", "").lower(),
                 "server": a.get("server", "").lower(),
             })
+        return by_object
 
-        updates = []
-        for link in self.conn.execute("SELECT rowid, dst_ref, hint FROM links WHERE dst_ref LIKE 'table:%'"):
-            parts = link["dst_ref"][len("table:"):].split(".")
-            if "{}" in parts[-1]:  # a name built at run time, e.g. f"sales_{region}"
-                pattern = re.compile(re.escape(parts[-1]).replace(r"\{\}", ".+") + "$")
-                cands = [c for obj, cs in by_object.items() if pattern.match(obj) for c in cs]
-            else:
-                cands = by_object.get(parts[-1], [])
-            if len(parts) >= 2:
-                cands = [c for c in cands if c["schema"] == parts[-2]]
-            if len(parts) >= 3:
-                cands = [c for c in cands if c["database"] == parts[-3]]
-            if len(parts) >= 4:
-                cands = [c for c in cands if parts[-4] in (c["server"], c["source"])]
-            if len(cands) > 1 and link["hint"]:
-                hinted = [c for c in cands if _matches_hint(c, link["hint"])]
-                cands = hinted or cands
-            if len(cands) > 1 and len(parts) == 1:
-                cands = [c for c in cands if c["schema"] == "dbo"] or cands
-            updates.append((cands[0]["key"] if len(cands) == 1 else None,
-                            f"{len(cands)} tables have this name" if len(cands) > 1 else None, link["rowid"]))
-        updates += self._resolve_file_refs()
-        with self.conn:
-            self.conn.executemany("UPDATE links SET dst_key = ?, match_note = ? WHERE rowid = ?", updates)
+    def match_table(self, name: str, hint: str | None = None,
+                    index: dict[str, list[dict[str, str]]] | None = None) -> list[dict[str, str]]:
+        """The scanned tables a name in SQL ("sales", "dbo.sales", "db.dbo.sales"...) could be; one when it's clear."""
+        index = self.table_index() if index is None else index
+        parts = name.split(".")
+        if "{}" in parts[-1]:  # a name built at run time, e.g. f"sales_{region}"
+            pattern = re.compile(re.escape(parts[-1]).replace(r"\{\}", ".+") + "$")
+            cands = [c for obj, cs in index.items() if pattern.match(obj) for c in cs]
+        else:
+            cands = index.get(parts[-1], [])
+        if len(parts) >= 2:
+            cands = [c for c in cands if c["schema"] == parts[-2]]
+        if len(parts) >= 3:
+            cands = [c for c in cands if c["database"] == parts[-3]]
+        if len(parts) >= 4:
+            cands = [c for c in cands if parts[-4] in (c["server"], c["source"])]
+        if len(cands) > 1 and hint:
+            hinted = [c for c in cands if _matches_hint(c, hint)]
+            cands = hinted or cands
+        if len(cands) > 1 and len(parts) == 1:
+            cands = [c for c in cands if c["schema"] == "dbo"] or cands
+        return cands
 
     def _resolve_file_refs(self) -> list[tuple[str | None, str | None, int]]:
         """Match "file:<path>" references from code to catalogued CSV/Parquet files.

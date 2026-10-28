@@ -137,6 +137,9 @@ def scan_file(path: Path) -> Found:
         first = text.lstrip().splitlines()[0] if text.strip() else ""
         if first.startswith("--"):
             found.description = first.lstrip("- ").strip()
+        if text.strip():
+            found.attrs["sql_strings"] = [{"sql": text[:MAX_SQL_LEN], "line": 1, "name": path.stem, "function": None,
+                                           "built_from_variables": False, "whole_file": True}]
         return found
     if suffix == ".ipynb":
         return _scan_notebook(text)

@@ -61,3 +61,29 @@ def test_suggestions_page_accepts_ticked(app, catalogue):
     [b for b in app.button if b.label.startswith("Accept")][0].click().run()
     assert not app.exception
     assert groups.for_item(catalogue, STORE)
+
+
+def test_sql_queries_page_and_query_page(app, catalogue):
+    from pdcat import sqllibrary
+    from tests.test_app import goto
+    catalogue.save_snippet("Daily sales", "SELECT s.StoreId, s.Units FROM dbo.SalesDaily s "
+                                          "JOIN dbo.Store st ON st.StoreId = s.StoreId WITH (NOLOCK)")
+    assert sqllibrary.build_library(catalogue) >= 1
+    app.run()
+    goto(app, "SQL queries")
+    assert not app.exception
+    assert len(app.dataframe) == 1
+    uid = next(q["uid"] for q in sqllibrary.queries(catalogue) if q["name"] == "Daily sales")
+    app.query_params["asset"] = f"query://{uid}"
+    app.run()
+    assert not app.exception
+    assert app.title[0].value.endswith("Daily sales")
+    assert any("Reads with NOLOCK" in m.value for m in app.markdown)
+    [b for b in app.button if b.label == "Fine here"][0].click().run()
+    assert not app.exception
+    from pdcat.sqlchecks import ok_marks
+    assert ok_marks(catalogue, uid)
+    app.query_params["asset"] = STORE
+    app.run()
+    assert not app.exception
+    assert any("SQL using this table" in e.label for e in app.expander)

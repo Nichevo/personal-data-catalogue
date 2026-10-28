@@ -125,6 +125,11 @@ def detail(cat: Catalogue, key: str) -> None:
         compare_section(cat, key)
 
     lineage_section(cat, key, asset)
+    from .sql_pages import queries_in_box, using_table_box
+    if asset["kind"] in ("table", "view", "procedure"):
+        using_table_box(cat, key)
+    if asset["kind"] in ("script", "notebook", "sql_script", "workbook", "report", "access_db"):
+        queries_in_box(cat, key)
 
     from .extras import item_extras_bottom
     item_extras_bottom(cat, key, asset)
@@ -166,7 +171,7 @@ def detail(cat: Catalogue, key: str) -> None:
         hidden = ("definition", "imports", "functions", "classes", "function_info", "import_map", "environment",
                   "import_details", "queries", "measures", "model", "files", "pages", "tables", "relationships",
                   "sheets", "connections", "pivots", "vba_sql", "expression", "used_on", "unknown_files", "runs",
-                  "write_patterns", "full_path", "git", "linked")
+                  "write_patterns", "full_path", "git", "linked", "sql_strings")
         rest = {k: v for k, v in attrs.items() if k not in hidden and v not in (None, "", [])}
         st.json(rest, expanded=False)
         st.caption(f"First seen {asset['first_seen'][:10]} · last seen {asset['last_seen'][:10]}")
