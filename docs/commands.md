@@ -106,7 +106,7 @@ It is read-only and uses `NOLOCK`, so it never blocks anyone.
 pdcat profile dbo.SalesDaily dbo.Store       # these tables
 pdcat profile --used                         # every table your code or pasted SQL uses
 pdcat profile --used --source warehouse      # ...on one server only
-pdcat profile --queue                        # the tables approved on the app's SQL scanning page
+pdcat profile --queue                        # the tables approved under Add › Sources › SQL scanning
 pdcat profile --used --plan                  # print the queries, send nothing
 ```
 
@@ -265,9 +265,11 @@ pdcat ai-export --out C:\temp\copilot-pack --docx --hide-locations
 | `--docx` | Word files instead of Markdown. |
 | `--hide-locations` | Leave out server names and file locations. |
 | `--values` | Include value ranges and common values. Sensitive columns are always left out. |
+| `--documents` | Include the text of reference documents kept with business projects. |
 
 Put the folder on OneDrive or SharePoint, add it to a Copilot agent as knowledge, and
-paste in `agent-instructions`. The app's **Copilot pack** page does the same with a
+paste in `agent-instructions`. Since 2.1 the pack also has naming-rules, sap, sql-queries
+and test-questions files. The app's **Copilot pack** page does the same with a
 download button.
 
 ### `pdcat export`
@@ -312,10 +314,19 @@ python load_openmetadata.py https://your-openmetadata:8585
 
 ## Scan on a schedule
 
-Windows Task Scheduler can refresh the catalogue for you, say every Monday at 7am. The
-repo has a ready-made batch file, `scripts\windows\pdcat-weekly-scan.bat`, that runs
-`pdcat scan` and then `pdcat profile --queue` (the tables you approved on the app's
-**SQL scanning** page), and writes everything to `%USERPROFILE%\.pdcat\scan.log`.
+Windows Task Scheduler can refresh the catalogue for you, say every Monday at 7am.
+
+**The quick way (2.1):** on the app's **Settings** page, under **Scan on a schedule**,
+pick a day and time and click **Schedule the weekly scan**. The app writes a batch file
+next to your catalogue that uses the same Python as the app (no conda paths to fill in),
+creates a task called `pdcat weekly scan`, and from then on shows when it last ran,
+whether it worked, the end of `scan.log`, and a button to remove it. The task is the same
+one the steps below make by hand (it keeps the name `pdcat weekly scan`), so use one way
+or the other.
+
+**By hand:** the repo has a ready-made batch file, `scripts\windows\pdcat-weekly-scan.bat`, that runs
+`pdcat scan` and then `pdcat profile --queue` (the tables you approved under
+**Add › Sources › SQL scanning**), and writes everything to `%USERPROFILE%\.pdcat\scan.log`.
 
 **1. Copy the batch file and check two lines.** Copy it to `%USERPROFILE%\.pdcat\`
 and open it in Notepad:

@@ -65,7 +65,8 @@ draft worked out from the scan):
 
 ![Coverage page](docs/screenshots/coverage.png)
 
-**Issue hotspots**: which schemas, folders and tables have the most problems:
+**Issue hotspots** (Review › Health): which schemas, folders and tables have the most
+problems:
 
 ![Issue hotspots page](docs/screenshots/hotspots.png)
 
@@ -96,11 +97,12 @@ environment.yml or pyproject.toml, compared with what the code really imports:
 
 ### Add
 
-**Data folders**: point it at any folder of CSV, Parquet, Power BI and Excel files:
+**Data folders** (Add › Sources): point it at any folder of CSV, Parquet, Power BI and
+Excel files:
 
 ![Data folders page](docs/screenshots/folders.png)
 
-**SQL scanning**: tables are only profiled when you ask. Approve them here; queries go
+**SQL scanning** (Add › Sources): tables are only profiled when you ask. Approve them here; queries go
 one at a time, and every query is logged:
 
 ![SQL scanning page](docs/screenshots/sql-scanning.png)
@@ -151,7 +153,31 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
-## Planned for version 2.1
+## New in version 2.1
+
+Version 2.1 adds the 46 items below. Some things to know first:
+
+- **The menu is tidier.** The app now opens on a **Home** page, the search box is always
+  at the top of the sidebar, and pages that belonged together are now one page with a
+  row of views: **To review** (with Data issues, Needs notes, Unmatched tables, Unlinked
+  data and Duplicates), **Health** (Coverage and Issue hotspots), **What's new** (Recent
+  notes and Recent changes), **Bulk edit** (Describe columns and Edit many items) and
+  **Sources** (Add SQL, Data folders and SQL scanning). Company-wide keys moved to
+  Knowledge, Packages to Map, and Sensitive data to Settings. The **📖 Menu guide** link
+  in the sidebar explains every page.
+- **Rescan after upgrading** (`pdcat scan`). Most of 2.1 is worked out from what a scan
+  reads, so the SQL query library, report wireframes, report labels, renames, git
+  history and the rest fill in on the first scan. Report page wireframes in particular
+  need the report to be read again.
+- **Switches.** Each step that runs after a scan can be turned off on the Settings page.
+  Nothing already found is deleted when you turn one off.
+- **Optional packages.** `sqlglot` (better SQL reading), `pypdf` (text of PDF
+  documents) and `pywin32` (Access databases on Windows) are used when installed, and
+  the app works without them: SQL is read with a simpler reader, PDFs are kept without
+  their text, and Access files are listed but not opened. Word documents need nothing
+  extra. Settings shows which are installed.
+- **Nothing is sent anywhere.** The Copilot round trip and the questions for colleagues
+  are files you carry yourself.
 
 - **"Called by" on script pages**: every other script that uses a script, in one list.
   That means scripts that import it (and which of its functions they call), and scripts
@@ -159,9 +185,9 @@ one at a time, and every query is logged:
   `!python`. Run links also show on the code map.
 - **Link files found in another folder**: when a script names `sales.csv` but the only
   `sales.csv` catalogued is in a different folder, link it anyway and flag it as a
-  possible wrong folder (today the folders must match). When the same file name turns up
-  in several folders, say so on the link and on the script and file pages (today the
-  newest is picked without a word).
+  possible wrong folder (before 2.1 the folders had to match). When the same file name
+  turns up in several folders, it says so on the link and on the script and file pages
+  (before, the newest was picked without a word).
 - **Folder roles**: when you add a folder, the app suggests what it is. A *master
   folder* whose subfolders each look like their own project (their own `.git`, README,
   `environment.yml` or requirements, `src/`) becomes one project per subfolder. A
@@ -180,8 +206,8 @@ one at a time, and every query is logged:
   search, the review list, coverage, diagrams and exports; scans keep it hidden, and a
   list lets you bring it back. Tables SQL Server tools create for themselves (marked
   `microsoft_database_tools_support`, like `sysdiagrams`) are skipped by default.
-- **Clearer feature dictionary**: rename it "ML model features" and say up front that it
-  lists the inputs to your machine learning models. Each row names the models that use the
+- **ML model features** (was the feature dictionary): says up front that it lists the
+  inputs to your machine learning models. Each row names the models that use the
   feature, the script that builds it and the table and column it comes from, each one a
   link, instead of a bare count of models.
 - **Copilot pack test questions**: the Copilot pack page lists ten or so questions built
@@ -243,7 +269,10 @@ one at a time, and every query is logged:
   that reads both is clear about why.
 - **Copilot round trip**: export a "gaps pack" of items with no description, with their
   code and columns, for your Copilot agent to draft descriptions; import its answers as
-  suggestions you accept or edit. No AI service is connected to the catalogue.
+  suggestions you accept or edit. No AI service is connected to the catalogue. It's on
+  the Copilot pack page under Round trip: the pack asks for a CSV of `id,column,answer`,
+  which you paste or upload back. Naming rules the app couldn't read go in too, and
+  Copilot's rewrite comes back as rules to confirm.
 - **Descriptions from comments**: draft descriptions from SQL comments, docstrings,
   notebook markdown and comments next to column renames, as suggestions.
 - **Column renames in lineage**: `rename({"Units": "qty"})` or `SELECT Units AS qty`
@@ -262,9 +291,15 @@ one at a time, and every query is logged:
   as old, which hides them from the code map and diagrams (a switch shows them again)
   without deleting their notes.
 - **Rules become checks**: a rule you write ("Units is never negative", "loaded daily
-  by 7am") becomes a check run with each profile; failures go to review.
+  by 7am") becomes a check run with each profile; failures go to review. Write them in
+  the **Rule checks** box on a table or file page. It reads never negative / always
+  positive, never blank, unique, between A and B, at least / at most N, one of A, B, C,
+  at least N rows, and loaded daily / weekly / monthly / every N days (optionally "by
+  7am", checked against the newest date in the data or a file's modified time). Rules
+  already sitting in notes and column descriptions are offered as checks to add.
 - **Questions for colleagues**: a share file holding only your open questions, which a
-  colleague answers in their catalogue and merges back into yours.
+  colleague answers in their catalogue and merges back into yours (Share › Share with
+  colleagues). Their reply is an answers file holding only the questions you asked.
 - **Five quick questions**: a short daily list of the highest-value gaps, each answerable
   in under a minute, mostly by confirming a suggestion.
 - **Learn from your queries**: joins and filters that come up again and again in pasted
@@ -436,6 +471,9 @@ Install the new version the same way as before (`pip install -e .` or
 untouched copy of the old file next to it (the path is shown in the app and on the
 Settings page). Nothing is removed; every note is kept. Rescan to fill in the new
 details (`pdcat scan`).
+
+To upgrade from 2.0 to 2.1, install the same way and rescan; see
+[New in version 2.1](#new-in-version-21).
 
 Version 2 needs Streamlit 1.62 or later; both install commands above update it. With an
 older Streamlit the app can stop with "Exception in ASGI application … Expected
