@@ -112,3 +112,50 @@ def history_box(cat: Catalogue, key: str) -> None:
             if not e["undone"] and c2.button("Undo", key=f"undo-{e['id']}"):
                 st.toast(edits.undo(cat, e["id"]))
                 st.rerun()
+
+
+def called_by_box(cat: Catalogue, key: str) -> None:
+    """Every other script that uses this one: imports it (and which of its functions) or runs it."""
+    from pdcat.codemap import called_by
+    rows = called_by(cat, key)
+    if not rows:
+        return
+    st.subheader(f"Called by ({len(rows)})")
+    from .common import asset_button
+    for i, r in enumerate(rows):
+        c1, c2 = st.columns([3, 4])
+        with c1:
+            asset_button(r["src_key"], r["src_name"], r["src_kind"], f"calledby-{i}")
+        if r["relation"] == "imports":
+            c2.caption(f"imports it · uses {r['evidence']}" if r["evidence"] else "imports it")
+        else:
+            c2.caption(f"runs it · {r['how'] or ''} · {r['evidence'] or ''}")
+
+
+def unknown_files_box(cat: Catalogue, key: str) -> None:
+    from pdcat.unknownfiles import answer, unknown_files
+    rows = unknown_files(cat, key)
+    if not rows:
+        return
+    files = [dict(r) for r in cat.conn.execute(
+        "SELECT key, name, source, kind FROM assets WHERE kind IN ('data_file', 'file_series', 'workbook', 'report', "
+        "'model', 'access_db') AND status = 'active' ORDER BY source, name")]
+    labels = {f["key"]: f"{f['source']} / {f['name']}" for f in files}
+    st.subheader(f"❔ Unknown files ({len(rows)})")
+    st.caption("Files this code reads or writes whose path the scan couldn't work out. Say which file each one "
+               "is and it's linked like any other, kept through rescans.")
+    for u in rows:
+        with st.container(border=True):
+            where = f"line {u['line']}" + (f", cell {u['cell']}" if u.get("cell") else "") + \
+                (f", in {u['function']}()" if u.get("function") else "")
+            st.markdown(f"**{u['relation']}** · {where}")
+            st.code(u["code"], language="python")
+            c1, c2, c3 = st.columns([4, 1, 1.4])
+            pick = c1.selectbox("Which file is it?", list(labels), format_func=labels.get, index=None,
+                                key=f"uf-{u['id']}", placeholder="Pick the file…", label_visibility="collapsed")
+            if c2.button("Link", key=f"ufl-{u['id']}", disabled=not pick, type="primary"):
+                answer(cat, u, pick)
+                st.rerun()
+            if c3.button("Not a data file", key=f"ufx-{u['id']}"):
+                answer(cat, u, None)
+                st.rerun()

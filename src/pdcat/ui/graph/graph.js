@@ -12,7 +12,7 @@
     package: ["#eeeeee", "#8a8a8a"], report: ["#ffe7d6", "#e07b39"], workbook: ["#ddf1e6", "#1e7a46"],
     function: ["#eef3ff", "#5b7fd6"], other: ["#f1f1f1", "#999999"],
   };
-  const EDGE = { imports: "#3b6fd8", reads: "#7a8699", writes: "#d64545", calls: "#5b7fd6", declared: "#2f9e57",
+  const EDGE = { imports: "#3b6fd8", runs: "#8a4ac9", reads: "#7a8699", writes: "#d64545", calls: "#5b7fd6", declared: "#2f9e57",
                  confirmed: "#2f9e57", suggested: "#b0b6c3", uses: "#7a8699" };
 
   let cy = null, api = null, args = {}, lastData = null, clickTimer = null, sent = 0;

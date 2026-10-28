@@ -25,7 +25,7 @@ KIND_LABELS = {"data_file": "data file", "sql_snippet": "pasted SQL", "sql_scrip
                "report": "Power BI report", "model": "ML model", "access_db": "Access database",
                "query": "SQL query", "environment": "conda environment"}
 NOTE_ICONS = {"note": "📝", "issue": "⚠️", "example": "🔢"}
-RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls", "imports": "Imports"}
+RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls", "imports": "Imports", "runs": "Runs"}
 LIFECYCLE_BADGES = {"experimental": "🧪 experimental", "deprecated": "⛔ deprecated", "retired": "🪦 retired"}
 TRUST_BADGES = {"trusted": "✅ trusted", "caution": "⚠️ use with caution", "do not use": "🚫 don't use"}
 

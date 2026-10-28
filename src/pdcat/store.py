@@ -544,7 +544,7 @@ SCHEMA_VERSION = 3  # 3 = version 2.1
 ADDED_COLUMNS = {
     "notes": {"uid": "TEXT", "author": "TEXT", "confirmed_at": "TEXT", "archived": "INTEGER NOT NULL DEFAULT 0",
               "import_batch": "INTEGER"},
-    "links": {"how": "TEXT"},
+    "links": {"how": "TEXT", "match_note": "TEXT"},
     "profiles": {"histogram": "TEXT", "percentiles": "TEXT", "hints": "TEXT"},
     "folders": {"canonical": "TEXT", "roles": "TEXT"},
     "item_info": {"relevance": "TEXT", "sap_name": "TEXT"},
@@ -814,28 +814,32 @@ class Catalogue:
                 cands = hinted or cands
             if len(cands) > 1 and len(parts) == 1:
                 cands = [c for c in cands if c["schema"] == "dbo"] or cands
-            updates.append((cands[0]["key"] if len(cands) == 1 else None, link["rowid"]))
+            updates.append((cands[0]["key"] if len(cands) == 1 else None,
+                            f"{len(cands)} tables have this name" if len(cands) > 1 else None, link["rowid"]))
         updates += self._resolve_file_refs()
         with self.conn:
-            self.conn.executemany("UPDATE links SET dst_key = ? WHERE rowid = ?", updates)
+            self.conn.executemany("UPDATE links SET dst_key = ?, match_note = ? WHERE rowid = ?", updates)
 
-    def _resolve_file_refs(self) -> list[tuple[str | None, int]]:
+    def _resolve_file_refs(self) -> list[tuple[str | None, str | None, int]]:
         """Match "file:<path>" references from code to catalogued CSV/Parquet files.
 
         Relative paths match files in the same project first, then in any folder
         whose path ends the same way. f-string parts ("{}") act as wildcards, and
-        when several files match (e.g. dated extracts) the newest one wins.
+        when several files match (e.g. dated extracts) the newest one wins. When
+        nothing matches that way but a file with the same name is catalogued in
+        another folder, it is linked anyway and flagged as a possible wrong folder.
         """
         files = []
         for row in self.conn.execute(
-                "SELECT key, source, attrs FROM assets WHERE kind IN ('data_file', 'series_file', 'workbook') "
-                "AND status = 'active'"):
+                "SELECT key, source, attrs FROM assets WHERE kind IN ('data_file', 'series_file', 'workbook', "
+                "'report', 'access_db') AND status = 'active'"):
             a = json.loads(row["attrs"])
             # A file in a dated series links to the series, not to one month's copy.
             files.append({"key": a.get("in_series") or row["key"], "source": row["source"],
                           "path": _norm_path(a.get("path", "")), "mtime": a.get("mtime") or 0})
         if not files:
-            return [(None, r["rowid"]) for r in self.conn.execute("SELECT rowid FROM links WHERE dst_ref LIKE 'file:%'")]
+            return [(None, None, r["rowid"]) for r in self.conn.execute(
+                "SELECT rowid FROM links WHERE dst_ref LIKE 'file:%'")]
 
         # An exact reference can only match files with the same file name, so look those up directly
         # rather than comparing every reference with every file (slow with thousands of each).
@@ -859,12 +863,28 @@ class Catalogue:
                     target = "/".join(f["path"].split("/")[-depth:])
                 return pattern.fullmatch(target) is not None if pattern else target == ref
 
-            candidates = files if pattern else by_name.get(ref.rsplit("/", 1)[-1], [])
+            leaf = ref.rsplit("/", 1)[-1]
+            candidates = files if pattern else by_name.get(leaf, [])
             matches = [f for f in candidates if hit(f)]
+            note = None
+            if not matches:
+                # Same file name in some other folder: link it, but say so.
+                if pattern:
+                    leaf_rx = re.compile(fnmatch.translate(leaf.replace("{}", "*")))
+                    matches = [f for f in files if leaf_rx.fullmatch(f["path"].rsplit("/", 1)[-1])]
+                else:
+                    matches = list(by_name.get(leaf, []))
+                if matches:
+                    best = max(matches, key=lambda f: (f["source"] == link["source"], f["mtime"]))
+                    note = f"found in another folder: {best['path']}"
             same_project = [f for f in matches if f["source"] == link["source"]]
             matches = same_project or matches
             best = max(matches, key=lambda f: f["mtime"])["key"] if matches else None
-            updates.append((best, link["rowid"]))
+            distinct = {f["key"] for f in matches}
+            if len(distinct) > 1:
+                more = f"{len(distinct)} files match; linked the newest"
+                note = f"{note}; {more}" if note else more
+            updates.append((best, note, link["rowid"]))
         return updates
 
     # ---- search ---------------------------------------------------------

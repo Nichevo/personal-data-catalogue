@@ -122,6 +122,10 @@ def detail(cat: Catalogue, key: str) -> None:
     from .extras import item_extras_bottom
     item_extras_bottom(cat, key, asset)
 
+    if asset["kind"] in ("script", "notebook"):
+        from .item_boxes import called_by_box, unknown_files_box
+        called_by_box(cat, key)
+        unknown_files_box(cat, key)
     if asset["kind"] in ("script", "notebook") and attrs.get("function_info"):
         from .code import functions_section
         functions_section(cat, key, asset)
@@ -147,7 +151,8 @@ def detail(cat: Catalogue, key: str) -> None:
                 st.markdown(f"**{label}:** " + ", ".join(f"`{x}`" for x in attrs[field]))
         hidden = ("definition", "imports", "functions", "classes", "function_info", "import_map", "environment",
                   "import_details", "queries", "measures", "model", "files", "pages", "tables", "relationships",
-                  "sheets", "connections", "pivots", "vba_sql", "expression", "used_on")
+                  "sheets", "connections", "pivots", "vba_sql", "expression", "used_on", "unknown_files", "runs",
+                  "write_patterns", "full_path", "git")
         rest = {k: v for k, v in attrs.items() if k not in hidden and v not in (None, "", [])}
         st.json(rest, expanded=False)
         st.caption(f"First seen {asset['first_seen'][:10]} · last seen {asset['last_seen'][:10]}")
@@ -446,9 +451,11 @@ def link_menu(cat: Catalogue, l: dict, src: str, relation: str, dst: str, widget
 
 
 def _how(l) -> str:
-    how = l["how"] if "how" in l.keys() else None
+    keys = l.keys()
+    how = l["how"] if "how" in keys else None
     ev = l["evidence"] or ""
-    return " · ".join(b for b in (how, ev) if b)
+    note = l["match_note"] if "match_note" in keys and l["match_note"] else None
+    return " · ".join(b for b in (how, ev, f"⚠️ {note}" if note else None) if b)
 
 
 def notes_section(cat: Catalogue, key: str, column_names: list[str]) -> None:
