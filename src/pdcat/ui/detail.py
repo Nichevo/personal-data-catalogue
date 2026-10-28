@@ -137,6 +137,8 @@ def detail(cat: Catalogue, key: str) -> None:
 
     if asset["kind"] in TABLE_LIKE:
         profile_section(cat, key, asset)
+        from .item_boxes import rule_checks_box
+        rule_checks_box(cat, key)
         compare_section(cat, key)
 
     lineage_section(cat, key, asset)

@@ -118,3 +118,17 @@ def test_knowledge_packs_and_sap_page(app, catalogue):
     goto(app, "SAP links")
     assert not app.exception
     assert app.title[0].value == "SAP links"
+
+
+def test_item_page_rule_checks(app, catalogue):
+    from pdcat import rulechecks
+    app.query_params["asset"] = SALES
+    app.run()
+    assert not app.exception
+    app.text_input(key=f"rc-text-{SALES}").input("Units is never negative")
+    [b for b in app.button if b.label == "Add the check"][0].click().run()
+    assert not app.exception
+    [c] = rulechecks.checks_for(catalogue, SALES)
+    assert c["rule"]["check"] == "min"
+    [b for b in app.button if b.label == "Remove"][0].click().run()
+    assert not rulechecks.checks_for(catalogue, SALES)

@@ -182,3 +182,46 @@ def backup_link_box(cat: Catalogue, key: str, asset: dict) -> None:
             uid = pair_with(cat, key, pick) if main == "this one" else pair_with(cat, pick, key)
             go(f"group://{uid}")
             st.rerun()
+
+
+def rule_checks_box(cat: Catalogue, key: str) -> None:
+    """Rules written in plain words, checked against the latest profile."""
+    from pdcat import rulechecks
+    results = rulechecks.results_for(cat, key)
+    icons = {"pass": "✅", "fail": "❌", "unknown": "❔"}
+    failed = sum(r["result"]["state"] == "fail" for r in results)
+    label = f"✅ Rule checks ({len(results)})" + (f" · {failed} failing" if failed else "")
+    with st.expander(label, expanded=bool(failed)):
+        st.caption("Write a rule in plain words and it's checked each time this is profiled, for example "
+                   "“Units is never negative”, “OrderId is unique”, “Status is one of Open, Closed”, "
+                   "“loaded daily by 7am”. Failures go on the To review list.")
+        for r in results:
+            c1, c2, c3 = st.columns([0.4, 7, 1])
+            c1.markdown(icons[r["result"]["state"]])
+            c2.markdown(f"**{r['text']}**  \n{r['result']['detail']}")
+            c2.caption(f"Checks: {rulechecks.describe(r['rule'])}"
+                       + (f" · from {r['source']}" if r.get("source") else ""))
+            if c3.button("Remove", key=f"rc-del-{r['uid']}", type="tertiary"):
+                rulechecks.delete_check(cat, r["uid"])
+                st.rerun()
+        with st.form(f"rc-add-{key}", clear_on_submit=True):
+            text = st.text_input("New rule", key=f"rc-text-{key}", placeholder="Units is never negative")
+            if st.form_submit_button("Add the check") and text.strip():
+                columns = rulechecks._columns(cat, key)
+                rule = rulechecks.parse_rule(text, columns)
+                rulechecks.add_check(cat, key, text)
+                if rule["check"] == "text":
+                    st.warning("Saved, but it couldn't be read as a check. Try rewording it.")
+                st.rerun()
+        waiting = suggestions.open_suggestions(cat, "check", subject=key)
+        if waiting:
+            st.caption("Rules found in the notes:")
+            for s in waiting:
+                c1, c2, c3 = st.columns([6, 1, 1])
+                c1.markdown(f"“{s['payload']['text']}”  \n{s['detail']}")
+                if c2.button("Add", key=f"rc-acc-{s['id']}"):
+                    suggestions.accept(cat, s["id"])
+                    st.rerun()
+                if c3.button("No", key=f"rc-rej-{s['id']}", type="tertiary"):
+                    suggestions.reject(cat, s["id"])
+                    st.rerun()
