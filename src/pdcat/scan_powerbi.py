@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from . import mquery
+from .scanprogress import Reads
 
 READER_VERSION = 3  # 2: passwords removed from stored Power Query text; 3: visual positions for wireframes
 REPORT_SUFFIXES = (".pbix", ".pbit")
@@ -496,7 +497,8 @@ def measure_key(report_key: str, table: str, name: str) -> str:
     return f"{report_key}/measures/{table}.{name}".lower()
 
 
-def ingest_report(cat, path: Path, key: str, name: str, source: str, parent: str) -> str | None:
+def ingest_report(cat, path: Path, key: str, name: str, source: str, parent: str,
+                  reads: Reads | None = None) -> str | None:
     """Catalogue one report and its measures, with links to what its queries load. Returns an error, if any."""
     from datetime import datetime, timezone
 
@@ -508,13 +510,13 @@ def ingest_report(cat, path: Path, key: str, name: str, source: str, parent: str
         info = previous["attrs"]
     else:
         try:
-            info = read_report(path)
+            info = (reads or Reads()).get(read_report, path)
         except Exception as e:  # a damaged file must not stop the scan
             info = {"format": path.suffix.lower().lstrip("."), "read_error": f"{type(e).__name__}: {e}", "pages": [],
                     "tables": [], "measures": [], "relationships": [], "queries": [], "read_with": [], "not_read": []}
         info.update({"path": str(path), "size_bytes": st.st_size, "mtime": st.st_mtime, "reader": READER_VERSION,
                      "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds"),
-                     "checksum": fingerprint(path) if path.is_file() else None})
+                     "checksum": (reads or Reads()).get(fingerprint, path) if path.is_file() else None})
     visuals = sum(len(p["visuals"]) for p in info["pages"])
     desc = f"Power BI report: {len(info['pages'])} pages, {visuals} visuals, {len(info['measures'])} measures"
     if info.get("live"):

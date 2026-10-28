@@ -50,7 +50,51 @@ def test_folder_scan_reports_each_file_and_honours_ignored_folders(tmp_path):
     assert any("Reading data file 1 of 3: sales.csv" in t for t in texts)
     assert any("Reading Power BI report 2 of 3: Sales.pbix" in t for t in texts)
     assert any("Reading Excel workbook 3 of 3: Sales.xlsm" in t for t in texts)
-    assert heard[-1] == ("Saving and updating links and search …", 3, 3)
+    assert any("Saving data file 1 of 3: sales.csv" in t for t in texts)
+    assert heard[-1] == ("Updating links and search …", 3, 3)
+
+
+def test_files_are_read_before_the_catalogue_is_locked(tmp_path):
+    """While files are read another window can still write to the catalogue; only the short save locks it."""
+    import sqlite3
+    folder = tmp_path / "data"
+    _csv(folder / "sales.csv")
+    write_xlsx(folder / "Sales.xlsm")
+    cat = Catalogue(tmp_path / "c.db")
+    writes = []
+
+    def report(text, done=None, total=None):
+        if text.startswith("Reading"):
+            other = sqlite3.connect(tmp_path / "c.db", timeout=0.1)
+            try:
+                with other:
+                    other.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('probe', '1')")
+                writes.append(text)
+            finally:
+                other.close()
+    scan_folder(cat, "data", folder, report=report)
+    assert len(writes) == 2
+    assert cat.get_asset("files://data/sales.csv")["attrs"]["row_count"] == 2
+
+
+def test_opening_the_catalogue_does_not_need_the_write_lock(tmp_path):
+    cat = Catalogue(tmp_path / "c.db")
+    cat.conn.execute("INSERT INTO settings (key, value) VALUES ('busy', '1')")  # a scan's open transaction
+    import pdcat.store as store
+    old, store.LOCK_WAIT = store.LOCK_WAIT, 0.1
+    try:
+        other = Catalogue(tmp_path / "c.db")
+        assert other.revision() == 0
+        other.close()
+    finally:
+        store.LOCK_WAIT = old
+
+
+def test_syntax_warnings_in_scanned_code_are_not_printed(recwarn):
+    from pdcat.scan_python import scan_python_source
+    found = scan_python_source('import re\nrx = re.compile("\\d+")\n')
+    assert "parse_error" not in found.attrs
+    assert not [w for w in recwarn if issubclass(w.category, SyntaxWarning)]
 
 
 def test_after_scan_reports_every_step(tmp_path):

@@ -13,14 +13,15 @@ import json
 from pathlib import Path
 
 from .profiling import DATA_SUFFIXES, DEFAULT_MAX_ROWS, profile_file
-from .scanprogress import Report, Steps, find_files, pick, quiet
+from .scanprogress import Reads, Report, Steps, find_files, pick, quiet
 from .store import Catalogue
 
 
 def ingest_data_file(cat: Catalogue, path: Path, key: str, name: str, source: str, parent: str,
-                     max_rows: int = DEFAULT_MAX_ROWS, kind: str = "data_file") -> str | None:
+                     max_rows: int = DEFAULT_MAX_ROWS, kind: str = "data_file", reads: Reads | None = None) -> str | None:
     """Catalogue one data file. Unchanged files (same size and modified time) reuse their last profile.
     Returns an error message if the file could not be read."""
+    reads = reads or Reads()
     st = path.stat()
     previous = cat.get_asset(key)
     if previous and previous["attrs"].get("size_bytes") == st.st_size \
@@ -34,13 +35,13 @@ def ingest_data_file(cat: Catalogue, path: Path, key: str, name: str, source: st
         return previous["attrs"].get("read_error")
 
     try:
-        attrs, profiles, method = profile_file(path, max_rows)
+        attrs, profiles, method = reads.get(profile_file, path, max_rows)
     except Exception as e:  # a malformed file must not stop the scan
         attrs = {"path": str(path), "size_bytes": st.st_size, "read_error": f"{type(e).__name__}: {e}"}
         profiles, method = [], ""
     attrs["mtime"] = st.st_mtime
     attrs["format"] = path.suffix.lower().lstrip(".")
-    attrs["checksum"] = _fingerprint(path)
+    attrs["checksum"] = reads.get(_fingerprint, path)
     if kind == "series_file":
         attrs["in_series"] = parent
         attrs["header"] = [p["name"] for p in profiles]
@@ -84,14 +85,58 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
     total = len(data) + len(pick(found, office_suffixes))
     report(f"Found {total:,} file(s) to read" + (f" (skipped {skipped:,} tool, environment or ignored folders)"
                                                  if skipped else ""), 0, total)
-    with cat.scan(name):
+    reads = read_ahead(cat, root, data, found, folder_key, name, max_rows, Steps(report, total))
+    with cat.scan(name):  # from here on only the catalogue is written, which is quick
         cat.upsert_asset(folder_key, "folder", name, name, attrs={"path": str(root), "recursive": recursive})
-        step = Steps(report, total)
-        counts = ingest_files(cat, root, data, folder_key, name, max_rows, step)
-        office = ingest_office(cat, root, folder_key, name, found, step)
+        step = Steps(report, total, verb="Saving")
+        counts = ingest_files(cat, root, data, folder_key, name, max_rows, step, reads)
+        office = ingest_office(cat, root, folder_key, name, found, step, reads)
         counts = {**office, **counts, "errors": counts["errors"] + office["errors"]}
-        report("Saving and updating links and search …", total, total)
+        report("Updating links and search …", total, total)
     return {k: counts[k] for k in ("files", "series", "reports", "workbooks", "access", "errors")}
+
+
+def read_ahead(cat: Catalogue, root: Path, data: list[Path], found: dict[str, list[Path]], parent_key: str,
+               source: str, max_rows: int, step: Steps) -> Reads:
+    """Read every new or changed file before the scan's transaction opens (see Reads). Unchanged files are
+    skipped here and reuse what the catalogue already has."""
+    from .duplicates import fingerprint
+    from .profiling import quick_info
+    from .scan_excel import READER_VERSION as WORKBOOK_READER
+    from .scan_excel import WORKBOOK_SUFFIXES, read_workbook
+    from .scan_powerbi import READER_VERSION as REPORT_READER
+    from .scan_powerbi import REPORT_SUFFIXES, read_report
+    reads = Reads()
+
+    def changed(path: Path, reader: int | None = None) -> bool:
+        prev = cat.get_asset(f"{parent_key}/{path.relative_to(root).as_posix()}")
+        try:
+            st = path.stat()
+        except OSError:
+            return False
+        return not prev or prev["attrs"].get("size_bytes") != st.st_size or prev["attrs"].get("mtime") != st.st_mtime \
+            or (reader is not None and prev["attrs"].get("reader") != reader)
+
+    groups, alone = plan_series(cat, root, data, parent_key, source)
+    full = {root / rel for rel in alone} | {root / g.sorted()[-1].rel for g in groups}
+    for path in data:
+        with step("data file", path.relative_to(root).as_posix()):
+            if changed(path):
+                if path in full:
+                    reads.load(profile_file, path, max_rows)
+                else:
+                    reads.load(quick_info, path)
+                reads.load(_fingerprint, path)
+    for suffixes, reader, read in (((*REPORT_SUFFIXES, ".pbip"), REPORT_READER, read_report),
+                                   (WORKBOOK_SUFFIXES, WORKBOOK_READER, read_workbook)):
+        what = "Power BI report" if read is read_report else "Excel workbook"
+        for path in pick(found, suffixes):
+            with step(what, path.relative_to(root).as_posix()):
+                if changed(path, reader):
+                    reads.load(read, path)
+                    if path.is_file():
+                        reads.load(fingerprint, path)
+    return reads
 
 
 def under(rel: str, folders: set[str]) -> bool:
@@ -101,7 +146,7 @@ def under(rel: str, folders: set[str]) -> bool:
 
 
 def ingest_office(cat: Catalogue, root: Path, parent_key: str, source: str, found: dict[str, list[Path]],
-                  step: Steps | None = None) -> dict[str, int]:
+                  step: Steps | None = None, reads: Reads | None = None) -> dict[str, int]:
     """Power BI reports, Excel workbooks and Access databases among the files found under a folder
     (Access ones only when that feature is on: scan_folder leaves them out otherwise)."""
     from .scan_access import SUFFIXES as ACCESS_SUFFIXES
@@ -112,12 +157,13 @@ def ingest_office(cat: Catalogue, root: Path, parent_key: str, source: str, foun
     for path in pick(found, (*REPORT_SUFFIXES, ".pbip")):
         rel = path.relative_to(root).as_posix()
         with step("Power BI report", rel):
-            counts["errors"] += bool(ingest_report(cat, path, f"{parent_key}/{rel}", rel, source, parent_key))
+            counts["errors"] += bool(ingest_report(cat, path, f"{parent_key}/{rel}", rel, source, parent_key, reads))
         counts["reports"] += 1
     for path in pick(found, WORKBOOK_SUFFIXES):
         rel = path.relative_to(root).as_posix()
         with step("Excel workbook", rel):
-            counts["errors"] += bool(ingest_workbook(cat, path, f"{parent_key}/{rel}", rel, source, parent_key))
+            counts["errors"] += bool(ingest_workbook(cat, path, f"{parent_key}/{rel}", rel, source, parent_key,
+                                                         reads))
         counts["workbooks"] += 1
     for path in pick(found, ACCESS_SUFFIXES):
         from .scan_access import ingest_access
@@ -132,38 +178,48 @@ def grouping_on(cat: Catalogue, source: str) -> bool:
     return bool(cat.setting("series_grouping", True)) and source not in cat.setting("series_off_sources", [])
 
 
-def ingest_files(cat: Catalogue, root: Path, paths: list[Path], parent_key: str, source: str,
-                 max_rows: int = DEFAULT_MAX_ROWS, step: Steps | None = None) -> dict[str, int]:
-    """Catalogue data files under one folder or project, grouping dated files into series."""
+def plan_series(cat: Catalogue, root: Path, paths: list[Path], parent_key: str, source: str) -> tuple[list, list[str]]:
+    """(dated series, relative paths of files on their own), leaving out series you split apart."""
     from . import series as S
-    step = step or Steps()
-    counts = {"files": 0, "series": 0, "errors": 0}
-    by_rel = {p.relative_to(root).as_posix(): p for p in paths}
-    groups, alone = (S.group(list(by_rel)) if grouping_on(cat, source) else ([], list(by_rel)))
+    rels = [p.relative_to(root).as_posix() for p in paths]
+    groups, alone = (S.group(rels) if grouping_on(cat, source) else ([], rels))
     split = set(cat.setting("series_split", []))
     for g in list(groups):
         if S.series_key(parent_key, g.template) in split:
             groups.remove(g)
             alone += [m.rel for m in g.members]
+    return groups, alone
+
+
+def ingest_files(cat: Catalogue, root: Path, paths: list[Path], parent_key: str, source: str,
+                 max_rows: int = DEFAULT_MAX_ROWS, step: Steps | None = None, reads: Reads | None = None
+                 ) -> dict[str, int]:
+    """Catalogue data files under one folder or project, grouping dated files into series."""
+    step = step or Steps()
+    counts = {"files": 0, "series": 0, "errors": 0}
+    by_rel = {p.relative_to(root).as_posix(): p for p in paths}
+    groups, alone = plan_series(cat, root, paths, parent_key, source)
     for rel in sorted(alone):
         with step("data file", rel):
-            error = ingest_data_file(cat, by_rel[rel], f"{parent_key}/{rel}", rel, source, parent_key, max_rows)
+            error = ingest_data_file(cat, by_rel[rel], f"{parent_key}/{rel}", rel, source, parent_key, max_rows,
+                                     reads=reads)
         counts["files"] += 1
         counts["errors"] += bool(error)
     for g in groups:
-        counts["errors"] += ingest_series(cat, g, by_rel, parent_key, source, max_rows, step)
+        counts["errors"] += ingest_series(cat, g, by_rel, parent_key, source, max_rows, step, reads)
         counts["files"] += len(g.members)
         counts["series"] += 1
     return counts
 
 
 def ingest_series(cat: Catalogue, g, by_rel: dict[str, Path], parent_key: str, source: str, max_rows: int,
-                  step: Steps | None = None) -> int:
+                  step: Steps | None = None, reads: Reads | None = None) -> int:
     """One entry for the whole series. The newest file is profiled in full; the rest only have their
     rows and header read (and are skipped entirely when unchanged since the last scan)."""
     from . import series as S
     from .profiling import quick_info
     step = step or Steps()
+    reads = reads or Reads()
     skey = S.series_key(parent_key, g.template)
     ordered = g.sorted()
     newest = ordered[-1]
@@ -175,7 +231,8 @@ def ingest_series(cat: Catalogue, g, by_rel: dict[str, Path], parent_key: str, s
             st = path.stat()
             prev = cat.get_asset(key)
             if m is newest:
-                error = ingest_data_file(cat, path, key, m.rel, source, skey, max_rows, kind="series_file")
+                error = ingest_data_file(cat, path, key, m.rel, source, skey, max_rows, kind="series_file",
+                                         reads=reads)
                 info = cat.get_asset(key)["attrs"]
                 cols = [c["name"] for c in cat.columns(key)]
                 errors += bool(error)
@@ -185,12 +242,12 @@ def ingest_series(cat: Catalogue, g, by_rel: dict[str, Path], parent_key: str, s
                 cat.upsert_asset(key, "series_file", m.rel, source, parent=skey, attrs=info)
             else:
                 try:
-                    info = quick_info(path)
+                    info = reads.get(quick_info, path)
                 except Exception as e:
                     info = {"path": str(path), "size_bytes": st.st_size, "read_error": f"{type(e).__name__}: {e}"}
                     errors += 1
                 info.update({"mtime": st.st_mtime, "format": path.suffix.lower().lstrip("."), "in_series": skey,
-                             "checksum": _fingerprint(path)})
+                             "checksum": reads.get(_fingerprint, path)})
                 cols = info.get("header", [])
                 cat.upsert_asset(key, "series_file", m.rel, source, parent=skey, attrs=info)
             files.append({"rel": m.rel, "key": key, "period": S._period(m), "rows": info.get("row_count"),

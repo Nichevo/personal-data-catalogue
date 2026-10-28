@@ -13,6 +13,7 @@ import contextvars
 import json
 import re
 import shlex
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -230,10 +231,18 @@ def _scan_notebook(text: str) -> Found:
     return found
 
 
+def parse_code(text: str) -> ast.Module:
+    """Python source parsed without printing its warnings. Old scripts are full of things like "\\d" in plain
+    strings, and each one would print a SyntaxWarning about the script (not about the catalogue) to the terminal."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return ast.parse(text)
+
+
 def scan_python_source(text: str) -> Found:
     found = Found(attrs={"lines": text.count("\n") + 1})
     try:
-        tree = ast.parse(text)
+        tree = parse_code(text)
     except SyntaxError as e:
         found.attrs["parse_error"] = f"line {e.lineno}: {e.msg}"
         return found
@@ -622,7 +631,7 @@ def project_constants(root: Path, files: list[Path]) -> dict[str, dict[str, str]
         if path.suffix.lower() != ".py":
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+            tree = parse_code(path.read_text(encoding="utf-8", errors="replace"))
         except (SyntaxError, ValueError):
             continue
         env = _assignment_env(tree)

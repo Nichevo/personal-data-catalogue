@@ -24,6 +24,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from . import mquery
+from .scanprogress import Reads
 from .sqlrefs import extract_refs, looks_like_sql
 
 READER_VERSION = 2  # 2: passwords removed from stored Power Query text
@@ -330,7 +331,8 @@ def read_workbook(path: Path) -> dict[str, Any]:
     return out
 
 
-def ingest_workbook(cat, path: Path, key: str, name: str, source: str, parent: str) -> str | None:
+def ingest_workbook(cat, path: Path, key: str, name: str, source: str, parent: str,
+                    reads: Reads | None = None) -> str | None:
     from datetime import datetime, timezone
 
     from .duplicates import fingerprint
@@ -342,7 +344,7 @@ def ingest_workbook(cat, path: Path, key: str, name: str, source: str, parent: s
         info = previous["attrs"]
     else:
         try:
-            info = read_workbook(path)
+            info = (reads or Reads()).get(read_workbook, path)
         except Exception as e:  # damaged or password-protected (encrypted workbooks aren't zips)
             info = {"format": path.suffix.lower().lstrip("."), "sheets": [], "queries": [], "connections": [],
                     "pivots": [], "vba_sql": [], "not_read": [],
@@ -350,7 +352,7 @@ def ingest_workbook(cat, path: Path, key: str, name: str, source: str, parent: s
                     else f"{type(e).__name__}: {e}"}
         info.update({"path": str(path), "size_bytes": st.st_size, "mtime": st.st_mtime, "reader": READER_VERSION,
                      "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds"),
-                     "checksum": fingerprint(path)})
+                     "checksum": (reads or Reads()).get(fingerprint, path)})
     bits = [f"{len(info['sheets'])} sheets"]
     for label, n in (("Power Query queries", len([q for q in info["queries"] if "parameter" not in q])),
                      ("connections", len([c for c in info["connections"] if c.get("type") != "Power Query"])),

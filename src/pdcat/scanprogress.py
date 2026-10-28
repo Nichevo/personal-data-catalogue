@@ -90,12 +90,12 @@ class Steps:
 
     SLOW = 20  # seconds
 
-    def __init__(self, report: Report = quiet, total: int = 0) -> None:
-        self.report, self.total, self.done = report, total, 0
+    def __init__(self, report: Report = quiet, total: int = 0, verb: str = "Reading") -> None:
+        self.report, self.total, self.verb, self.done = report, total, verb, 0
 
     @contextmanager
     def __call__(self, what: str, rel: str):
-        self.report(f"Reading {what} {self.done + 1:,} of {self.total:,}: {rel}", self.done, self.total)
+        self.report(f"{self.verb} {what} {self.done + 1:,} of {self.total:,}: {rel}", self.done, self.total)
         started = time.monotonic()
         try:
             yield
@@ -117,3 +117,30 @@ def printer(every: float = 30.0, out: Callable[[str], None] | None = None) -> Re
             last[0] = time.monotonic()
             out(text if text.startswith("  ") else f"  … {text}")
     return report
+
+
+class Reads:
+    """File reads done ahead, before a scan opens its database transaction.
+
+    A scan writes everything in one transaction so a failed scan changes nothing, but while it is open no other
+    window or scan can write to the catalogue. Reading the files (the slow part) first keeps that window short.
+    `get` hands back a result read ahead, or reads the file now if it wasn't."""
+
+    def __init__(self) -> None:
+        self._done: dict[tuple[str, Path], tuple[bool, object]] = {}
+
+    def load(self, fn: Callable, path: Path, *args) -> None:
+        try:
+            self._done[(fn.__name__, path)] = (True, fn(path, *args))
+        except Exception as e:  # kept, and raised again where the scan would have hit it
+            self._done[(fn.__name__, path)] = (False, e)
+
+    def get(self, fn: Callable, path: Path, *args):
+        hit = self._done.pop((fn.__name__, path), None)
+        if hit is None:
+            return fn(path, *args)
+        ok, value = hit
+        if not ok:
+            raise value
+        return value
+

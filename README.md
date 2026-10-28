@@ -177,6 +177,14 @@ Folder scans no longer look stuck, and big folders scan faster.
   get the header rows, instead of all of it.
 - **Adding a folder is quicker.** The app no longer re-examines the folder on every click
   while you fill in the form.
+- **Far fewer "database is locked" errors.** A folder scan now reads all its files first and
+  only then saves them, so the catalogue is locked for seconds rather than for the whole
+  scan. Opening the catalogue no longer needs the lock at all, and anything that does have
+  to wait for it waits up to a minute instead of failing after five seconds. This helps
+  when the app and the weekly scan run at the same time, or when you have two windows open.
+- **No more SyntaxWarnings from your scripts.** Older scripts often have things like `"\d"`
+  in ordinary strings. Python printed a warning about each one while the catalogue read
+  the code. They were about your scripts, not the catalogue, and are no longer printed.
 
 ## New in version 2.11
 

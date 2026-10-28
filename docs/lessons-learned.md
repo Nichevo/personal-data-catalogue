@@ -130,6 +130,14 @@ total)` function passed down to every scanner, a progress box in the app that na
 being read and mentions any that take long, the same updates in the terminal, and the
 third-party parser run in its own process with a timeout.
 
+The same release fixed "database is locked". SQLite allows one writer at a time, and each
+scan wrote inside a single transaction (good: a failed scan changes nothing) while it also
+read every file (bad: minutes with the lock held). Worse, merely opening the catalogue ran
+migration `UPDATE`s that matched no rows but still needed the write lock. Files are now read
+before the transaction opens, migrations write only when there is something to change, and
+the busy timeout is a minute rather than five seconds.
+
 **For other projects:** give every long-running job a progress callback from day one, even if
 the first caller ignores it. Run libraries you don't control in a subprocess with a timeout
-when they chew on user files. Walk a file tree once and prune what you will never want.
+when they chew on user files. Walk a file tree once and prune what you will never want. With SQLite, do slow work outside
+the write transaction, and never write on open unless something actually needs changing.
