@@ -298,6 +298,12 @@ one at a time, and every query is logged:
   step). Unused ones are hidden by default, with a count and a switch to show them.
   Because other reports connected to a published dataset can use measures this file
   can't see, it says "not used in this file" rather than "unused".
+- **Report page pictures**: a .pbix holds the layout of each page but no picture of
+  the charts (Power BI draws them when the report opens). So each report page gets a
+  wireframe drawn from its layout: every visual in its place, with its type, title and
+  fields, and a click shows its measures. You can also paste or upload a screenshot of
+  a page or visual to keep with it. Screenshots stay on your machine and are left out of
+  share files and exports unless you tick them in, since they can show real numbers.
 - **A tidier menu**: To review takes in Data issues, Needs notes, Unmatched tables,
   Unlinked data and Duplicates as filter tabs; Coverage and Issue hotspots become one
   Health page; Recent notes and Recent changes become one What's new page; Describe
