@@ -36,6 +36,7 @@ def sections() -> dict[str, dict[str, Page]]:
     from . import (
         bproject_pages,
         curation_pages,
+        dataflow_page,
         erd_page,
         groups_page,
         home_page,
@@ -71,7 +72,8 @@ def sections() -> dict[str, dict[str, Page]]:
                 "Describe columns": curation_pages.describe_columns_page,
                 "Edit many items": curation_pages.bulk_edit_page}),
         },
-        "🗺️ Map": {"Code map": code.code_map_page, "Database diagrams": erd_page.erd_page,
+        "🗺️ Map": {"Code map": code.code_map_page, "Data flow": dataflow_page.data_flow_page,
+                   "Database diagrams": erd_page.erd_page,
                    "Packages": code.packages_page},
         "➕ Add": {
             "Sources": combined("Sources", "Where the catalogue reads from: SQL you paste, folders of data and code, "

@@ -5,6 +5,7 @@ works out which tables and files the code reads and writes by looking at:
   * SQL in string literals (and f-strings, with the dynamic bits ignored)
   * pandas calls such as read_sql_table / to_sql / read_csv / to_parquet
   * open(), joblib.dump/load and save_model/load_model with a literal path
+  * APIs, web scraping, database connections, cloud storage and SAP (see datasources.py)
 """
 from __future__ import annotations
 
@@ -114,6 +115,9 @@ def _scan_files(cat: Catalogue, src: PythonSource, root: Path, project_key: str,
             cat.add_link(key, relation, dst_ref, src.name, hint=src.default_database,
                          evidence=f"{rel}:{line}" if line else rel, how=how or None)
             counts["links"] += 1
+        from .datasources import record_sources
+        counts["links"] += record_sources(cat, key, src.name, found.attrs.get("data_sources"), parent=project_key,
+                                          evidence=rel)
         counts["files"] += 1
         counts["errors"] += bool(found.attrs.get("parse_error"))
 
@@ -170,6 +174,7 @@ def _scan_notebook(text: str) -> Found:
     sql_strings: list[dict] = []
     renames: list[dict] = []
     metric_cands: list[dict] = []
+    sources: list[dict] = []
     merged: dict[str, dict] = {"function_info": {}, "import_map": {}, "function_refs": {}}
     for i, cell in enumerate(cells, start=1):
         source = "".join(cell.get("source", []))
@@ -202,6 +207,7 @@ def _scan_notebook(text: str) -> Found:
         sql_strings += [{**q, "cell": i} for q in cell_found.attrs.get("sql_strings", [])]
         renames += [{**r, "cell": i} for r in cell_found.attrs.get("column_renames", [])]
         metric_cands += [{**m, "cell": i} for m in cell_found.attrs.get("metric_candidates", [])]
+        sources += [{**d, "line": 0, "how": f"{d['how']} (cell {i})"} for d in cell_found.attrs.get("data_sources", [])]
         patterns += cell_found.attrs.get("write_patterns", [])
         for name, value in merged.items():
             for k, v in cell_found.attrs.get(name, {}).items():
@@ -226,6 +232,9 @@ def _scan_notebook(text: str) -> Found:
         found.attrs["metric_candidates"] = metric_cands[:100]
     if patterns:
         found.attrs["write_patterns"] = sorted(set(patterns))
+    if sources:
+        from .datasources import merge
+        found.attrs["data_sources"] = merge(sources)
     if errors:
         found.attrs["parse_error"] = "Could not parse " + ", ".join(errors)
     return found
@@ -302,6 +311,12 @@ def scan_python_source(text: str) -> Found:
     metrics = python_candidates(tree)
     if metrics:
         found.attrs["metric_candidates"] = metrics
+    from .datasources import find_sources, from_file_refs, merge
+    found.refs, web_files = from_file_refs(found.refs)
+    sources = merge(web_files + find_sources(tree, env))
+    env.at = None
+    if sources:
+        found.attrs["data_sources"] = sources
     return found
 
 
