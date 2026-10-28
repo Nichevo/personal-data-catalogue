@@ -353,6 +353,8 @@ def ingest_workbook(cat, path: Path, key: str, name: str, source: str, parent: s
         info.update({"path": str(path), "size_bytes": st.st_size, "mtime": st.st_mtime, "reader": READER_VERSION,
                      "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds"),
                      "checksum": (reads or Reads()).get(fingerprint, path)})
+        from .reportversions import record_revision
+        record_revision(cat, key, previous["attrs"] if previous else None, info, "workbook")
     bits = [f"{len(info['sheets'])} sheets"]
     for label, n in (("Power Query queries", len([q for q in info["queries"] if "parameter" not in q])),
                      ("connections", len([c for c in info["connections"] if c.get("type") != "Power Query"])),

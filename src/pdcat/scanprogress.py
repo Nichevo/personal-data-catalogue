@@ -81,6 +81,45 @@ def has_files(root: Path, suffixes: Iterable[str]) -> bool:
     return False
 
 
+BIG_FILE = 200 * 1024 * 1024    # a file this size takes a while on its own
+BIG_FOLDER = 2 * 1024 ** 3      # ...and so does a folder with this much to read
+MANY_FILES = 2000
+
+
+def size_up(paths: Iterable[Path]) -> dict:
+    """{"files", "bytes", "big": [(name, bytes)]} for a list of files, to warn before a long scan."""
+    files = total = 0
+    big: list[tuple[str, int]] = []
+    for p in paths:
+        try:
+            n = p.stat().st_size
+        except OSError:
+            continue
+        files += 1
+        total += n
+        if n >= BIG_FILE:
+            big.append((p.name, n))
+    big.sort(key=lambda b: -b[1])
+    return {"files": files, "bytes": total, "big": big}
+
+
+def size_warning(info: dict) -> str:
+    """Why a scan of these files may take a while, or '' when it looks quick."""
+    reasons = []
+    if info["files"] >= MANY_FILES:
+        reasons.append(f"{info['files']:,} files")
+    if info["bytes"] >= BIG_FOLDER:
+        reasons.append(f"{gb(info['bytes'])} to read")
+    if info["big"]:
+        names = ", ".join(f"{n} ({gb(b)})" for n, b in info["big"][:3]) + (" …" if len(info["big"]) > 3 else "")
+        reasons.append(f"{len(info['big'])} large file{'s' if len(info['big']) > 1 else ''}: {names}")
+    return "; ".join(reasons)
+
+
+def gb(n: int) -> str:
+    return f"{n / 1024 ** 3:.1f} GB" if n >= 1024 ** 3 else f"{n / 1024 ** 2:.0f} MB"
+
+
 def pick(found: dict[str, list[Path]], suffixes: Iterable[str]) -> list[Path]:
     return sorted(p for s in suffixes for p in found.get(s.lower(), []))
 
@@ -92,6 +131,8 @@ class Steps:
 
     def __init__(self, report: Report = quiet, total: int = 0, verb: str = "Reading") -> None:
         self.report, self.total, self.verb, self.done = report, total, verb, 0
+        self.slow: list[tuple[str, float]] = []  # (file, seconds) for every file over SLOW, for the scan log
+        self.seconds = 0.0
 
     @contextmanager
     def __call__(self, what: str, rel: str):
@@ -102,7 +143,9 @@ class Steps:
         finally:
             self.done += 1
             took = time.monotonic() - started
+            self.seconds += took
             if took >= self.SLOW:
+                self.slow.append((rel, round(took)))
                 self.report(f"  {rel} took {took:.0f}s", self.done, self.total)
 
 

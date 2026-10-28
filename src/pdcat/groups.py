@@ -17,7 +17,7 @@ from typing import Any
 from . import suggestions
 from .store import Catalogue, now
 
-TYPES = {"family": "File family", "versions": "Script versions", "backup": "Main and backup",
+TYPES = {"family": "File family", "versions": "Versions", "backup": "Main and backup",
          "outputs": "Files one script writes"}
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from pdcat.scanprogress import find_files, gb, size_up, size_warning
 from pdcat.store import MANUAL_SOURCE, Catalogue
 
 from .common import asset_button, go, page_title
@@ -94,6 +95,17 @@ def _analyse(path: str) -> dict:
     return analyse(path)
 
 
+@st.cache_data(ttl=300, show_spinner="Adding up the files …")
+def _size_up(path: str) -> dict:
+    from pdcat.profiling import DATA_SUFFIXES
+    from pdcat.scan_access import SUFFIXES as ACCESS_SUFFIXES
+    from pdcat.scan_excel import WORKBOOK_SUFFIXES
+    from pdcat.scan_powerbi import REPORT_SUFFIXES
+    found, _ = find_files(Path(path), (*DATA_SUFFIXES, *REPORT_SUFFIXES, ".pbip", *WORKBOOK_SUFFIXES,
+                                       *ACCESS_SUFFIXES))
+    return size_up(p for paths in found.values() for p in paths)
+
+
 @st.cache_data(ttl=300, show_spinner="Looking for project folders …")
 def _as_mode(found: dict, path: str, mode: str) -> dict:
     from pdcat.folderroles import as_mode
@@ -124,6 +136,13 @@ def folder_preview(path: str, found: dict) -> dict:
                         "pyproject.toml, setup.py, src/, or its own .git).")
         st.radio("Treat it as", list(MODES), index=list(MODES).index(found["mode"]), format_func=MODES.get,
                  key=f"add-folder-mode-{path}")
+        size = _size_up(path)
+        warning = size_warning(size)
+        st.caption(f"{size['files']:,} data, Power BI, Excel and Access file(s), {gb(size['bytes'])} in all.")
+        if warning:
+            st.warning(f"This scan may take a while: {warning}. Files are read one by one with a progress bar, "
+                       "and only changed files are read again on a rescan. A large CSV is sampled (the first "
+                       "200,000 rows); a large Power BI model gets three minutes before it is skipped.", icon="⏳")
         roles = {k: v for k, v in found["roles"].items() if v != "project"}
         if roles:
             st.caption("Suggested roles for subfolders (you can change them after adding): " + ", ".join(
@@ -135,7 +154,6 @@ def add_code_projects(cat: Catalogue, name: str, path: str, found: dict, status:
     """Catalogue the Python code in a data folder: one project per project folder in a master folder."""
     from pdcat.config import PythonSource
     from pdcat.scan_python import scan_project
-    from pdcat.scanprogress import find_files
     root = Path(path)
     status.phase(f"Looking for Python code in {path} …")
     code, _ = find_files(root, (".py", ".ipynb"), report=status)

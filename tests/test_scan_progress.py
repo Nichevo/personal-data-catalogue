@@ -165,3 +165,43 @@ def test_pbixray_model_comes_back_from_its_own_process(tmp_path, monkeypatch):
     model, problem = scan_powerbi._model_in_own_process(p)
     assert problem is None
     assert model["tables"][0]["name"] == "Sales" and model["measures"][0]["name"] == "Total"
+
+
+def test_size_warning_names_big_files_and_folders(tmp_path):
+    from pdcat import scanprogress as sp
+    small = tmp_path / "a.csv"
+    small.write_text("x\n")
+    big = tmp_path / "b.csv"
+    big.write_bytes(b"0" * 1024)
+    old = sp.BIG_FILE, sp.BIG_FOLDER
+    sp.BIG_FILE, sp.BIG_FOLDER = 1000, 10 ** 12
+    try:
+        info = sp.size_up([small, big, tmp_path / "missing.csv"])
+        assert info["files"] == 2 and info["big"] == [("b.csv", 1024)]
+        assert sp.size_warning(info) == "1 large file: b.csv (0 MB)"
+        assert sp.size_warning({"files": 3, "bytes": 0, "big": []}) == ""
+    finally:
+        sp.BIG_FILE, sp.BIG_FOLDER = old
+
+
+def test_scan_log_records_timing_slow_files_and_after_scan_runs(tmp_path):
+    folder = tmp_path / "data"
+    _csv(folder / "sales.csv")
+    cat = Catalogue(tmp_path / "c.db")
+    scan_folder(cat, "data", folder)
+    after_scan(cat)
+    [entry] = cat.scan_log()
+    assert entry["source"] == "data" and entry["summary"]["files_found"] == 1
+    assert entry["summary"]["seconds"] >= 0 and entry["summary"]["slow"] == [] and entry["summary"]["errors"] == 0
+    [run] = cat.setting("after_scan_runs")
+    assert run["seconds"] >= 0 and run["failed"] == [] and len(run["slowest"]) == 5
+
+
+def test_slower_scans_are_flagged():
+    from pdcat.ui.scan_log import slower_scans
+    log = [{"id": 3, "source": "data", "started_at": "2026-10-28T10:00", "summary": {"seconds": 90, "slow": [("big.csv", 60)]}},
+           {"id": 2, "source": "data", "started_at": "2026-10-21T10:00", "summary": {"seconds": 30}},
+           {"id": 1, "source": "other", "started_at": "2026-10-21T10:00", "summary": {"seconds": 5}}]
+    [note] = slower_scans(log)
+    assert "**data** took 1m 30s" in note and "big.csv" in note
+    assert slower_scans(log[1:]) == []

@@ -59,7 +59,8 @@ def groups_box(cat: Catalogue, key: str) -> None:
             if g["main_key"] == key:
                 text = f"🗂️ Current version of **{g['name']}**. {len(others)} older version(s) are hidden from the code map."
             elif g["main_key"]:
-                text = "🗂️ An **older version** of a script; the current one is shown on the code map."
+                text = (f"🗂️ An **older version** of **{g['name']}**; the current one is "
+                        f"**{next((m['name'] for m in others if m['asset_key'] == g['main_key']), '?')}**.")
             else:
                 text = f"🗂️ One of {len(g['members'])} versions of **{g['name']}**. Pick the current one on its page."
         elif g["type"] == "family":

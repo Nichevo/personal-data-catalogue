@@ -28,7 +28,8 @@ def group_page(cat: Catalogue, key: str) -> None:
     item_actions(cat, key)
     if g["type"] == "versions":
         st.caption("Only the current version shows on the code map, in search and in lineage. The others stay "
-                   "listed here with their notes.")
+                   "listed here with their notes."
+                   + (f" Matched by {g['attrs']['matched_by']}." if g["attrs"].get("matched_by") else ""))
     elif g["type"] == "family":
         st.caption("The same data at different grains. Each file stays its own item; the family brings them together.")
     elif g["type"] == "outputs":
@@ -107,6 +108,15 @@ def what_changed(g: dict) -> None:
         c1, c2 = st.columns(2)
         a = c1.selectbox("Older", keys, format_func=names.get, index=len(keys) - 1, key=f"vd-a-{g['uid']}")
         b = c2.selectbox("Newer", keys, format_func=names.get, index=0, key=f"vd-b-{g['uid']}")
+        ma, mb = (next(x for x in g["members"] if x["asset_key"] == k) for k in (a, b))
+        if ma["kind"] in ("report", "workbook"):
+            from pdcat.reportversions import diff, summary
+
+            from .office_pages import _changes_md
+            changes = diff(ma["attrs"], mb["attrs"], ma["kind"])
+            st.markdown(f"**{summary(changes) or 'No differences in pages, measures, tables, sources or sheets.'}**")
+            _changes_md(changes)
+            return
         texts = []
         for k in (a, b):
             m = next(x for x in g["members"] if x["asset_key"] == k)

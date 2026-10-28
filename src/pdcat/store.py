@@ -783,6 +783,25 @@ class Catalogue:
         apply_manual_links(self)
         self.rebuild_search()
 
+    def annotate_scan(self, source: str, extra: dict[str, Any]) -> None:
+        """Add timing and size details to the latest scan of a source (for the scan log)."""
+        row = self.conn.execute("SELECT id, summary FROM scans WHERE source = ? ORDER BY id DESC LIMIT 1",
+                                (source,)).fetchone()
+        if row is None:
+            return
+        summary = {**(json.loads(row["summary"]) if row["summary"] else {}), **extra}
+        with self.conn:
+            self.conn.execute("UPDATE scans SET summary = ? WHERE id = ?", (json.dumps(summary, default=str), row["id"]))
+
+    def scan_log(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Every scan, newest first, with its summary (counts by kind plus the details annotate_scan added)."""
+        out = []
+        for r in self.conn.execute("SELECT id, source, started_at, finished_at, summary FROM scans "
+                                   "ORDER BY id DESC LIMIT ?", (limit,)):
+            out.append({"id": r["id"], "source": r["source"], "started_at": r["started_at"],
+                        "finished_at": r["finished_at"], "summary": json.loads(r["summary"]) if r["summary"] else {}})
+        return out
+
     def upsert_asset(self, key: str, kind: str, name: str, source: str, *, parent: str | None = None,
                      description: str | None = None, attrs: dict[str, Any] | None = None) -> None:
         ts = now()

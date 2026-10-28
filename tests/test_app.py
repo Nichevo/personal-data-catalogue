@@ -307,3 +307,39 @@ def test_sidebar_search_twice_with_the_same_words(app):
     sidebar_search(app, "sales")
     assert not app.exception and app.title[0].value == "Search"
     assert app.text_input(key="search-text").value == "sales"
+
+
+def test_report_versions_show_over_time_and_on_the_group_page(app, catalogue, tmp_path):
+    from test_report_versions import write_pbit
+
+    from pdcat import groups, suggestions
+    from pdcat.scan_files import scan_folder
+    from pdcat.versions import find_versions
+    folder = tmp_path / "reports"
+    write_pbit(folder / "Sales.pbit", when=1_700_000_000)
+    write_pbit(folder / "Sales_v2.pbit", when=1_700_100_000, extra_measures=[("Avg", "AVERAGE(Sales[Units])")])
+    scan_folder(catalogue, "reports", folder)
+    find_versions(catalogue)
+    [s] = suggestions.open_suggestions(catalogue, "versions")
+    suggestions.accept(catalogue, s["id"])
+    [g] = groups.for_item(catalogue, "files://reports/Sales_v2.pbit")
+    for key in [f"group://{g['uid']}", "files://reports/Sales.pbit", "files://reports/Sales_v2.pbit"]:
+        app.query_params["asset"] = key
+        app.run()
+        assert not app.exception, (key, app.exception)
+    assert any(s.value == "Over time" for s in app.subheader)
+    assert any("Current version" in m.value for m in app.markdown)
+
+
+def test_scan_log_page_lists_scans(app, catalogue, tmp_path):
+    import pandas as pd
+
+    from pdcat.scan_files import scan_folder
+    folder = tmp_path / "extracts"
+    folder.mkdir()
+    pd.DataFrame({"a": [1]}).to_csv(folder / "x.csv", index=False)
+    scan_folder(catalogue, "extracts", folder)
+    app.run()
+    goto(app, "Scan log")
+    assert not app.exception
+    assert any("extracts" in df.value.to_string() for df in app.dataframe)

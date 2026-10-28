@@ -517,6 +517,8 @@ def ingest_report(cat, path: Path, key: str, name: str, source: str, parent: str
         info.update({"path": str(path), "size_bytes": st.st_size, "mtime": st.st_mtime, "reader": READER_VERSION,
                      "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds"),
                      "checksum": (reads or Reads()).get(fingerprint, path) if path.is_file() else None})
+        from .reportversions import record_revision
+        record_revision(cat, key, previous["attrs"] if previous else None, info, "report")
     visuals = sum(len(p["visuals"]) for p in info["pages"])
     desc = f"Power BI report: {len(info['pages'])} pages, {visuals} visuals, {len(info['measures'])} measures"
     if info.get("live"):

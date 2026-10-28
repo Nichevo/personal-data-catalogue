@@ -10,10 +10,11 @@ become one dated series: see series.py.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from .profiling import DATA_SUFFIXES, DEFAULT_MAX_ROWS, profile_file
-from .scanprogress import Reads, Report, Steps, find_files, pick, quiet
+from .scanprogress import Reads, Report, Steps, find_files, pick, quiet, size_up, size_warning
 from .store import Catalogue
 
 
@@ -76,16 +77,23 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
         raise FileNotFoundError(f"Folder not found: {root}")
     folder_key = f"files://{name}"
     office_suffixes = (*REPORT_SUFFIXES, ".pbip", *WORKBOOK_SUFFIXES, *ACCESS_SUFFIXES)
+    started = time.monotonic()
     report(f"Looking for files in {root} …")
     found, skipped = find_files(root, (*DATA_SUFFIXES, *office_suffixes), recursive, ignored_dirs(cat, root), report)
     from .features import on
     if not on(cat, "access"):
         found.update({s: [] for s in ACCESS_SUFFIXES})
     data = pick(found, DATA_SUFFIXES)
-    total = len(data) + len(pick(found, office_suffixes))
+    all_paths = data + pick(found, office_suffixes)
+    total = len(all_paths)
+    size = size_up(all_paths)
     report(f"Found {total:,} file(s) to read" + (f" (skipped {skipped:,} tool, environment or ignored folders)"
                                                  if skipped else ""), 0, total)
-    reads = read_ahead(cat, root, data, found, folder_key, name, max_rows, Steps(report, total))
+    warning = size_warning(size)
+    if warning:
+        report(f"  This may take a while: {warning}. Files are read one by one; unchanged files are skipped.")
+    reading = Steps(report, total)
+    reads = read_ahead(cat, root, data, found, folder_key, name, max_rows, reading)
     with cat.scan(name):  # from here on only the catalogue is written, which is quick
         cat.upsert_asset(folder_key, "folder", name, name, attrs={"path": str(root), "recursive": recursive})
         step = Steps(report, total, verb="Saving")
@@ -93,7 +101,11 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
         office = ingest_office(cat, root, folder_key, name, found, step, reads)
         counts = {**office, **counts, "errors": counts["errors"] + office["errors"]}
         report("Updating links and search …", total, total)
-    return {k: counts[k] for k in ("files", "series", "reports", "workbooks", "access", "errors")}
+    out = {k: counts[k] for k in ("files", "series", "reports", "workbooks", "access", "errors")}
+    cat.annotate_scan(name, {"seconds": round(time.monotonic() - started, 1), "read_seconds": round(reading.seconds, 1),
+                             "files_found": total, "bytes": size["bytes"], "skipped_folders": skipped,
+                             "slow": reading.slow[:20], "errors": out["errors"], "warning": warning})
+    return out
 
 
 def read_ahead(cat: Catalogue, root: Path, data: list[Path], found: dict[str, list[Path]], parent_key: str,

@@ -27,12 +27,13 @@ class ScanStatus:
                         help="Stops the scan. A folder or project being read is left as it was before this scan.")
         self.box.caption("Each file shows here as it is read. A big Power BI report or workbook can take a minute "
                          "or two on its own, especially on a network drive.")
-        self.started = time.monotonic()
+        self.started = self.phase_started = time.monotonic()
         self.terminal = printer()
 
     def phase(self, label: str) -> None:
         self.box.update(label=label, expanded=True)  # leaving out expanded would fold the box away
         self.bar.progress(0.0)
+        self.phase_started = time.monotonic()
 
     def __call__(self, text: str, done: int | None = None, total: int | None = None) -> None:
         self.terminal(text, done, total)
@@ -41,7 +42,11 @@ class ScanStatus:
             return
         # Every update is shown: Streamlit only sends the latest one for each element, so this stays cheap,
         # and skipping one could leave the previous file's name on screen while a slow one is read.
-        self.line.markdown(f"{text}  \n*{_elapsed(time.monotonic() - self.started)} so far*")
+        left = ""
+        if total and done and done >= 3:  # a few files in, the pace gives a rough time left
+            per = (time.monotonic() - getattr(self, "phase_started", self.started)) / done
+            left = f" · about {_elapsed(per * (total - done))} left"
+        self.line.markdown(f"{text}  \n*{_elapsed(time.monotonic() - self.started)} so far{left}*")
         if total:
             self.bar.progress(min((done or 0) / total, 1.0))
 
