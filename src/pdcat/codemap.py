@@ -463,7 +463,8 @@ def to_dot(g: Graph) -> str:
             indent = "    "
         for k in sorted(keys):
             n = g.nodes[k]
-            lines.append(f'{indent}{ids[k]} [label="{_q(n["label"])}" {style.get(n["kind"], "")}];')
+            focus = " penwidth=3 color=\"#b45309\"" if n.get("focus") else ""
+            lines.append(f'{indent}{ids[k]} [label="{_q(n["label"])}" {style.get(n["kind"], "")}{focus}];')
         if group:
             lines.append("  }")
     for (a, b, rel), labels in sorted(g.edges.items()):

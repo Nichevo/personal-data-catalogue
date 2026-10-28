@@ -293,3 +293,29 @@ def test_data_flow_page_and_source_page_render(flows, monkeypatch):
         app.query_params["asset"] = key
         app.run()
         assert not app.exception, (key, app.exception)
+
+
+def test_flow_for_one_script(flows):
+    g = flow_graph(flows, focus="py://weather/pull.py")
+    assert g.nodes["py://weather/pull.py"]["focus"]
+    assert "ext:api:api.weather.example.com" in g.nodes
+    assert "py://reporting/report.py" in g.nodes  # reads what pull.py writes
+    assert "py://forecasting/src/features.py" not in g.nodes
+    assert any(e["data"].get("focus") for e in flow_elements(g))
+    assert "penwidth=3" in to_dot(g)
+    assert [r["used by"] for r in source_rows(flows, used_by="py://weather/pull.py")] == ["pull.py"]
+    assert source_rows(flows, used_by="py://reporting/report.py") == []
+    assert flow_graph(flows, focus="py://nowhere.py").nodes == {}
+
+
+def test_script_page_shows_its_data_flow(flows, monkeypatch):
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+    from test_app import APP
+    monkeypatch.setenv("PDCAT_DB", str(flows.path))
+    app = AppTest.from_file(APP, default_timeout=15)
+    for key in ("py://weather/pull.py", "py://reporting/report.py", "py://forecasting/src/features.py"):
+        app.query_params["asset"] = key
+        app.run()
+        assert not app.exception, (key, app.exception)
+        assert any(e.label.startswith("Data flow") for e in app.expander), key

@@ -27,8 +27,9 @@ GROUP_NAMES = {"api": "🌐 APIs and web services", "web_scraping": "🕸️ Web
 
 
 def flow_graph(cat: Catalogue, project: str | None = None, *, level: str = "files", show_old: bool = False,
-               hops: int = 3) -> Graph:
+               hops: int = 3, focus: str | None = None) -> Graph:
     """The flow for one project or folder source (followed `hops` steps up- and downstream), or everything.
+    focus: one script, notebook or report instead of a project, drawn highlighted.
     level="projects" shows each project as one box instead of one per script."""
     assets = _assets(cat)
     hidden = hidden_from_map(cat, show_old)
@@ -66,8 +67,8 @@ def flow_graph(cat: Catalogue, project: str | None = None, *, level: str = "file
             writes[src].add(d)
             writers[d].add(src)
 
-    if project:
-        start = {k for k in processes if assets[k]["source"] == project}
+    if project or focus:
+        start = {focus} & processes if focus else {k for k in processes if assets[k]["source"] == project}
         scope = set(start)
         # Downstream only from what is downstream, and upstream only from what is upstream, so a report
         # reading the project's output doesn't pull in everything else that report reads.
@@ -136,6 +137,8 @@ def flow_graph(cat: Catalogue, project: str | None = None, *, level: str = "file
     outgoing = {a for (a, _, _) in g.edges}
     for nid in [n for n in g.nodes if n not in incoming and n not in outgoing]:
         del g.nodes[nid]
+    if focus in g.nodes:
+        g.nodes[focus]["focus"] = True
     # Tables and files nothing here writes are where the data starts: group them on the left.
     for nid, n in g.nodes.items():
         n["role"] = "source" if nid not in incoming else ("output" if nid not in outgoing else "middle")
@@ -154,6 +157,8 @@ def flow_elements(g: Graph) -> list[dict[str, Any]]:
         data: dict[str, Any] = {"id": nid, "label": n["label"], "kind": n["kind"]}
         if n.get("key"):
             data["key"] = n["key"]
+        if n.get("focus"):
+            data["focus"] = True
         if n["group"]:
             gid = f"grp:flow:{n['group']}"
             nodes.setdefault(gid, {"data": {"id": gid, "label": n["group"], "kind": "group"}})
@@ -177,8 +182,9 @@ def summary(g: Graph) -> dict[str, int]:
     return dict(out)
 
 
-def source_rows(cat: Catalogue, project: str | None = None) -> list[dict[str, Any]]:
-    """Every outside source with what uses it, for the table under the diagram and its CSV."""
+def source_rows(cat: Catalogue, project: str | None = None, used_by: str | None = None) -> list[dict[str, Any]]:
+    """Every outside source with what uses it, for the table under the diagram and its CSV.
+    used_by: only the sources one script or report uses."""
     rows = []
     sql = ("SELECT s.key, s.name, s.source, s.attrs, l.src_key, l.relation, l.evidence, l.how, c.name AS used_by "
            "FROM assets s JOIN links l ON l.dst_key = s.key LEFT JOIN assets c ON c.key = l.src_key "
@@ -187,6 +193,9 @@ def source_rows(cat: Catalogue, project: str | None = None) -> list[dict[str, An
     if project:
         sql += " AND s.source = ?"
         args = (project,)
+    if used_by:
+        sql += " AND l.src_key = ?"
+        args += (used_by,)
     for r in cat.conn.execute(sql + " ORDER BY s.name, c.name", args):
         a = json.loads(r["attrs"])
         t = a.get("source_type", "")
