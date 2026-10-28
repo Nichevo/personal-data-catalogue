@@ -373,17 +373,226 @@ CREATE TABLE IF NOT EXISTS source_map (
     my_source   TEXT NOT NULL,
     PRIMARY KEY (author, their_source)
 );
+
+-- Version 2.1 --------------------------------------------------------------------------
+
+-- Things the catalogue suggests and you accept, edit or reject (script versions, file families,
+-- SAP meanings, metrics, naming rules...). A rejected suggestion never comes back.
+CREATE TABLE IF NOT EXISTS suggestions (
+    id          TEXT PRIMARY KEY,           -- "<kind>:<subject>:<detail>", stable across scans
+    kind        TEXT NOT NULL,
+    subject     TEXT NOT NULL,              -- the item it is about
+    title       TEXT NOT NULL,
+    detail      TEXT,
+    payload     TEXT NOT NULL DEFAULT '{}', -- what accepting it does
+    score       REAL NOT NULL DEFAULT 0,
+    state       TEXT NOT NULL DEFAULT 'open',  -- open | accepted | rejected | gone (no longer found)
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    decided_by  TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_suggestions_kind ON suggestions(kind, state);
+CREATE INDEX IF NOT EXISTS ix_suggestions_subject ON suggestions(subject);
+
+-- Items that belong together: file families by grain (SOH_D, SOH_W, SOH_M), script versions,
+-- a main table and its backup. Each item stays its own item; the group adds a page and a row.
+CREATE TABLE IF NOT EXISTS item_groups (
+    uid         TEXT PRIMARY KEY,
+    type        TEXT NOT NULL,              -- family | versions | backup
+    name        TEXT NOT NULL,
+    main_key    TEXT,                       -- the current version, the main table
+    attrs       TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT,
+    author      TEXT,
+    import_batch INTEGER
+);
+CREATE TABLE IF NOT EXISTS group_members (
+    group_uid   TEXT NOT NULL,
+    asset_key   TEXT NOT NULL,
+    label       TEXT,                       -- "daily", "v3", "backup"...
+    PRIMARY KEY (group_uid, asset_key)
+);
+CREATE INDEX IF NOT EXISTS ix_group_members_asset ON group_members(asset_key);
+
+-- How much a link matters: "unimportant" links stay listed but are left out of diagrams and counts.
+CREATE TABLE IF NOT EXISTS link_marks (
+    src_key     TEXT NOT NULL,
+    relation    TEXT NOT NULL,
+    dst_key     TEXT NOT NULL,
+    mark        TEXT NOT NULL,              -- unimportant
+    created_at  TEXT,
+    author      TEXT,
+    PRIMARY KEY (src_key, relation, dst_key)
+);
+
+-- Every change you make (notes, descriptions, item details, links, decisions), with who and when,
+-- so it can be shown and undone.
+CREATE TABLE IF NOT EXISTS edits (
+    id          INTEGER PRIMARY KEY,
+    at          TEXT NOT NULL,
+    author      TEXT,
+    item        TEXT NOT NULL,              -- the asset key (or bp://, kb://...) it is about
+    what        TEXT NOT NULL,              -- "note", "description", "item_info.owner", "link", ...
+    old_value   TEXT,
+    new_value   TEXT,
+    target      TEXT,                       -- JSON: how to put the old value back
+    undone      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_edits_item ON edits(item);
+
+-- SQL queries found anywhere (scripts, notebooks, .sql files, Excel, Power BI, Access, documents)
+-- or pasted in. The same query found in several places is one row with several places.
+CREATE TABLE IF NOT EXISTS sql_queries (
+    uid         TEXT PRIMARY KEY,           -- hash of the normalised SQL
+    name        TEXT NOT NULL,
+    named_by    TEXT NOT NULL DEFAULT 'auto',  -- auto | you
+    sql         TEXT NOT NULL,
+    tables      TEXT NOT NULL DEFAULT '[]',
+    analysis    TEXT NOT NULL DEFAULT '{}',
+    first_seen  TEXT,
+    last_seen   TEXT,
+    status      TEXT NOT NULL DEFAULT 'active'  -- active | missing
+);
+CREATE TABLE IF NOT EXISTS sql_query_places (
+    query_uid   TEXT NOT NULL,
+    item        TEXT NOT NULL,              -- the script, workbook, report, Access file... it is in
+    location    TEXT NOT NULL DEFAULT '',   -- line, function, query name
+    name_hint   TEXT,
+    source      TEXT,
+    PRIMARY KEY (query_uid, item, location)
+);
+CREATE INDEX IF NOT EXISTS ix_query_places_item ON sql_query_places(item);
+
+-- Findings from checking SQL, and the ones you marked "fine here".
+CREATE TABLE IF NOT EXISTS sql_findings_ok (
+    query_uid   TEXT NOT NULL,
+    rule        TEXT NOT NULL,
+    detail      TEXT NOT NULL DEFAULT '',
+    author      TEXT,
+    at          TEXT,
+    PRIMARY KEY (query_uid, rule, detail)
+);
+
+-- Column-level lineage: renames and copies between columns (Units -> qty), from code and SQL.
+CREATE TABLE IF NOT EXISTS column_links (
+    src_item    TEXT NOT NULL,
+    src_column  TEXT NOT NULL,
+    dst_item    TEXT NOT NULL,
+    dst_column  TEXT NOT NULL,
+    how         TEXT NOT NULL,              -- rename | alias | copy
+    evidence    TEXT,                       -- script and line
+    source      TEXT,
+    PRIMARY KEY (src_item, src_column, dst_item, dst_column)
+);
+
+-- Naming rules for a database or project, pasted as text or worked out from existing names.
+CREATE TABLE IF NOT EXISTS naming_rules (
+    uid         TEXT PRIMARY KEY,
+    scope       TEXT NOT NULL,              -- the database or project key
+    applies_to  TEXT NOT NULL,              -- table | view | procedure | column | script | file
+    check_type  TEXT NOT NULL,              -- prefix | suffix | case | pattern | max_length | no_spaces | ...
+    value       TEXT,
+    text        TEXT,                       -- the rule as written
+    state       TEXT NOT NULL DEFAULT 'active',
+    created_at  TEXT,
+    author      TEXT
+);
+CREATE TABLE IF NOT EXISTS naming_exceptions (
+    rule_uid    TEXT NOT NULL,
+    asset_key   TEXT NOT NULL,
+    column_name TEXT NOT NULL DEFAULT '',
+    reason      TEXT,
+    PRIMARY KEY (rule_uid, asset_key, column_name)
+);
+
+-- Scheduled jobs imported from a CSV (a Task Scheduler export, a job list), and the scripts they run.
+CREATE TABLE IF NOT EXISTS schedules (
+    uid         TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    command     TEXT,
+    timing      TEXT,
+    raw         TEXT NOT NULL DEFAULT '{}',  -- the whole CSV row
+    import_file TEXT,
+    imported_at TEXT
+);
+CREATE TABLE IF NOT EXISTS schedule_links (
+    schedule_uid TEXT NOT NULL,
+    asset_key    TEXT NOT NULL,
+    state        TEXT NOT NULL DEFAULT 'confirmed',  -- confirmed | suggested | rejected
+    how          TEXT,
+    PRIMARY KEY (schedule_uid, asset_key)
+);
+
+-- Installed conda environments read from conda-meta, and which project runs in which.
+CREATE TABLE IF NOT EXISTS conda_envs (
+    name        TEXT PRIMARY KEY,
+    path        TEXT NOT NULL,
+    python      TEXT,
+    packages    TEXT NOT NULL DEFAULT '[]',   -- [{"name", "version", "channel", "build"}]
+    scanned_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS project_envs (
+    project_key TEXT PRIMARY KEY,
+    env_name    TEXT NOT NULL,
+    how         TEXT
+);
+
+-- Commits that touched each script, read from the project's git history.
+CREATE TABLE IF NOT EXISTS git_history (
+    asset_key   TEXT NOT NULL,
+    commit_id   TEXT NOT NULL,
+    at          TEXT NOT NULL,
+    author      TEXT,
+    message     TEXT,
+    PRIMARY KEY (asset_key, commit_id)
+);
+CREATE INDEX IF NOT EXISTS ix_git_asset ON git_history(asset_key);
+
+-- Things you follow up on, pinned to the home page; and what you looked at recently.
+CREATE TABLE IF NOT EXISTS follow_ups (
+    item        TEXT PRIMARY KEY,
+    note        TEXT,
+    created_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS recent_views (
+    item        TEXT PRIMARY KEY,
+    at          TEXT NOT NULL
+);
+
+-- Documents: reference documents on business projects (every version kept), and screenshots.
+CREATE TABLE IF NOT EXISTS documents (
+    uid         TEXT PRIMARY KEY,
+    owner       TEXT NOT NULL,              -- the business project or item it belongs to
+    title       TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'reference',  -- reference | screenshot
+    created_at  TEXT,
+    author      TEXT
+);
+CREATE TABLE IF NOT EXISTS document_versions (
+    doc_uid     TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    file_name   TEXT,
+    mime        TEXT,
+    content     BLOB,
+    text        TEXT,                       -- extracted text, for search and highlighting
+    added_at    TEXT,
+    author      TEXT,
+    PRIMARY KEY (doc_uid, version)
+);
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3  # 3 = version 2.1
 
 # Columns added to v1 tables. Added in place by the upgrade; nothing is dropped.
 ADDED_COLUMNS = {
     "notes": {"uid": "TEXT", "author": "TEXT", "confirmed_at": "TEXT", "archived": "INTEGER NOT NULL DEFAULT 0",
               "import_batch": "INTEGER"},
-    "links": {"how": "TEXT"},
+    "links": {"how": "TEXT", "match_note": "TEXT"},
     "profiles": {"histogram": "TEXT", "percentiles": "TEXT", "hints": "TEXT"},
-    "folders": {"canonical": "TEXT"},
+    "folders": {"canonical": "TEXT", "roles": "TEXT"},
+    "libraries": {"role": "TEXT NOT NULL DEFAULT 'library'", "from_folder": "TEXT"},
+    "item_info": {"relevance": "TEXT", "sap_name": "TEXT"},
+    "column_info": {"sap_name": "TEXT", "business_name": "TEXT"},
 }
 
 
@@ -619,6 +828,18 @@ class Catalogue:
         and then the dbo schema break the tie; if it is still ambiguous the
         reference stays unresolved rather than guessing.
         """
+        index = self.table_index()
+        updates = []
+        for link in self.conn.execute("SELECT rowid, dst_ref, hint FROM links WHERE dst_ref LIKE 'table:%'"):
+            cands = self.match_table(link["dst_ref"][len("table:"):], link["hint"], index)
+            updates.append((cands[0]["key"] if len(cands) == 1 else None,
+                            f"{len(cands)} tables have this name" if len(cands) > 1 else None, link["rowid"]))
+        updates += self._resolve_file_refs()
+        with self.conn:
+            self.conn.executemany("UPDATE links SET dst_key = ?, match_note = ? WHERE rowid = ?", updates)
+
+    def table_index(self) -> dict[str, list[dict[str, str]]]:
+        """Scanned tables, views and procedures by their bare (object) name, for `match_table`."""
         by_object: dict[str, list[dict[str, str]]] = defaultdict(list)
         for row in self.conn.execute(
             "SELECT key, source, attrs FROM assets WHERE kind IN ('table', 'view', 'procedure') AND status = 'active'"
@@ -629,91 +850,127 @@ class Catalogue:
                 "database": a.get("database", "").lower(), "schema": a.get("schema", "").lower(),
                 "server": a.get("server", "").lower(),
             })
+        return by_object
 
-        updates = []
-        for link in self.conn.execute("SELECT rowid, dst_ref, hint FROM links WHERE dst_ref LIKE 'table:%'"):
-            parts = link["dst_ref"][len("table:"):].split(".")
-            if "{}" in parts[-1]:  # a name built at run time, e.g. f"sales_{region}"
-                pattern = re.compile(re.escape(parts[-1]).replace(r"\{\}", ".+") + "$")
-                cands = [c for obj, cs in by_object.items() if pattern.match(obj) for c in cs]
-            else:
-                cands = by_object.get(parts[-1], [])
-            if len(parts) >= 2:
-                cands = [c for c in cands if c["schema"] == parts[-2]]
-            if len(parts) >= 3:
-                cands = [c for c in cands if c["database"] == parts[-3]]
-            if len(parts) >= 4:
-                cands = [c for c in cands if parts[-4] in (c["server"], c["source"])]
-            if len(cands) > 1 and link["hint"]:
-                hinted = [c for c in cands if _matches_hint(c, link["hint"])]
-                cands = hinted or cands
-            if len(cands) > 1 and len(parts) == 1:
-                cands = [c for c in cands if c["schema"] == "dbo"] or cands
-            updates.append((cands[0]["key"] if len(cands) == 1 else None, link["rowid"]))
-        updates += self._resolve_file_refs()
-        with self.conn:
-            self.conn.executemany("UPDATE links SET dst_key = ? WHERE rowid = ?", updates)
+    def match_table(self, name: str, hint: str | None = None,
+                    index: dict[str, list[dict[str, str]]] | None = None) -> list[dict[str, str]]:
+        """The scanned tables a name in SQL ("sales", "dbo.sales", "db.dbo.sales"...) could be; one when it's clear."""
+        index = self.table_index() if index is None else index
+        parts = name.split(".")
+        if "{}" in parts[-1]:  # a name built at run time, e.g. f"sales_{region}"
+            pattern = re.compile(re.escape(parts[-1]).replace(r"\{\}", ".+") + "$")
+            cands = [c for obj, cs in index.items() if pattern.match(obj) for c in cs]
+        else:
+            cands = index.get(parts[-1], [])
+        if len(parts) >= 2:
+            cands = [c for c in cands if c["schema"] == parts[-2]]
+        if len(parts) >= 3:
+            cands = [c for c in cands if c["database"] == parts[-3]]
+        if len(parts) >= 4:
+            cands = [c for c in cands if parts[-4] in (c["server"], c["source"])]
+        if len(cands) > 1 and hint:
+            hinted = [c for c in cands if _matches_hint(c, hint)]
+            cands = hinted or cands
+        if len(cands) > 1 and len(parts) == 1:
+            cands = [c for c in cands if c["schema"] == "dbo"] or cands
+        return cands
 
-    def _resolve_file_refs(self) -> list[tuple[str | None, int]]:
+    def _resolve_file_refs(self) -> list[tuple[str | None, str | None, int]]:
         """Match "file:<path>" references from code to catalogued CSV/Parquet files.
 
         Relative paths match files in the same project first, then in any folder
         whose path ends the same way. f-string parts ("{}") act as wildcards, and
-        when several files match (e.g. dated extracts) the newest one wins.
+        when several files match (e.g. dated extracts) the newest one wins. When
+        nothing matches that way but a file with the same name is catalogued in
+        another folder, it is linked anyway and flagged as a possible wrong folder.
         """
         files = []
         for row in self.conn.execute(
-                "SELECT key, source, attrs FROM assets WHERE kind IN ('data_file', 'series_file', 'workbook') "
-                "AND status = 'active'"):
+                "SELECT key, source, attrs FROM assets WHERE kind IN ('data_file', 'series_file', 'workbook', "
+                "'report', 'access_db') AND status = 'active'"):
             a = json.loads(row["attrs"])
             # A file in a dated series links to the series, not to one month's copy.
             files.append({"key": a.get("in_series") or row["key"], "source": row["source"],
                           "path": _norm_path(a.get("path", "")), "mtime": a.get("mtime") or 0})
         if not files:
-            return [(None, r["rowid"]) for r in self.conn.execute("SELECT rowid FROM links WHERE dst_ref LIKE 'file:%'")]
+            return [(None, None, r["rowid"]) for r in self.conn.execute(
+                "SELECT rowid FROM links WHERE dst_ref LIKE 'file:%'")]
 
+        # An exact reference can only match files with the same file name, so look those up directly
+        # rather than comparing every reference with every file (slow with thousands of each).
+        by_name: dict[str, list[dict]] = {}
+        for f in files:
+            by_name.setdefault(f["path"].rsplit("/", 1)[-1], []).append(f)
         updates = []
         for link in self.conn.execute("SELECT rowid, dst_ref, source FROM links WHERE dst_ref LIKE 'file:%'"):
             ref = _norm_path(link["dst_ref"][len("file:"):])
             while ref.startswith("./"):
                 ref = ref[2:]
-            pattern = fnmatch.translate(ref.replace("{}", "*")).replace(".*", "[^/]*") if "{}" in ref else None
+            pattern = re.compile(fnmatch.translate(ref.replace("{}", "*")).replace(".*", "[^/]*")) \
+                if "{}" in ref else None
             absolute = bool(re.match(r"^([a-z]:/|/)", ref))
+            depth = ref.count("/") + 1
 
-            def hit(f: dict) -> bool:
+            def hit(f: dict, ref: str = ref, pattern=pattern, absolute: bool = absolute, depth: int = depth) -> bool:
                 if absolute:
                     target = f["path"]
                 else:  # compare the same number of trailing path segments
-                    target = "/".join(f["path"].split("/")[-(ref.count("/") + 1):])
-                return re.fullmatch(pattern, target) is not None if pattern else target == ref
+                    target = "/".join(f["path"].split("/")[-depth:])
+                return pattern.fullmatch(target) is not None if pattern else target == ref
 
-            matches = [f for f in files if hit(f)]
+            leaf = ref.rsplit("/", 1)[-1]
+            candidates = files if pattern else by_name.get(leaf, [])
+            matches = [f for f in candidates if hit(f)]
+            note = None
+            if not matches:
+                # Same file name in some other folder: link it, but say so.
+                if pattern:
+                    leaf_rx = re.compile(fnmatch.translate(leaf.replace("{}", "*")))
+                    matches = [f for f in files if leaf_rx.fullmatch(f["path"].rsplit("/", 1)[-1])]
+                else:
+                    matches = list(by_name.get(leaf, []))
+                if matches:
+                    best = max(matches, key=lambda f: (f["source"] == link["source"], f["mtime"]))
+                    note = f"found in another folder: {best['path']}"
             same_project = [f for f in matches if f["source"] == link["source"]]
             matches = same_project or matches
             best = max(matches, key=lambda f: f["mtime"])["key"] if matches else None
-            updates.append((best, link["rowid"]))
+            distinct = {f["key"] for f in matches}
+            if len(distinct) > 1:
+                more = f"{len(distinct)} files match; linked the newest"
+                note = f"{note}; {more}" if note else more
+            updates.append((best, note, link["rowid"]))
         return updates
 
     # ---- search ---------------------------------------------------------
 
-    def rebuild_search(self) -> None:
-        """Rebuild the full-text index. A personal catalogue is small enough to do this in full."""
+    def _search_rows(self, key: str | None = None) -> list[tuple]:
+        """Index rows for scanned items and notes: all of them, or just the one item `key` (and its columns' notes)."""
+        def where(col: str) -> tuple[str, tuple]:
+            if key is None:
+                return "", ()
+            return f" AND ({col} = ? OR substr({col}, 1, ?) = ?)", (key, len(key) + 1, key + "#")
         notes_by_key: dict[str, list[str]] = defaultdict(list)
-        for n in self.conn.execute("SELECT asset_key, body, tags FROM notes WHERE archived = 0"):
+        w, p = where("asset_key")
+        for n in self.conn.execute("SELECT asset_key, body, tags FROM notes WHERE archived = 0" + w, p):
             base = n["asset_key"].split("#", 1)[0]
             notes_by_key[base].append(f"{n['body']} {n['tags']}")
         cols_by_key: dict[str, list[str]] = defaultdict(list)
+        w, p = where("c.asset_key")
         for c in self.conn.execute(
-                "SELECT c.asset_key, c.name, c.description, ci.description AS mine FROM columns c "
-                "LEFT JOIN column_info ci ON ci.asset_key = c.asset_key AND ci.column_name = c.name"):
+                "SELECT c.asset_key, c.name, c.description, coalesce(ci.description, '') || ' ' || coalesce(ci.business_name, '') || "
+                "' ' || coalesce(ci.sap_name, '') AS mine FROM columns c "
+                "LEFT JOIN column_info ci ON ci.asset_key = c.asset_key AND ci.column_name = c.name WHERE 1 = 1" + w, p):
             cols_by_key[c["asset_key"]].append(f"{c['name']} {c['description'] or ''} {c['mine'] or ''}")
+        w, p = where("asset_key")
         info_by_key = {r["asset_key"]: " ".join(str(r[k] or "") for k in ("purpose", "grain", "owner", "refresh"))
-                       for r in self.conn.execute("SELECT * FROM item_info")}
+                       for r in self.conn.execute("SELECT * FROM item_info WHERE 1 = 1" + w, p)}
 
         rows = []
         seen = set()
+        w, p = ("", ()) if key is None else (" AND key = ?", (key,))
         for a in self.conn.execute("SELECT key, kind, source, name, description, attrs FROM assets "
-                                   "WHERE kind != 'series_file'"):
+                                   "WHERE kind != 'series_file'" + w, p):
             attrs = json.loads(a["attrs"])
             extra = " ".join(str(attrs.get(k, "")) for k in ("functions", "imports", "classes", "sql", "tags",
                                                                "measures", "pattern"))
@@ -721,9 +978,26 @@ class Catalogue:
                              " ".join(cols_by_key[a["key"]]), " ".join(notes_by_key[a["key"]])])
             rows.append((a["key"], a["kind"], a["source"], _searchable(a["name"]), _searchable(body)))
             seen.add(a["key"])
-        for key, texts in notes_by_key.items():
-            if key not in seen:  # notes on files or unmatched tables
-                rows.append((key, "note", "", _searchable(key), _searchable(" ".join(texts))))
+        for base, texts in notes_by_key.items():
+            if base not in seen:  # notes on files or unmatched tables
+                rows.append((base, "note", "", _searchable(base), _searchable(" ".join(texts))))
+        return rows
+
+    def reindex_search(self, asset_key: str) -> None:
+        """Refresh one item's entry in the full-text index (after a note or description changes), which is
+        much quicker than rebuilding the whole index on a big catalogue."""
+        key = asset_key.split("#", 1)[0]
+        rows = self._search_rows(key)
+        with self.conn:
+            # Knowledge, questions, metrics and the like have their own rows, which this leaves alone.
+            self.conn.execute("DELETE FROM search_idx WHERE key = ? AND kind NOT IN ('knowledge', 'question', "
+                              "'metric', 'feature', 'key', 'bproject', 'document')", (key,))
+            self.conn.executemany("INSERT INTO search_idx (key, kind, source, name, body) VALUES (?, ?, ?, ?, ?)", rows)
+        self.changed()
+
+    def rebuild_search(self) -> None:
+        """Rebuild the full-text index."""
+        rows = self._search_rows()
         # Knowledge that isn't a scanned item: articles, questions, metrics, features, keys, business projects.
         for sql, prefix, kind in (
                 ("SELECT uid AS id, title AS name, body || ' ' || tags || ' ' || triggers || ' ' || COALESCE(section, '') "
@@ -738,7 +1012,10 @@ class Catalogue:
                 ("SELECT name AS id, name, COALESCE(description, '') || ' ' || aliases AS body FROM keys "
                  "WHERE state = 'active'", "key://", "key"),
                 ("SELECT uid AS id, name, COALESCE(purpose, '') || ' ' || COALESCE(notes, '') AS body FROM bprojects",
-                 "bp://", "bproject")):
+                 "bp://", "bproject"),
+                ("SELECT d.uid AS id, d.title AS name, COALESCE(v.text, '') || ' ' || COALESCE(v.file_name, '') AS body "
+                 "FROM documents d JOIN document_versions v ON v.doc_uid = d.uid AND v.version = (SELECT MAX(version) "
+                 "FROM document_versions x WHERE x.doc_uid = d.uid)", "doc://", "document")):
             for r in self.conn.execute(sql):
                 rows.append((f"{prefix}{r['id']}", kind, "", _searchable(r["name"]), _searchable(r["body"] or "")))
         with self.conn:
@@ -747,13 +1024,19 @@ class Catalogue:
         self.changed()
 
     def search(self, text: str, *, kind: str | None = None, source: str | None = None,
-               limit: int = 100) -> list[sqlite3.Row]:
+               limit: int = 100, include_hidden: bool = False, kinds: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
         """Ranked matches. Each row has a "snippet" showing where the words matched (with **bold** hits).
-        Deprecated and retired items sink to the bottom."""
+        Deprecated and retired items sink to the bottom. Items marked not relevant and older versions of
+        scripts are left out unless `include_hidden`. `kinds` limits the results to several kinds."""
         tokens = re.findall(r"\w+", text or "")
         if not tokens:
-            return self.list_assets(kind=kind, source=source, limit=limit)
+            return self.list_assets(kind=kind, source=source, limit=limit, include_hidden=include_hidden, kinds=kinds)
         filters, params = [], []
+        if not include_hidden:
+            filters.append(f"s.key NOT IN ({HIDDEN_KEYS})")
+        if kinds:
+            filters.append(f"s.kind IN ({', '.join('?' * len(kinds))})")
+            params += list(kinds)
         if self.fts:
             filters.append("search_idx MATCH ?")
             params.append(" ".join(f'"{t}"*' for t in tokens))
@@ -824,8 +1107,14 @@ class Catalogue:
     # ---- reading --------------------------------------------------------
 
     def list_assets(self, *, kind: str | None = None, source: str | None = None,
-                    limit: int = 100) -> list[sqlite3.Row]:
+                    limit: int = 100, include_hidden: bool = False,
+                    kinds: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
         filters, params = ["kind != 'series_file'"], []
+        if not include_hidden:
+            filters.append(f"key NOT IN ({HIDDEN_KEYS})")
+        if kinds:
+            filters.append(f"kind IN ({', '.join('?' * len(kinds))})")
+            params += list(kinds)
         if kind:
             filters.append("kind = ?")
             params.append(kind)
@@ -985,10 +1274,13 @@ class Catalogue:
         resolve_imports(self)
         self.rebuild_search()
 
-    def add_library(self, name: str, path: str) -> None:
+    def add_library(self, name: str, path: str, role: str = "library", from_folder: str | None = None) -> None:
+        """A Python folder added from the app: a home-built library, or (role "project") the code in a data
+        folder you added."""
         with self.conn:
-            self.conn.execute("INSERT INTO libraries (name, path, added_at) VALUES (?, ?, ?) "
-                              "ON CONFLICT(name) DO UPDATE SET path = excluded.path", (name, path, now()))
+            self.conn.execute("INSERT INTO libraries (name, path, added_at, role, from_folder) VALUES (?, ?, ?, ?, ?) "
+                              "ON CONFLICT(name) DO UPDATE SET path = excluded.path, role = excluded.role, "
+                              "from_folder = excluded.from_folder", (name, path, now(), role, from_folder))
 
     def libraries(self) -> list[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM libraries ORDER BY name").fetchall()
@@ -1033,16 +1325,24 @@ class Catalogue:
                 (asset_key, body.rstrip(), ", ".join(split_tags(tags)), ts, ts, note_type, uuid.uuid4().hex,
                  self.author()),
             )
-        self.rebuild_search()
+            from .edits import record
+            record(self, asset_key, "note added", None, body.rstrip(), {"type": "note_add", "id": cur.lastrowid})
+        self.reindex_search(asset_key)
         return cur.lastrowid
 
     def update_note(self, note_id: int, body: str, tags: str = "", note_type: str | None = None) -> None:
+        before = self.conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
         with self.conn:
+            if before:
+                from .edits import record
+                record(self, before["asset_key"], "note changed", before["body"], body.rstrip(),
+                       {"type": "note_update", "id": note_id, "body": before["body"], "tags": before["tags"],
+                        "note_type": before["note_type"]})
             self.conn.execute(
                 "UPDATE notes SET body = ?, tags = ?, note_type = COALESCE(?, note_type), updated_at = ? WHERE id = ?",
                 (body.rstrip(), ", ".join(split_tags(tags)), note_type, now(), note_id),
             )
-        self.rebuild_search()
+        self._reindex_note(note_id)
 
     def set_issue_status(self, note_id: int, status: str) -> None:
         if status not in ("open", "resolved"):
@@ -1121,12 +1421,23 @@ class Catalogue:
         """Move a note out of the way without deleting it."""
         with self.conn:
             self.conn.execute("UPDATE notes SET archived = ? WHERE id = ?", (int(archived), note_id))
-        self.rebuild_search()
+        self._reindex_note(note_id)
 
     def delete_note(self, note_id: int) -> None:
+        row = self.conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
         with self.conn:
+            if row:
+                from .edits import record
+                record(self, row["asset_key"], "note deleted", row["body"], None,
+                       {"type": "note_delete", "row": dict(row)})
             self.conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
-        self.rebuild_search()
+        if row:
+            self.reindex_search(row["asset_key"])
+
+    def _reindex_note(self, note_id: int) -> None:
+        row = self.conn.execute("SELECT asset_key FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row:
+            self.reindex_search(row[0])
 
 
 def _matches_hint(candidate: dict[str, str], hint: str) -> bool:
@@ -1155,6 +1466,11 @@ def _norm_path(p: str) -> str:
     """Compare paths the Windows way: forward slashes, case-insensitive."""
     return p.replace("\\", "/").lower()
 
+
+# Items left out of search and lists: marked not relevant, or an older version of a script.
+HIDDEN_KEYS = """SELECT asset_key FROM item_info WHERE relevance = 'not relevant'
+    UNION SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid
+    WHERE g.type = 'versions' AND g.main_key IS NOT NULL AND g.main_key != m.asset_key"""
 
 # Display names of search hits that aren't scanned items (knowledge, questions, business projects...).
 _KNOWLEDGE_NAME = """CASE s.kind

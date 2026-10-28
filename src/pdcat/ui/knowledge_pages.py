@@ -18,6 +18,22 @@ def _table_options(cat: Catalogue) -> dict[str, str]:
 
 # ---- knowledge -------------------------------------------------------------------
 
+def packs_box(cat: Catalogue) -> None:
+    from pdcat import packs
+    have = packs.status(cat)
+    with st.expander("📦 Starter knowledge packs"):
+        st.caption("Optional general knowledge, the same in any company, tagged “general” so it stays apart from what "
+                   "you know about your own data. Edit anything; loading a pack again never overwrites your edits.")
+        for name, (title, about) in packs.PACKS.items():
+            c1, c2 = st.columns([4, 1])
+            total = len(packs.contents(name)["knowledge"]) + len(packs.contents(name)["metrics"])
+            c1.markdown(f"**{title}** · {have[name]} of {total} loaded  \n{about}")
+            if c2.button("Load again" if have[name] else "Load", key=f"pack-{name}"):
+                done = packs.load(cat, name)
+                st.toast(f"{title}: {done['added']} added, {done['updated']} updated, {done['kept']} you edited kept")
+                st.rerun()
+
+
 def knowledge_page(cat: Catalogue) -> None:
     st.title("Knowledge")
     st.caption("What you know that isn't a table or a script: business rules, definitions, how-tos, history, quirks. "
@@ -25,6 +41,7 @@ def knowledge_page(cat: Catalogue) -> None:
                "appear: in searches, and on tables, columns and scripts that mention them.")
     with st.expander("➕ New knowledge note", expanded=not cat.conn.execute("SELECT 1 FROM knowledge").fetchone()):
         knowledge_form(cat, None)
+    packs_box(cat)
     sections = ["All", *K.SECTIONS]
     section = st.radio("Section", sections, horizontal=True, label_visibility="collapsed")
     notes = K.list_knowledge(cat, None if section == "All" else section)
@@ -189,6 +206,14 @@ def metrics_page(cat: Catalogue) -> None:
                "Power BI measures can be turned into metrics from their page.")
     with st.expander("➕ New metric"):
         metric_form(cat, None)
+    from pdcat import suggestions
+    waiting = len(suggestions.open_suggestions(cat, "metric"))
+    if waiting:
+        with st.expander(f"💡 Suggested metrics ({waiting})", expanded=not K.list_metrics(cat)):
+            st.caption("Calculations found in your code, SQL and reports that aren't in the glossary yet. Tick the "
+                       "ones to add; rejected ones don't come back.")
+            from .groups_page import suggestion_picker
+            suggestion_picker(cat, "metric", prefix="mp")
     rows = K.list_metrics(cat)
     if not rows:
         st.info("No metrics yet.")
@@ -254,4 +279,41 @@ def metric_page(cat: Catalogue, key: str) -> None:
         if st.button("Delete this metric"):
             K.delete_metric(cat, m["uid"])
             go(None)
+            st.rerun()
+
+
+def sap_page(cat: Catalogue) -> None:
+    from pdcat import sapterms, suggestions
+    st.title("SAP links")
+    st.caption("What your tables and columns are in SAP terms, and what still uses APO. Suggestions come from column "
+               "and table names (SAP field names such as WERKS, or usual English names such as Plant); you confirm "
+               "each one. Set them by hand in a table's columns or its About box.")
+    waiting = len(suggestions.open_suggestions(cat, "sap"))
+    if waiting:
+        with st.expander(f"💡 Suggested SAP meanings ({waiting})", expanded=True):
+            from .groups_page import suggestion_picker
+            suggestion_picker(cat, "sap", prefix="sapp")
+    rows = sapterms.sap_items(cat)
+    st.subheader(f"Linked to SAP ({len(rows)})")
+    if rows:
+        df = pd.DataFrame(rows)
+        event = st.dataframe(df.drop(columns=["key"]), hide_index=True, width="stretch", on_select="rerun",
+                             selection_mode="single-row", key="sap-items")
+        sel = event.selection.rows if event else []
+        if sel:
+            go(rows[sel[0]]["key"])
+            st.rerun()
+    else:
+        st.caption("Nothing linked yet.")
+    apo = sapterms.apo_items(cat)
+    st.subheader(f"Still uses APO ({len(apo)})")
+    st.caption("Tables, files, scripts and reports whose names, columns or SQL mention APO, with the IBP equivalent "
+               "of what they use. The APO to IBP starter pack in Knowledge explains each change.")
+    if apo:
+        df = pd.DataFrame(apo)
+        event = st.dataframe(df.drop(columns=["key"]), hide_index=True, width="stretch", on_select="rerun",
+                             selection_mode="single-row", key="apo-items")
+        sel = event.selection.rows if event else []
+        if sel:
+            go(apo[sel[0]]["key"])
             st.rerun()

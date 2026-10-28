@@ -435,13 +435,20 @@ def agent_instructions(p: Pack) -> str:
         *[f"- {s}" for s in starters], ""])
 
 
-def build(cat: Catalogue, *, hide_locations: bool = False, include_values: bool = False) -> dict[str, str]:
+def build(cat: Catalogue, *, hide_locations: bool = False, include_values: bool = False,
+          include_documents: bool = False) -> dict[str, str]:
     """{file name: Markdown} for the whole pack."""
+    from . import aipack21 as v21
     p = Pack(cat, hide_locations=hide_locations, include_values=include_values)
     files: dict[str, str] = {}
-    for name, fn in (("business-rules.md", business_rules), ("glossary.md", glossary),
-                     ("example-questions.md", example_questions), ("reports.md", reports),
-                     ("ml-features.md", features), ("code.md", code)):
+    parts = [("business-rules.md", business_rules), ("glossary.md", glossary),
+             ("example-questions.md", example_questions), ("reports.md", reports),
+             ("ml-features.md", features), ("code.md", code), ("naming-rules.md", v21.naming_rules),
+             ("sap.md", v21.sap), ("sql-queries.md", v21.sql_queries)]
+    if include_documents:
+        parts.append(("reference-documents.md", v21.documents))
+    parts.append(("test-questions.md", v21.test_file))
+    for name, fn in parts:
         text = fn(p)
         if text.strip():
             files[name] = text
@@ -451,8 +458,10 @@ def build(cat: Catalogue, *, hide_locations: bool = False, include_values: bool 
     return files
 
 
-def to_zip(cat: Catalogue, *, hide_locations: bool = False, include_values: bool = False, fmt: str = "md") -> bytes:
-    files = build(cat, hide_locations=hide_locations, include_values=include_values)
+def to_zip(cat: Catalogue, *, hide_locations: bool = False, include_values: bool = False, fmt: str = "md",
+           include_documents: bool = False) -> bytes:
+    files = build(cat, hide_locations=hide_locations, include_values=include_values,
+                  include_documents=include_documents)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, text in files.items():
@@ -464,10 +473,12 @@ def to_zip(cat: Catalogue, *, hide_locations: bool = False, include_values: bool
     return buf.getvalue()
 
 
-def write(cat: Catalogue, out, *, hide_locations: bool = False, include_values: bool = False, fmt: str = "md"):
+def write(cat: Catalogue, out, *, hide_locations: bool = False, include_values: bool = False, fmt: str = "md",
+          include_documents: bool = False):
     from pathlib import Path
     out = Path(out)
-    files = build(cat, hide_locations=hide_locations, include_values=include_values)
+    files = build(cat, hide_locations=hide_locations, include_values=include_values,
+                  include_documents=include_documents)
     written = []
     for name, text in files.items():
         path = out / (name[:-3] + ".docx" if fmt == "docx" else name)

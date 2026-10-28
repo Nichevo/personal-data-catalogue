@@ -94,7 +94,7 @@ pdcat scan --plan                            # print the SQL Server queries, sen
 - Nothing is ever deleted. Items that have gone are marked "missing" and keep their notes.
 - Re-run it whenever your code or databases change. Unchanged files aren't re-read.
 
-To scan every morning, add a Windows Task Scheduler task that runs `pdcat scan`.
+To refresh the catalogue on its own every week, see [Scan on a schedule](#scan-on-a-schedule).
 
 ### `pdcat profile`
 
@@ -106,7 +106,7 @@ It is read-only and uses `NOLOCK`, so it never blocks anyone.
 pdcat profile dbo.SalesDaily dbo.Store       # these tables
 pdcat profile --used                         # every table your code or pasted SQL uses
 pdcat profile --used --source warehouse      # ...on one server only
-pdcat profile --queue                        # the tables approved on the app's SQL scanning page
+pdcat profile --queue                        # the tables approved under Add › Sources › SQL scanning
 pdcat profile --used --plan                  # print the queries, send nothing
 ```
 
@@ -265,9 +265,11 @@ pdcat ai-export --out C:\temp\copilot-pack --docx --hide-locations
 | `--docx` | Word files instead of Markdown. |
 | `--hide-locations` | Leave out server names and file locations. |
 | `--values` | Include value ranges and common values. Sensitive columns are always left out. |
+| `--documents` | Include the text of reference documents kept with business projects. |
 
 Put the folder on OneDrive or SharePoint, add it to a Copilot agent as knowledge, and
-paste in `agent-instructions`. The app's **Copilot pack** page does the same with a
+paste in `agent-instructions`. Since 2.1 the pack also has naming-rules, sap, sql-queries
+and test-questions files. The app's **Copilot pack** page does the same with a
 download button.
 
 ### `pdcat export`
@@ -298,13 +300,78 @@ pdcat openmetadata --out om.zip
 ```
 
 Unzip it and run the loader inside it against your OpenMetadata server. It needs the
-`requests` package and a bot token from OpenMetadata, and is safe to run again:
+`requests` package and a bot token from OpenMetadata, and is safe to run again. Put the
+token in an environment variable rather than on the command line, so it doesn't end up
+in your command history:
 
 ```powershell
-python load_openmetadata.py https://your-openmetadata:8585 <bot token> --dry-run
+$env:OPENMETADATA_TOKEN = "<bot token>"
+python load_openmetadata.py https://your-openmetadata:8585 --dry-run   # list what it would send
+python load_openmetadata.py https://your-openmetadata:8585
 ```
 
 ---
+
+## Scan on a schedule
+
+Windows Task Scheduler can refresh the catalogue for you, say every Monday at 7am.
+
+**The quick way (2.1):** on the app's **Settings** page, under **Scan on a schedule**,
+pick a day and time and click **Schedule the weekly scan**. The app writes a batch file
+next to your catalogue that uses the same Python as the app (no conda paths to fill in),
+creates a task called `pdcat weekly scan`, and from then on shows when it last ran,
+whether it worked, the end of `scan.log`, and a button to remove it. The task is the same
+one the steps below make by hand (it keeps the name `pdcat weekly scan`), so use one way
+or the other.
+
+**By hand:** the repo has a ready-made batch file, `scripts\windows\pdcat-weekly-scan.bat`, that runs
+`pdcat scan` and then `pdcat profile --queue` (the tables you approved under
+**Add › Sources › SQL scanning**), and writes everything to `%USERPROFILE%\.pdcat\scan.log`.
+
+**1. Copy the batch file and check two lines.** Copy it to `%USERPROFILE%\.pdcat\`
+and open it in Notepad:
+
+- `CONDA_BASE`: where conda is installed. In Anaconda Prompt, run `conda info --base`
+  and paste what it prints (often `C:\Users\you\miniconda3` or `...\anaconda3`).
+- `PDCAT_CONFIG`: your `config.toml`. The default, `%USERPROFILE%\.pdcat\config.toml`,
+  is where `pdcat init` and the **Get started** page put it.
+
+If you used a virtual environment instead of conda, replace the `call ... activate.bat`
+line with `call C:\path\to\venv\Scripts\activate.bat`.
+
+**2. Try it once by hand.** Double-click the batch file, then open `scan.log`. It
+should end with the scan's summary. Fix anything it complains about before scheduling.
+
+**3. Create the task.** In an ordinary Command Prompt (not as administrator), run:
+
+```bat
+schtasks /Create /TN "pdcat weekly scan" /SC WEEKLY /D MON /ST 07:00 /TR "%USERPROFILE%\.pdcat\pdcat-weekly-scan.bat"
+```
+
+Change `/D MON /ST 07:00` for another day and time (`/D MON,THU` for twice a week, or
+`/SC DAILY` without `/D` for every day). Or use the Task Scheduler app: **Create Basic
+Task**, pick **Weekly**, choose **Start a program** and browse to the batch file.
+
+The task runs as you, while you're logged on, so it uses your own Windows login for
+SQL Server and can reach your mapped drives, the same as when you run `pdcat scan`
+yourself. If the laptop is off at the time, tick **Run task as soon as possible after
+a scheduled start is missed** in the task's **Settings** tab and it runs when you're
+back.
+
+**Checking on it**
+
+- `scan.log` has every run, with the date and the result.
+- `schtasks /Query /TN "pdcat weekly scan" /V /FO LIST` shows the last run time and its
+  result (`0` worked, `1` something failed, `2` couldn't start; see [Exit codes](#exit-codes)).
+- In the app, the sidebar shows when each source was last scanned.
+- Run it now: `schtasks /Run /TN "pdcat weekly scan"`. Remove it:
+  `schtasks /Delete /TN "pdcat weekly scan"`.
+
+The scan goes as gently as a manual one: one SQL query at a time with the pause, time
+limit, per-run cap and quiet hours from the **Settings** page. It never deletes
+anything. You can leave the app open, but pick a time when you won't be editing in it:
+saving a note while a scan is writing can fail with "database is locked" (save again
+once the scan finishes).
 
 ## Exit codes
 

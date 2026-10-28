@@ -75,7 +75,82 @@ def resolve_imports(cat: Catalogue) -> int:
         cat.conn.executemany(
             "INSERT OR REPLACE INTO links (src_key, relation, dst_ref, dst_key, source, hint, evidence) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)", links)
+    resolve_runs(cat, modules)
     return len(links)
+
+
+def resolve_runs(cat: Catalogue, modules: dict[str, str] | None = None) -> int:
+    """Rebuild the "runs" links: one script starting another (subprocess, python -m, runpy, %run, !python).
+    A path is matched in the script's own folder, then from its project's root, then by file name
+    anywhere (flagged, since it may be the wrong copy)."""
+    by_rel: dict[tuple[str, str], str] = {}
+    by_name: dict[str, list[str]] = defaultdict(list)
+    runners = []
+    for row in cat.conn.execute("SELECT key, name, source, parent, attrs FROM assets "
+                                "WHERE kind IN ('script', 'notebook') AND status = 'active'"):
+        rel = row["name"].replace("\\", "/").lower()
+        by_rel[(row["parent"] or "", rel)] = row["key"]
+        by_name[rel.rsplit("/", 1)[-1]].append(row["key"])
+        attrs = json.loads(row["attrs"])
+        if attrs.get("runs"):
+            runners.append((row["key"], row["name"], row["source"], row["parent"] or "", attrs["runs"]))
+    if modules is None:
+        modules = {}
+        for row in cat.conn.execute("SELECT key, attrs FROM assets WHERE kind = 'script' AND status = 'active'"):
+            for name in json.loads(row["attrs"]).get("modules", []):
+                modules.setdefault(name, row["key"])
+    links = []
+    for key, rel, source, parent, runs in runners:
+        folder = rel.replace("\\", "/").rsplit("/", 1)[0] if "/" in rel else ""
+        for r in runs:
+            target, how = r["target"], r["how"]
+            dst = None
+            if target.startswith("module:"):
+                dst = modules.get(target[7:]) or _longest_match(target[7:], modules)
+            else:
+                t = target.replace("\\", "/").lower()
+                while t.startswith("./"):
+                    t = t[2:]
+                for cand in (_norm_join(folder.lower(), t), t, t.rsplit("/", 1)[-1] if "/" in t else None):
+                    if cand and (parent, cand) in by_rel:
+                        dst = by_rel[(parent, cand)]
+                        break
+                if dst is None:
+                    same = by_name.get(t.rsplit("/", 1)[-1], [])
+                    if len(same) == 1:
+                        dst, how = same[0], f"{how}, matched by file name in another folder"
+                    elif len(same) > 1:
+                        how = f"{how}, {len(same)} files have this name"
+            if dst != key:
+                links.append((key, "runs", f"script:{target}", dst, source, None,
+                              f"{rel}:{r['line']}" if r.get("line") else rel, how))
+    with cat.conn:
+        cat.conn.execute("DELETE FROM links WHERE relation = 'runs' AND source != 'by hand'")
+        cat.conn.executemany(
+            "INSERT OR REPLACE INTO links (src_key, relation, dst_ref, dst_key, source, hint, evidence, how) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", links)
+    return len(links)
+
+
+def _norm_join(folder: str, rel: str) -> str:
+    parts: list[str] = []
+    for part in (folder.split("/") if folder else []) + rel.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    return "/".join(parts)
+
+
+def called_by(cat: Catalogue, key: str) -> list[dict[str, Any]]:
+    """Every other script that uses this one: imports it (and which functions), or runs it."""
+    return [dict(r) for r in cat.conn.execute(
+        "SELECT l.src_key, l.relation, l.evidence, l.how, a.name AS src_name, a.kind AS src_kind, a.source "
+        "FROM links l JOIN assets a ON a.key = l.src_key WHERE l.dst_key = ? AND l.relation IN ('imports', 'runs') "
+        "ORDER BY a.source, a.name", (key,))]
 
 
 def _absolute(module: str, level: int, own: str, is_package: bool) -> str | None:
@@ -242,8 +317,31 @@ class Graph:
     edges: dict[tuple[str, str, str], set[str]] = field(default_factory=lambda: defaultdict(set))  # (a, b, rel) -> labels
 
 
+def _run_links(cat: Catalogue) -> dict[str, list[str]]:
+    out: dict[str, list] = defaultdict(list)
+    for l in cat.conn.execute("SELECT src_key, dst_key FROM links WHERE relation = 'runs' AND dst_key IS NOT NULL"):
+        out[l["src_key"]].append(l["dst_key"])
+    return out
+
+
+def hidden_from_map(cat: Catalogue, show_old: bool = False) -> set[str]:
+    """Items the code map leaves out: not relevant, older versions of scripts, and (unless show_old)
+    items marked old or inside a project marked old."""
+    from .curation import hidden_keys
+    from .groups import older_versions
+    hidden = hidden_keys(cat, old=not show_old) | older_versions(cat)
+    if not show_old:
+        from .folderroles import archived
+        hidden |= archived(cat)  # inside a folder whose role is archive
+    if hidden:
+        old_parents = tuple(hidden)
+        marks = ", ".join("?" * len(old_parents))
+        hidden |= {r[0] for r in cat.conn.execute(f"SELECT key FROM assets WHERE parent IN ({marks})", old_parents)}
+    return hidden
+
+
 def build_graph(cat: Catalogue, project: str | None = None, *, level: str = "modules",
-                include_data: bool = True) -> Graph:
+                include_data: bool = True, show_old: bool = False) -> Graph:
     """Graph of code (and optionally data) for one project/library source, or everything.
 
     level="modules": one node per file, grouped by project/library.
@@ -252,7 +350,12 @@ def build_graph(cat: Catalogue, project: str | None = None, *, level: str = "mod
     """
     assets = _assets(cat)
     imports = _import_links(cat)
-    code = {k for k, a in assets.items() if a["kind"] in CODE_KINDS and a["status"] == "active"}
+    runs = _run_links(cat)
+    hidden = hidden_from_map(cat, show_old)
+    from .links import unimportant
+    noise = unimportant(cat)
+    backup_of = _backup_main(cat)
+    code = {k for k, a in assets.items() if a["kind"] in CODE_KINDS and a["status"] == "active" and k not in hidden}
     if project:
         scope, frontier = set(), [k for k in code if assets[k]["source"] == project]
         while frontier:
@@ -261,6 +364,7 @@ def build_graph(cat: Catalogue, project: str | None = None, *, level: str = "mod
                 continue
             scope.add(k)
             frontier += [t for t, _ in imports.get(k, []) if t in code]
+            frontier += [t for t in runs.get(k, []) if t in code]
     else:
         scope = code
 
@@ -284,18 +388,36 @@ def build_graph(cat: Catalogue, project: str | None = None, *, level: str = "mod
                 b_id = code_node(target)
                 if a_id != b_id:
                     g.edges[(a_id, b_id, "imports")].update(used)
+        for target in runs.get(k, []):
+            if target in scope:
+                b_id = code_node(target)
+                if a_id != b_id:
+                    g.edges[(a_id, b_id, "runs")]
         if include_data:
             for l in _data_links(cat, k):
                 d = l["dst_key"] or l["dst_ref"]
+                if d in hidden or (k, l["relation"], d) in noise:
+                    continue
+                if d in backup_of:  # a main table and its backup show as one
+                    d = backup_of[d]
                 da = assets.get(d)
                 kind = (da["kind"] if da else ("file" if d.startswith("file:") else "table"))
                 label = da["name"] if da else d.split(":", 1)[-1]
                 if da and da["kind"] in CODE_KINDS:
                     continue
+                if d in backup_of.values():
+                    label = f"{label} (main + backup)"
                 g.nodes[d] = {"label": label, "kind": "file" if kind in ("data_file", "file") else "table",
                               "group": None}
                 g.edges[(a_id, d, l["relation"])]
     return g
+
+
+def _backup_main(cat: Catalogue) -> dict[str, str]:
+    """Each member of a main + backup pair -> the main table's key."""
+    return {r[0]: r[1] for r in cat.conn.execute(
+        "SELECT m.asset_key, g.main_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid "
+        "WHERE g.type = 'backup' AND g.main_key IS NOT NULL")}
 
 
 def _ids(g: Graph) -> dict[str, str]:
@@ -549,10 +671,10 @@ def _edge_label(labels: set[str], limit: int = 3) -> str:
 
 
 def cyto_elements(cat: Catalogue, project: str | None = None, *, level: str = "modules", include_data: bool = True,
-                  include_packages: bool = False) -> list[dict[str, Any]]:
+                  include_packages: bool = False, show_old: bool = False) -> list[dict[str, Any]]:
     """Elements for the graph viewer: files grouped by project and sub-folder, tables grouped by
     database, files by folder, and third-party packages in one group (closed to start with)."""
-    g = build_graph(cat, project, level=level, include_data=include_data)
+    g = build_graph(cat, project, level=level, include_data=include_data, show_old=show_old)
     assets = _assets(cat)
     roles = {a["source"]: a["attrs"].get("role", "project") for a in assets.values() if a["kind"] == "project"}
     nodes: dict[str, dict[str, Any]] = {}
@@ -601,7 +723,7 @@ def cyto_elements(cat: Catalogue, project: str | None = None, *, level: str = "m
             place(nid, parent)
         nodes[nid] = {"data": data}
     edges = [{"data": {"id": f"e{i}", "source": a, "target": b, "relation": rel,
-                       "label": _edge_label(labels) if rel == "imports" else ""}}
+                       "label": _edge_label(labels) if rel == "imports" else "runs" if rel == "runs" else ""}}
              for i, ((a, b, rel), labels) in enumerate(g.edges.items())]
     if include_packages and level == "modules":
         from .libclass import THIRD, Classifier, normalise

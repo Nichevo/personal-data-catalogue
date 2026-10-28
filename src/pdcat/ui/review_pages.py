@@ -9,7 +9,7 @@ from pdcat.review import (BY_DESIGN, CATEGORY_LABELS, RULES, ensure_fresh, hotsp
                           set_tasks_status)
 from pdcat.store import NOTE_TYPES, Catalogue
 
-from .common import asset_button, cached, go
+from .common import asset_button, cached, go, page_title
 
 CATEGORY_ICONS = {"docs": "📝", "change": "🔄", "warning": "⚠️"}
 SORTS = {"Most important first": ("priority", False), "Most used first": ("used by", False),
@@ -138,7 +138,7 @@ def _hotspots(cat: Catalogue):
 
 
 def hotspots_page(cat: Catalogue) -> None:
-    st.title("Issue hotspots")
+    page_title("Issue hotspots")
     st.caption("Where problems cluster. Score = 5 × open data issues + 3 × automatic warnings (odd values, "
                "files that differ from their source, stale files) + 2 × disappeared + 1 × undocumented.")
     ensure_fresh(cat)

@@ -8,38 +8,81 @@ import streamlit as st
 from pdcat.store import Catalogue
 
 from . import code, review_pages, search, settings_page, share, sources
-from .common import icon, kind_label, open_catalogue, timed
+from .common import go, icon, kind_label, open_catalogue, timed
 from .detail import detail
 
 Page = Callable[[Catalogue], None]
 
 
+def combined(title: str, caption: str, views: dict[str, Page]) -> Page:
+    """One menu page made of several views, picked with a row of buttons. Only the picked view runs."""
+    def page(cat: Catalogue) -> None:
+        st.title(title)
+        if caption:
+            st.caption(caption)
+        view = st.radio(title, list(views), horizontal=True, key=f"sub-{title}", label_visibility="collapsed")
+        st.session_state["_sub_page"] = True
+        try:
+            views[view](cat)
+        finally:
+            st.session_state["_sub_page"] = False
+    return page
+
+
 def sections() -> dict[str, dict[str, Page]]:
-    from . import (bproject_pages, curation_pages, erd_page, keys_pages, knowledge_pages, lists, ml_pages,
-                   scanning, setup_page)
+    from . import (bproject_pages, curation_pages, erd_page, groups_page, home_page, keys_pages, knowledge_pages,
+                   lists, menu_guide, ml_pages, scanning, setup_page, sources_extra, sql_pages)
     return {
-        "🔎 Find": {"Search": search.search_page, "Company-wide keys": keys_pages.keys_page,
-                   "Packages": code.packages_page},
+        "🏠 Home": {"Home": home_page.home_page, "Menu guide": menu_guide.menu_guide_page},
+        "🔎 Find": {"Search": search.search_page, "SQL queries": sql_pages.queries_page},
         "📚 Knowledge": {"Knowledge": knowledge_pages.knowledge_page, "Business projects": bproject_pages.bprojects_page,
                         "Question library": knowledge_pages.questions_page,
-                        "Metric glossary": knowledge_pages.metrics_page, "Feature dictionary": ml_pages.features_page},
-        "📋 Review": {"Coverage": curation_pages.coverage_page, "Describe columns": curation_pages.describe_columns_page,
-                     "Edit many items": curation_pages.bulk_edit_page, "To review": review_pages.review_page, "Issue hotspots": review_pages.hotspots_page,
-                     "Data issues": search.data_issues_page, "Needs notes": search.needs_notes_page,
-                     "Recent notes": search.recent_notes_page, "Unmatched tables": search.unmatched_page,
-                     "Unlinked data": lists.unlinked_page, "Recent changes": lists.changes_page,
-                     "Sensitive data": keys_pages.sensitive_page, "Duplicates": lists.duplicates_page},
-        "🗺️ Map": {"Code map": code.code_map_page, "Database diagrams": erd_page.erd_page},
-        "➕ Add": {"Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
-                  "SQL scanning": scanning.scanning_page},
+                        "Metric glossary": knowledge_pages.metrics_page, "ML model features": ml_pages.features_page,
+                        "SAP links": knowledge_pages.sap_page, "Company-wide keys": keys_pages.keys_page},
+        "📋 Review": {
+            "To review": combined("To review", "", {
+                "All checks": review_pages.review_page, "Data issues": search.data_issues_page,
+                "Needs notes": search.needs_notes_page, "Unmatched tables": search.unmatched_page,
+                "Unlinked data": lists.unlinked_page, "Duplicates": lists.duplicates_page}),
+            "Suggestions": groups_page.suggestions_page,
+            "Health": combined("Health", "How well the catalogue is described, and where problems gather.", {
+                "Coverage": curation_pages.coverage_page, "Issue hotspots": review_pages.hotspots_page}),
+            "What's new": combined("What's new", "", {
+                "Recent notes": search.recent_notes_page, "Recent changes": lists.changes_page}),
+            "Bulk edit": combined("Bulk edit", "", {
+                "Describe columns": curation_pages.describe_columns_page,
+                "Edit many items": curation_pages.bulk_edit_page}),
+        },
+        "🗺️ Map": {"Code map": code.code_map_page, "Database diagrams": erd_page.erd_page,
+                   "Packages": code.packages_page},
+        "➕ Add": {
+            "Sources": combined("Sources", "Where the catalogue reads from: SQL you paste, folders of data and code, "
+                                           "and SQL Server databases.", {
+                "Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
+                "SQL scanning": scanning.scanning_page}),
+            "Schedules": sources_extra.schedules_page, "Conda environments": sources_extra.envs_page,
+            "Import from Excel": sources_extra.excel_import_page},
         "📤 Share": {"Share with colleagues": share.sharing_page, "Copilot pack": share.copilot_page,
                     "Export": share.export_page},
-        "⚙️ Settings": {"Settings": settings_page.settings_page, "Get started": setup_page.setup_page},
+        "⚙️ Settings": {"Settings": settings_page.settings_page, "Sensitive data": keys_pages.sensitive_page,
+                       "Get started": setup_page.setup_page},
     }
 
 
-NEEDS_DATA = {"Search", "Data issues", "Needs notes", "Recent notes", "Unmatched tables", "Packages", "Coverage",
-              "Describe columns", "Edit many items"}
+# Pages that became a view of a combined page: old name -> (page, view).
+ALIASES = {
+    "Data issues": ("To review", "Data issues"), "Needs notes": ("To review", "Needs notes"),
+    "Unmatched tables": ("To review", "Unmatched tables"), "Unlinked data": ("To review", "Unlinked data"),
+    "Duplicates": ("To review", "Duplicates"), "Coverage": ("Health", "Coverage"),
+    "Issue hotspots": ("Health", "Issue hotspots"), "Recent notes": ("What's new", "Recent notes"),
+    "Recent changes": ("What's new", "Recent changes"), "Describe columns": ("Bulk edit", "Describe columns"),
+    "Edit many items": ("Bulk edit", "Edit many items"), "Add SQL": ("Sources", "Add SQL"),
+    "Data folders": ("Sources", "Data folders"), "SQL scanning": ("Sources", "SQL scanning"),
+    "Feature dictionary": ("ML model features", None),
+}
+
+
+NEEDS_DATA = {"Search", "Packages", "Health", "Bulk edit"}
 
 
 def leave_item() -> None:
@@ -54,11 +97,33 @@ def pick_from_item(section: str) -> None:
     leave_item()
 
 
+def search_from_sidebar() -> None:
+    """Typing in the sidebar search box opens the Search page with those words."""
+    from .common import go_page
+    text = st.session_state.get("sidebar-search", "")
+    if text.strip():
+        st.session_state["search-text"] = text
+        go_page("Search")
+
+
+def recently_viewed(cat: Catalogue) -> None:
+    from pdcat.followups import kind_of, recent
+    current = st.query_params.get("asset")
+    rows = [r for r in recent(cat, limit=7) if r["item"] != current][:6]
+    if rows:
+        with st.expander("🕘 Recently viewed", expanded=False):
+            for i, r in enumerate(rows):
+                st.button(f"{icon(kind_of(r['item'], r['kind']))} {r['name']}", key=f"recent-{i}", on_click=go,
+                          args=(r["item"],), type="tertiary")
+
+
 def sidebar(cat: Catalogue) -> tuple[str, Page]:
     from pdcat.review import count_open
     secs = sections()
     with st.sidebar:
         st.header("Data catalogue")
+        st.text_input("Search", key="sidebar-search", placeholder="🔎 Search everything", label_visibility="collapsed",
+                      on_change=search_from_sidebar)
         section = st.selectbox("Section", list(secs), key="nav-section", label_visibility="collapsed",
                                on_change=leave_item)
         pages = secs[section]
@@ -70,6 +135,10 @@ def sidebar(cat: Catalogue) -> tuple[str, Page]:
         else:
             page = st.radio("Page", list(pages), key=f"nav-{section}", label_visibility="collapsed",
                             on_change=leave_item)
+        recently_viewed(cat)
+        from .common import go_page
+        st.button("📖 Menu guide", key="menu-guide-link", on_click=go_page, args=("Menu guide",), type="tertiary",
+                  help="What every page in the menu is for")
         st.divider()
         stats = cat.stats()
         kinds = stats["kinds"]
@@ -89,6 +158,9 @@ def session_start(cat: Catalogue) -> None:
     if st.session_state.get("_session_started"):
         return
     st.session_state["_session_started"] = True
+    from pdcat.store import now
+    st.session_state["_last_visit"] = cat.setting("last_visit")
+    cat.set_setting("last_visit", now(), quiet=True)
     from pdcat.backup import maybe_backup
     try:
         made = maybe_backup(cat)
@@ -105,7 +177,7 @@ def main() -> None:
     try:
         session_start(cat)
         if st.session_state.get("_upgraded"):
-            st.success("Upgraded your catalogue to version 2. Every note was kept, and an untouched copy of the "
+            st.success("Upgraded your catalogue to version 2.1. Every note was kept, and an untouched copy of the "
                        f"old file is at `{st.session_state['_upgraded']}`.", icon="✅")
             st.button("OK", on_click=lambda: st.session_state.pop("_upgraded", None))
         if st.session_state.get("_backup_error"):
@@ -116,6 +188,8 @@ def main() -> None:
         if key:
             with timed("item page"):
                 detail(cat, key)
+            from pdcat.followups import viewed
+            viewed(cat, key)
         elif name in NEEDS_DATA and not cat.stats()["kinds"] and not cat.conn.execute(
                 "SELECT 1 FROM knowledge LIMIT 1").fetchone():
             from .setup_page import setup_page

@@ -61,6 +61,10 @@ JOIN sys.schemas rs ON rs.schema_id = ro.schema_id
 JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
 """
 
+# Tables SQL Server tools make for themselves, such as dbo.sysdiagrams, carry this property.
+TOOLS_FILTER = ("\n  AND NOT EXISTS (SELECT 1 FROM sys.extended_properties tp WHERE tp.class = 1 "
+                "AND tp.major_id = o.object_id AND tp.minor_id = 0 AND tp.name = 'microsoft_database_tools_support')")
+
 KINDS = {"U": "table", "V": "view", "P": "procedure"}
 MAX_DEFINITION = 50_000
 
@@ -79,17 +83,23 @@ def connection_string(src: SqlServerSource, database: str) -> str:
     return s + src.extra if src.extra else s
 
 
-def objects_sql(definitions: bool = True) -> str:
-    return OBJECTS_SQL if definitions else OBJECTS_SQL.replace("OBJECT_DEFINITION(o.object_id)", "NULL")
+def objects_sql(definitions: bool = True, skip_tool_tables: bool = True) -> str:
+    sql = OBJECTS_SQL if definitions else OBJECTS_SQL.replace("OBJECT_DEFINITION(o.object_id)", "NULL")
+    return sql.rstrip() + TOOLS_FILTER + "\n" if skip_tool_tables else sql
+
+
+def columns_sql(skip_tool_tables: bool = True) -> str:
+    return COLUMNS_SQL.rstrip() + TOOLS_FILTER + "\n" if skip_tool_tables else COLUMNS_SQL
 
 
 def plan_scan(cat: Catalogue, src: SqlServerSource, databases: list[str] | None = None) -> list[dict[str, str]]:
     """The queries a metadata scan would send, without connecting."""
     from .pacing import settings
-    defs = bool(settings(cat)["sql_scan_definitions"])
+    s = settings(cat)
+    defs, skip = bool(s["sql_scan_definitions"]), bool(s["sql_skip_tool_tables"])
     out = []
     for db in databases or src.databases:
-        for purpose, sql in (("tables, views and procedures", objects_sql(defs)), ("columns", COLUMNS_SQL),
+        for purpose, sql in (("tables, views and procedures", objects_sql(defs, skip)), ("columns", columns_sql(skip)),
                              ("keys and relationships", KEYS_SQL)):
             out.append({"source": src.name, "database": db, "purpose": purpose, "query": sql.strip()})
     return out
@@ -106,8 +116,8 @@ def fetch(src: SqlServerSource, database: str, pacer, connector=None) -> dict[st
     try:
         cur = conn.cursor()
         out = {}
-        defs = bool(pacer.s["sql_scan_definitions"])
-        for name, sql in (("objects", objects_sql(defs)), ("columns", COLUMNS_SQL), ("keys", KEYS_SQL)):
+        defs, skip = bool(pacer.s["sql_scan_definitions"]), bool(pacer.s.get("sql_skip_tool_tables", True))
+        for name, sql in (("objects", objects_sql(defs, skip)), ("columns", columns_sql(skip)), ("keys", KEYS_SQL)):
             try:
                 cols, rows = pacer.query(cur, sql, purpose=f"scan {name}", database=database)
             except Exception:

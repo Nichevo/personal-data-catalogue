@@ -114,7 +114,7 @@ def test_folder_scan_and_remove(tmp_path):
     pd.DataFrame({"a": [1]}).to_csv(folder / "top.csv", index=False)
     pd.DataFrame({"a": [1]}).to_csv(folder / "sub" / "deep.csv", index=False)
     cat.add_folder("extracts", str(folder), recursive=False)
-    assert scan_folder(cat, "extracts", folder, recursive=False) == {"files": 1, "series": 0, "reports": 0, "workbooks": 0,
+    assert scan_folder(cat, "extracts", folder, recursive=False) == {"files": 1, "series": 0, "reports": 0, "workbooks": 0, "access": 0,
                                                                     "errors": 0}
     assert scan_folder(cat, "extracts", folder, recursive=True)["files"] == 2
     assert cat.get_asset("files://extracts/sub/deep.csv")["attrs"]["row_count"] == 1

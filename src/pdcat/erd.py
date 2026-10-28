@@ -229,7 +229,7 @@ def _key_cols(cat: Catalogue, key: str, attrs: dict, rels: list[dict]) -> tuple[
     return pk, fk
 
 
-def erd_elements(cat: Catalogue, db_key: str, area_uid: str | None = None) -> list[dict[str, Any]]:
+def erd_elements(cat: Catalogue, db_key: str, area_uid: str | None = None, *, fields: bool = False) -> list[dict[str, Any]]:
     items = tables(cat, db_key)
     all_areas = ensure_areas(cat, db_key)
     chosen = [a for a in all_areas if area_uid in (None, a["uid"])]
@@ -248,23 +248,33 @@ def erd_elements(cat: Catalogue, db_key: str, area_uid: str | None = None) -> li
             continue
         nodes.append({"data": {"id": gid, "label": a["name"], "kind": "group", "count": len(inside), "open": True}})
         for m in inside:
-            nodes.append(_table_node(cat, m["key"], items[m["key"]], rels, gid, m["shared"]))
+            nodes.append(_table_node(cat, m["key"], items[m["key"]], rels, gid, m["shared"], fields))
             placed.add(m["key"])
     others = keys - placed
     if others:
         nodes.append({"data": {"id": "grp:area:other", "label": "In other areas", "kind": "group",
                                "count": len(others)}})
-        nodes += [_table_node(cat, k, items[k], rels, "grp:area:other", False) for k in sorted(others)]
+        nodes += [_table_node(cat, k, items[k], rels, "grp:area:other", False, fields) for k in sorted(others)]
     edges = [{"data": {"id": f"r{i}", "source": r["src_key"], "target": r["dst_key"],
                        "relation": r["state"], "label": f"{r['src_columns']} = {r['dst_columns']}"}}
              for i, r in enumerate(rels) if r["src_key"] in keys and r["dst_key"] in keys]
     return nodes + edges
 
 
-def _table_node(cat: Catalogue, key: str, t: dict, rels: list[dict], parent: str, shared: bool) -> dict:
+MAX_FIELDS = 25
+
+
+def _table_node(cat: Catalogue, key: str, t: dict, rels: list[dict], parent: str, shared: bool,
+                fields: bool = False) -> dict:
     pk, fk = _key_cols(cat, key, t["attrs"], rels)
     lines = [t["name"] + (" (shared)" if shared else "")]
-    lines += [f"🔑 {c}" for c in pk] + [f"→ {c}" for c in fk[:6]]
+    if fields:  # every column, keys marked
+        cols = [c["name"] for c in cat.columns(key)]
+        lines += [("🔑 " if c in pk else "→ " if c in fk else "• ") + c for c in cols[:MAX_FIELDS]]
+        if len(cols) > MAX_FIELDS:
+            lines.append(f"… {len(cols) - MAX_FIELDS} more")
+    else:
+        lines += [f"🔑 {c}" for c in pk] + [f"→ {c}" for c in fk[:6]]
     return {"data": {"id": key, "label": "\n".join(lines), "kind": t["kind"], "key": key, "parent": parent}}
 
 

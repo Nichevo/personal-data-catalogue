@@ -12,12 +12,15 @@ SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 
 def goto(app, page: str):
     """Pick a page from the sidebar: its section first, then the page."""
-    from pdcat.ui.main import sections
+    from pdcat.ui.main import ALIASES, sections
+    page, view = ALIASES.get(page, (page, None))
     section = next(name for name, pages in sections().items() if page in pages)
     app.sidebar.selectbox(key="nav-section").set_value(section).run()
     keys = [r.key for r in app.sidebar.radio]
     key = f"nav-item-{section}" if f"nav-item-{section}" in keys else f"nav-{section}"
     app.sidebar.radio(key=key).set_value(page).run()
+    if view:
+        app.radio(key=f"sub-{page}").set_value(view).run()
     return app
 
 
@@ -30,9 +33,19 @@ def app(catalogue, monkeypatch):
 def test_search_page_lists_results(app):
     app.run()
     assert not app.exception
-    app.text_input[0].input("sales").run()
-    labels = [b.label for b in app.button]
-    assert any("dbo.SalesDaily" in label for label in labels)
+    assert app.title[0].value == "Home"
+    app.sidebar.text_input(key="sidebar-search").input("sales").run()
+    assert not app.exception
+    assert app.title[0].value == "Search"
+    assert any("dbo.SalesDaily" in str(v) for d in app.dataframe for v in d.value["name"])
+    app.selectbox(key="search-view").set_value("Cards").run()
+    assert any("dbo.SalesDaily" in b.label for b in app.button)
+    app.selectbox(key="search-view").set_value("Table").run()
+    for by in ("Script that creates it", "Family", "Folder or database", "Business project"):
+        app.selectbox(key="search-group").set_value(by).run()
+        assert not app.exception, by
+    app.radio(key="search-quick").set_value("Code").run()
+    assert not app.exception
 
 
 def test_detail_page_add_note(app, catalogue):
@@ -60,7 +73,8 @@ def test_add_sql_page_saves_and_opens_snippet(app, catalogue):
     app.run()
     goto(app, "Add SQL")
     assert not app.exception
-    app.text_input[0].input("Store regions")
+    app.text_input(key="snippet-name").input("Store regions") if any(
+        t.key == "snippet-name" for t in app.text_input) else [t for t in app.text_input if t.key != "sidebar-search"][0].input("Store regions")
     [t for t in app.text_area if t.label == "SQL"][0].input("SELECT Region FROM dbo.Store")
     [b for b in app.button if b.label == "Save SQL"][0].click().run()
     assert not app.exception
@@ -242,10 +256,34 @@ def test_menu_leaves_an_item_page(app):
 
 def test_menu_reopens_the_page_you_came_from(app):
     app.run()
-    assert app.title[0].value == "Search"
+    assert app.title[0].value == "Home"
     app.query_params["asset"] = SALES
     app.run()
-    assert app.sidebar.radio(key="nav-item-🔎 Find").value is None  # no page ticked on an item page
-    app.sidebar.radio(key="nav-item-🔎 Find").set_value("Search").run()
+    assert app.sidebar.radio(key="nav-item-🏠 Home").value is None  # no page ticked on an item page
+    app.sidebar.radio(key="nav-item-🏠 Home").set_value("Home").run()
     assert not app.exception
-    assert "asset" not in app.query_params and app.title[0].value == "Search"
+    assert "asset" not in app.query_params and app.title[0].value == "Home"
+    # the item just viewed is in Recently viewed
+    assert any("dbo.SalesDaily" in b.label for b in app.sidebar.button)
+
+
+def test_long_lists_show_a_page_at_a_time(app, catalogue, monkeypatch):
+    import pdcat.ui.common as common
+    monkeypatch.setattr(common, "RESULT_PAGE", 1)
+    goto(app.run(), "Needs notes")
+    more = [b for b in app.button if b.label.startswith("Show 1 more")]
+    assert more and not app.exception
+    shown = len(app.button)
+    more[0].click().run()
+    assert len(app.button) > shown
+
+
+def test_copilot_preview_is_built_only_when_asked(app, monkeypatch):
+    from pdcat import aipack
+    calls = []
+    real = aipack.build
+    monkeypatch.setattr(aipack, "build", lambda *a, **k: calls.append(1) or real(*a, **k))
+    goto(app.run(), "Copilot pack")
+    assert not calls and not app.exception
+    app.toggle(key="copilot-preview").set_value(True).run()
+    assert calls and not app.exception

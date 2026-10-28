@@ -7,7 +7,8 @@ The zip holds entities.json (OpenMetadata "create" requests, in the order to
 send them) and load_openmetadata.py, which sends them to your OpenMetadata
 server's API:
 
-    python load_openmetadata.py https://openmetadata.example:8585 <bot token>
+    set OPENMETADATA_TOKEN=<bot token>
+    python load_openmetadata.py https://openmetadata.example:8585
 
 Data files, reports and code are not exported: OpenMetadata models those
 through its own connectors.
@@ -120,14 +121,18 @@ def entities(cat: Catalogue) -> list[dict[str, Any]]:
 
 LOADER = r'''"""Load entities.json into OpenMetadata.
 
-    python load_openmetadata.py https://your-openmetadata:8585 <bot JWT token> [--dry-run]
+    set OPENMETADATA_TOKEN=<bot JWT token>
+    python load_openmetadata.py https://your-openmetadata:8585 [--dry-run]
 
-Creates or updates (PUT) each entity, so it is safe to run again. Needs the
-requests package (pip install requests).
+The token can also go after the address, but then it is kept in your command
+history. Creates or updates (PUT) each entity, so it is safe to run again.
+Needs the requests package (pip install requests).
 """
 import json
+import os
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 
@@ -137,10 +142,12 @@ PATHS = {"databaseService": "services/databaseServices", "database": "databases"
 
 
 def main():
-    if len(sys.argv) < 3:
-        sys.exit(__doc__)
-    host, token = sys.argv[1].rstrip("/"), sys.argv[2]
+    args = [a for a in sys.argv[1:] if a != "--dry-run"]
     dry = "--dry-run" in sys.argv
+    token = args[1] if len(args) > 1 else os.environ.get("OPENMETADATA_TOKEN", "")
+    if not args or not (token or dry):
+        sys.exit(__doc__)
+    host = args[0].rstrip("/")
     api = f"{host}/api/v1"
     s = requests.Session()
     s.headers.update({"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
@@ -154,16 +161,16 @@ def main():
         if kind == "lineage":
             ids = []
             for name in (body["from"], body["to"]):
-                r = s.get(f"{api}/tables/name/{name}")
+                r = s.get(f"{api}/tables/name/{quote(name, safe='')}", timeout=60)
                 ids.append(r.json()["id"] if r.ok else None)
             if None in ids:
                 failed += 1
                 continue
             r = s.put(f"{api}/lineage", json={"edge": {
                 "fromEntity": {"id": ids[0], "type": "table"}, "toEntity": {"id": ids[1], "type": "table"},
-                "lineageDetails": {"description": body.get("description", "")}}})
+                "lineageDetails": {"description": body.get("description", "")}}}, timeout=60)
         else:
-            r = s.put(f"{api}/{PATHS[kind]}", json=body)
+            r = s.put(f"{api}/{PATHS[kind]}", json=body, timeout=60)
         if r.ok:
             done += 1
         else:

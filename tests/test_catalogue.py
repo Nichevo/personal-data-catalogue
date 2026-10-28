@@ -161,3 +161,27 @@ def test_pasted_sql_is_linked_searchable_kept_and_exported(catalogue, project):
 
     catalogue.delete_snippet(key)
     assert catalogue.get_asset(key) is None and catalogue.links_from(key) == []
+
+
+def test_one_item_reindex_matches_a_full_rebuild(catalogue):
+    from pdcat import curation, knowledge
+    sales = "sql://warehouse/forecastdb/dbo.salesdaily"
+    knowledge.save_knowledge(catalogue, "Freight", "Always sea freight")
+
+    def index():
+        return sorted(tuple(r) for r in catalogue.conn.execute("SELECT key, kind, source, name, body FROM search_idx"))
+
+    nid = catalogue.add_note(sales + "#Units", "netted against returns", "quirk")
+    catalogue.add_note("file:somewhere/unscanned.csv", "made by hand")
+    catalogue.update_note(nid, "net of returns", "quirk")
+    curation.set_column_info(catalogue, sales, "Units", description="units sold")
+    curation.set_item_info(catalogue, sales, purpose="daily sales")
+    catalogue.archive_note(nid)
+    after_reindex = index()
+    catalogue.rebuild_search()
+    assert after_reindex == index()
+    assert catalogue.search("unscanned")
+    catalogue.delete_note(nid)
+    after_delete = index()
+    catalogue.rebuild_search()
+    assert after_delete == index()

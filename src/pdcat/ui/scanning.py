@@ -5,12 +5,14 @@ import streamlit as st
 
 from pdcat.store import Catalogue
 
+from .common import page_title
+
 
 def profile_request_button(cat: Catalogue, key: str) -> None:
     from pdcat.pacing import queue_state, request_profiles
     state = queue_state(cat, key)
     if state in ("queued", "approved"):
-        st.caption(f"⏳ Waiting to be profiled ({state}). Run `pdcat profile --queue` or use the SQL scanning page.")
+        st.caption(f"⏳ Waiting to be profiled ({state}). Run `pdcat profile --queue` or use Add › Sources › SQL scanning.")
         return
     if st.button("📊 Profile this table", key=f"askprof-{key}",
                  help="Adds it to the queue. Nothing is sent to the server until you run the queue."):
@@ -33,7 +35,7 @@ def scanning_page(cat: Catalogue) -> None:
     from pdcat import pacing
     from pdcat.export import rows_to_csv
 
-    st.title("SQL scanning")
+    page_title("SQL scanning")
     s = pacing.settings(cat)
     st.caption(f"Tables are only profiled when you ask, and queries go one at a time: {s['sql_pause_seconds']}s "
                f"apart, {s['sql_timeout_seconds']}s limit each, at most {s['sql_max_tables_per_run']} tables per run, "

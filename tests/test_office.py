@@ -254,3 +254,13 @@ def test_folder_scan_links_reports_and_workbooks(catalogue, tmp_path):
     # Rescanning an unchanged file reuses what was read.
     assert scan_folder(catalogue, "reports", folder)["reports"] == 1
     assert catalogue.get_asset(measure["key"])["status"] == "active"
+
+
+def test_stored_query_text_has_no_passwords():
+    section = ('section Section1;\nshared Sales = let Source = Odbc.Query("dsn=Sales;uid=me;pwd=s3cret", '
+               '"SELECT * FROM dbo.Sales") in Source;\n'
+               'shared Api = let Source = Web.Contents("https://me:t0ken@example.com/data") in Source;')
+    queries = mquery.read_queries(section)
+    text = json.dumps(queries)
+    assert "s3cret" not in text and "t0ken" not in text
+    assert "pwd=***" in text and "me:***@example.com" in text

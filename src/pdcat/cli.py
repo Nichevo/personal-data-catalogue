@@ -47,7 +47,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         return 0
     failures = 0
     app_folders = [r for r in cat.folders() if r["name"] not in cfg.source_names()]
-    app_libraries = [PythonSource(name=r["name"], path=Path(r["path"]), role="library", data_files=False)
+    app_libraries = [PythonSource(name=r["name"], path=Path(r["path"]), role=r["role"] or "library", data_files=False)
                      for r in cat.libraries() if r["name"] not in cfg.source_names()]
     # SQL Server first, so table names in code can be matched straight away.
     jobs = [(s.name, lambda s=s: scan_server(cat, s, args.database)) for s in cfg.sqlserver]
@@ -227,7 +227,7 @@ def cmd_ai_export(args: argparse.Namespace) -> int:
 
     cat = Catalogue(load_config(find_config(args.config)).db_path)
     files = write(cat, Path(args.out), hide_locations=args.hide_locations, include_values=args.values,
-                  fmt="docx" if args.docx else "md")
+                  fmt="docx" if args.docx else "md", include_documents=args.documents)
     print(f"Wrote {len(files)} files to {args.out}. Put the folder on OneDrive or SharePoint and add it to a "
           "Copilot agent as knowledge; agent-instructions has the text to paste.")
     cat.close()
@@ -356,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     ai.add_argument("--docx", action="store_true", help="Word files instead of Markdown")
     ai.add_argument("--hide-locations", action="store_true", help="leave out server names and file locations")
     ai.add_argument("--values", action="store_true", help="include value ranges and common values (never sensitive)")
+    ai.add_argument("--documents", action="store_true", help="include the text of reference documents")
 
     om = command("openmetadata", "export tables, descriptions, glossary and lineage for OpenMetadata",
                  "  pdcat openmetadata --out om.zip", cmd_openmetadata)

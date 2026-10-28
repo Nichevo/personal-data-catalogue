@@ -26,6 +26,7 @@ def settings_page(cat: Catalogue) -> None:
             st.toast("Saved")
 
     backups_section(cat)
+    schedule_section(cat)
 
     st.subheader("SQL Server: pace and limits")
     st.caption("Every query the catalogue sends follows these. Lower them if your DBA asks; the query log on the "
@@ -42,16 +43,19 @@ def settings_page(cat: Catalogue) -> None:
         sample = c5.number_input(pacing.LABELS["sql_sample_rows"], 1000, 10**8, int(s["sql_sample_rows"]), 10_000)
         top = c6.number_input(pacing.LABELS["sql_top_values_rows"], 100, 10**7, int(s["sql_top_values_rows"]), 1000)
         quiet = st.text_input(pacing.LABELS["sql_quiet_hours"], value=s["sql_quiet_hours"])
-        c7, c8 = st.columns(2)
+        c7, c8, c9 = st.columns(3)
         stop = c7.checkbox(pacing.LABELS["sql_stop_on_timeout"], value=bool(s["sql_stop_on_timeout"]))
         defs = c8.checkbox(pacing.LABELS["sql_scan_definitions"], value=bool(s["sql_scan_definitions"]),
                            help="Turn off to skip reading view and procedure code (fewer links between tables).")
+        tools = c9.checkbox(pacing.LABELS["sql_skip_tool_tables"], value=bool(s["sql_skip_tool_tables"]),
+                            help="Tables marked microsoft_database_tools_support, which SQL Server Management Studio "
+                                 "creates for database diagrams.")
         if st.form_submit_button("Save", type="primary"):
             for k, v in {"sql_pause_seconds": pause, "sql_timeout_seconds": int(timeout),
                          "sql_max_tables_per_run": int(cap), "sql_sample_over_rows": int(over),
                          "sql_sample_rows": int(sample), "sql_top_values_rows": int(top),
                          "sql_quiet_hours": quiet.strip(), "sql_stop_on_timeout": stop,
-                         "sql_scan_definitions": defs}.items():
+                         "sql_scan_definitions": defs, "sql_skip_tool_tables": tools}.items():
                 cat.set_setting(k, v)
             st.toast("Saved")
 
@@ -72,6 +76,9 @@ def settings_page(cat: Catalogue) -> None:
                     cat.set_setting("series_split", [x for x in split if x != k])
                     st.rerun()
 
+    features_section(cat)
+    hidden_section(cat)
+
     st.subheader("Notes")
     with st.form("settings-notes"):
         days = st.number_input("Ask me to re-check notes older than (days, 0 = never)", 0, 3650,
@@ -91,6 +98,49 @@ def settings_page(cat: Catalogue) -> None:
     if upgraded:
         st.caption(f"Upgraded from version 1. The untouched copy made before the upgrade: `{upgraded}`")
     st.caption(f"Catalogue file: `{cat.path}`")
+
+
+def schedule_section(cat: Catalogue) -> None:
+    from pdcat import taskscheduler as T
+
+    from .common import config_path
+    st.subheader("Scan on a schedule")
+    folder = Path(cat.path).parent
+    if not T.available():
+        st.caption("Windows only: creates a weekly Task Scheduler task that runs `pdcat scan` and then "
+                   "`pdcat profile --queue`. On this machine, use cron to run those two commands.")
+        return
+    state = T.status()
+    if state:
+        worked = {True: "✅ worked", False: f"❌ failed (code {state['last_result']})", None: "not run yet"}[
+            state["worked"]]
+        st.markdown(f"The weekly scan is set up: {state['schedule'] or 'weekly'}.  \n"
+                    f"Last run {state['last_run'] or 'never'}, {worked}. Next run {state['next_run'] or '?'}.")
+        tail = T.log_tail(folder)
+        if tail:
+            with st.expander("The end of scan.log"):
+                st.code(tail, language="text")
+        if st.button("Remove the scheduled scan", key="sched-remove"):
+            try:
+                T.remove()
+                st.toast("Removed")
+            except RuntimeError as e:
+                st.error(f"Couldn't remove it: {e}")
+            st.rerun()
+        return
+    st.caption("Refresh the catalogue every week without opening the app: a Task Scheduler task runs "
+               "`pdcat scan`, then profiles the tables approved under Add › Sources › SQL scanning. Output goes to "
+               f"`{folder / 'scan.log'}`. It runs only while you're signed in to Windows.")
+    with st.form("sched-create"):
+        c1, c2 = st.columns(2)
+        day = c1.selectbox("Day", T.DAYS, format_func=lambda d: d.capitalize())
+        time = c2.text_input("Time (24-hour)", value="07:00")
+        if st.form_submit_button("Schedule the weekly scan", type="primary"):
+            try:
+                batch = T.create(folder, config_path(), day, time.strip())
+                st.success(f"Scheduled. The task runs `{batch}`.")
+            except (RuntimeError, ValueError, OSError) as e:
+                st.error(f"Couldn't create the task: {e}")
 
 
 def backups_section(cat: Catalogue) -> None:
@@ -143,3 +193,54 @@ def backups_section(cat: Catalogue) -> None:
                 chosen = next(c for c in copies if c["file"] == pick)
                 safety = backup.restore(cat, chosen["path"])
                 st.success(f"Restored {pick}. What was there before is saved as {safety.name}.")
+
+
+def features_section(cat: Catalogue) -> None:
+    from pdcat import features
+    st.subheader("Scan extras")
+    st.caption("Steps that run during or after a scan. Turning one off skips it from the next scan; nothing "
+               "already found is deleted.")
+    cols = st.columns(2)
+    for i, (name, label) in enumerate(features.FEATURES.items()):
+        on = cols[i % 2].checkbox(label, value=features.on(cat, name), key=f"feat-{name}")
+        if on != features.on(cat, name):
+            features.set_on(cat, name, on)
+            st.rerun()
+    pkgs = features.optional_packages()
+    st.caption("Optional packages: " + " · ".join(f"{'✅' if ok else '➖'} {n}" for n, ok in pkgs.items())
+               + ". Missing ones are fine: the app falls back or skips that step. sqlglot reads SQL more exactly; "
+               "pywin32 (Windows) reads Access databases; python-docx and pypdf read Word and PDF reference documents.")
+
+
+def hidden_section(cat: Catalogue) -> None:
+    from pdcat import curation
+    from pdcat.links import changed_links, forget_manual_link, set_link_mark
+    hidden = cat.conn.execute("SELECT i.asset_key, i.relevance, a.name FROM item_info i LEFT JOIN assets a "
+                              "ON a.key = i.asset_key WHERE i.relevance IN ('not relevant', 'old') "
+                              "ORDER BY i.relevance, a.name").fetchall()
+    changed = changed_links(cat)
+    if not hidden and not changed:
+        return
+    st.subheader("Hidden items and links")
+    if hidden:
+        with st.expander(f"Items marked not relevant or old ({len(hidden)})"):
+            for r in hidden:
+                c1, c2 = st.columns([5, 1])
+                c1.caption(f"{'🙈' if r['relevance'] == 'not relevant' else '🗄️'} {r['name'] or r['asset_key']} "
+                           f"· {r['relevance']}")
+                if c2.button("Bring back", key=f"unhide-{r['asset_key']}"):
+                    curation.set_relevance(cat, r["asset_key"], "")
+                    st.rerun()
+    if changed:
+        with st.expander(f"Removed and not important links ({len(changed)})"):
+            for i, l in enumerate(changed):
+                c1, c2 = st.columns([5, 1])
+                c1.caption(f"{l['change']}: {l['src_name'] or l['src_key']} {l['relation']} "
+                           f"{l['dst_name'] or l['dst_key']} · {l['author'] or ''} {(l['created_at'] or '')[:10]}")
+                if c2.button("Undo", key=f"unlink-{i}"):
+                    if l["change"] == "removed":
+                        forget_manual_link(cat, l["src_key"], l["relation"], l["dst_key"])
+                        st.toast("The link comes back with the next scan of its source.")
+                    else:
+                        set_link_mark(cat, l["src_key"], l["relation"], l["dst_key"], None)
+                    st.rerun()

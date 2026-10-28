@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdcat"
-version = "0.1.0"
+version = "2.1.0"
 description = "A personal, local data catalogue for SQL Server tables and Python projects"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,6 +20,12 @@ dependencies = [
 dev = ["pytest>=8"]
 # Optional readers: the compressed model inside .pbix files, and exact reading of Excel macros.
 office = ["pbixray", "olefile"]
+# Optional: exact SQL reading (falls back to a simpler reader without it), Access databases on Windows,
+# and text from PDF reference documents (Word documents are read without it).
+sql = ["sqlglot>=25"]
+access = ["pywin32; sys_platform == 'win32'"]
+documents = ["pypdf"]
+all = ["pbixray", "olefile", "sqlglot>=25", "pywin32; sys_platform == 'win32'", "pypdf"]
 
 [project.scripts]
 pdcat = "pdcat.cli:main"

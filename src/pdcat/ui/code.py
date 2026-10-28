@@ -119,15 +119,19 @@ def diagram_block(cat: Catalogue, project: str | None, key: str) -> None:
                      format_func={"projects": "Projects and libraries", "modules": "Every file"}.get)
     include_data = c2.checkbox("Tables and files", value=True, key=f"{key}-data")
     packages = c3.checkbox("Third-party packages", value=False, key=f"{key}-pkgs", disabled=level != "modules")
-    elements = cyto_elements(cat, project, level=level, include_data=include_data, include_packages=packages)
+    show_old = st.checkbox("Show old items", value=False, key=f"{key}-old",
+                           help="Projects, scripts and files marked old are hidden unless this is ticked. Older "
+                                "versions of scripts and items marked not relevant are always left out.")
+    elements = cyto_elements(cat, project, level=level, include_data=include_data, include_packages=packages,
+                             show_old=show_old)
     if not elements:
         st.caption("Nothing to draw yet.")
         return
     graph_view(cat, elements, key=f"{key}-{project or 'all'}-{level}", name=f"codemap-{project or 'all'}")
     st.caption("Blue boxes are your code (purple for libraries), green barrels are tables, yellow tags are files, "
-               "grey boxes are packages. Blue arrows are imports labelled with the functions used; dashed arrows "
-               "read data; red arrows write it. Groups (projects, folders, databases) open and close with a click.")
-    g = build_graph(cat, project, level=level, include_data=include_data)
+               "grey boxes are packages. Blue arrows are imports labelled with the functions used; \"runs\" arrows "
+               "start another script; dashed arrows read data; red arrows write it. Groups (projects, folders, databases) open and close with a click.")
+    g = build_graph(cat, project, level=level, include_data=include_data, show_old=show_old)
     dot, mermaid = to_dot(g), to_mermaid(g)
     d1, d2, d3 = st.columns(3)
     name = project or "all"

@@ -39,6 +39,14 @@ RULES: dict[str, tuple[str, str, int]] = {
     "stale_data": ("Data looks out of date", "warning", 24),
     "layout_change": ("File layout changed", "change", 28),
     "duplicate": ("Same file in two places", "warning", 14),
+    # version 2.1
+    "unknown_file": ("Which file is this?", "warning", 16),
+    "wrong_folder": ("File found in another folder", "warning", 14),
+    "not_refreshing": ("Output stopped refreshing", "warning", 22),
+    "old_item": ("Not touched in a long time", "change", 8),
+    "naming": ("Breaks a naming rule", "docs", 10),
+    "sql_check": ("SQL problem", "warning", 20),
+    "rule_check": ("Rule check failed", "warning", 32),
 }
 # Checks where "dismiss" means "it's like this on purpose".
 BY_DESIGN = {"data_type", "sensitive", "stale_data", "duplicate"}
@@ -300,7 +308,30 @@ def _candidates(cat: Catalogue) -> list[Task]:
         tasks.append(Task(f"unmatched:{ref}", "unmatched", ref, f"Table {ref[6:]} (used in code) not found",
                           f"Used by {r['used_by']} file(s), e.g. {r['example']}. A server you haven't added, "
                           "a typo, or a false match?", RULES["unmatched"][2] + 5 * min(r["used_by"], 5)))
-    return tasks
+    tasks += _v21_candidates(cat, task)
+    from .curation import hidden_keys
+    hidden = hidden_keys(cat)  # marked not relevant
+    return [t for t in tasks if t.asset_key not in hidden]
+
+
+# Version 2.1 checks live next to the features they belong to: (module, function(cat, task) -> [Task]).
+V21_STEPS = [("unknownfiles", "review_tasks"), ("freshness", "review_tasks"), ("naming", "review_tasks"),
+             ("sqlchecks", "review_tasks"), ("rulechecks", "review_tasks")]
+
+
+def _v21_candidates(cat: Catalogue, task) -> list[Task]:
+    import importlib
+    out: list[Task] = []
+    for mod, fn in V21_STEPS:
+        try:
+            step = getattr(importlib.import_module(f"pdcat.{mod}"), fn)
+        except (ImportError, AttributeError):
+            continue
+        try:
+            out += step(cat, task)
+        except Exception:  # one broken check must not empty the review list
+            continue
+    return out
 
 
 def _v2_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: Counter, task) -> list[Task]:

@@ -18,10 +18,14 @@ TABLE_LIKE = ("table", "view", "data_file", "file_series")
 
 def detail(cat: Catalogue, key: str) -> None:
     st.button("← Back", on_click=go, args=(None,))
+    from pdcat.followups import viewed
+    viewed(cat, key)
     from . import pages_for_key
     special = pages_for_key(key)
     if special:
         special(cat, key)
+        from .item_boxes import history_box
+        history_box(cat, key)
         return
     asset = cat.get_asset(key)
     if asset is None:
@@ -47,7 +51,24 @@ def detail(cat: Catalogue, key: str) -> None:
     if attrs.get("lines"):
         meta.append(f"{attrs['lines']} lines")
     meta += badges(info)
-    st.caption(" · ".join(str(m) for m in meta) + f"  \n`{key}`")
+    if asset["kind"] in ("data_file", "file_series", "workbook", "report", "model"):
+        from pdcat.freshness import badge as fresh_badge
+        meta.append(fresh_badge(cat, key))
+    from pdcat.folderroles import role_of, stored
+    role = role_of(attrs.get("full_path") or attrs.get("path"), stored(cat))
+    if role:
+        meta.append(f"📂 in a {role} folder")
+    if info.get("sap_name"):
+        from pdcat.sapterms import meaning
+        sap_m = meaning(info["sap_name"])
+        meta.append(f"SAP {info['sap_name']}" + (f" ({sap_m})" if sap_m else ""))
+    st.caption(" · ".join(str(m) for m in meta if m) + f"  \n`{key}`")
+    from .item_boxes import groups_box, item_actions, suggestions_box
+    item_actions(cat, key, info)
+    groups_box(cat, key)
+    if asset["kind"] == "table":
+        from .item_boxes import backup_link_box
+        backup_link_box(cat, key, asset)
     if info.get("lifecycle") in ("deprecated", "retired"):
         msg = f"This is marked **{info['lifecycle']}**."
         if info.get("replaced_by"):
@@ -60,6 +81,12 @@ def detail(cat: Catalogue, key: str) -> None:
     if attrs.get("imported_from"):
         st.info(f"From {attrs['imported_from']}'s scan, merged from a share file. Scan the source yourself to "
                 "replace it with your own.", icon="📥")
+    if asset["kind"] in ("table", "view", "procedure", "data_file", "script", "notebook", "sql_script", "report",
+                         "workbook"):
+        from pdcat.sapterms import apo_flags
+        flags = apo_flags(cat, key)
+        if flags:
+            st.warning("Still uses APO: " + "; ".join(f"{a} → in IBP: {b}" for a, b in flags), icon="🔁")
     if attrs.get("parse_error"):
         st.warning(f"Couldn't fully read this file: {attrs['parse_error']}")
     if attrs.get("read_error"):
@@ -79,10 +106,13 @@ def detail(cat: Catalogue, key: str) -> None:
 
     from .extras import item_extras_top
     item_extras_top(cat, key, asset)
+    from .documents_page import in_documents_box
+    in_documents_box(cat, key)
     if asset["kind"] in ("report", "measure", "workbook"):
         from .office_pages import office_section
         office_section(cat, key, asset)
 
+    suggestions_box(cat, key)
     mine = open_tasks(cat, asset_key=key, limit=1000)
     if mine:
         from .review_pages import task_card
@@ -107,28 +137,56 @@ def detail(cat: Catalogue, key: str) -> None:
 
     if asset["kind"] in TABLE_LIKE:
         profile_section(cat, key, asset)
+        from .item_boxes import rule_checks_box
+        rule_checks_box(cat, key)
         compare_section(cat, key)
 
     lineage_section(cat, key, asset)
+    from .sql_pages import queries_in_box, renames_box, using_table_box
+    renames_box(cat, key)
+    if asset["kind"] in ("table", "view", "procedure"):
+        using_table_box(cat, key)
+    if asset["kind"] in ("script", "notebook", "sql_script", "workbook", "report", "access_db", "view", "procedure"):
+        queries_in_box(cat, key)
 
     from .extras import item_extras_bottom
     item_extras_bottom(cat, key, asset)
 
+    if asset["kind"] in ("script", "notebook", "sql_script"):
+        from .item_boxes import called_by_box, unknown_files_box
+        from .sources_extra import script_runs_box
+        script_runs_box(cat, key)
+        called_by_box(cat, key)
+        unknown_files_box(cat, key)
+    if asset["kind"] == "access_db":
+        from .sources_extra import access_section
+        access_section(cat, key, asset)
     if asset["kind"] in ("script", "notebook") and attrs.get("function_info"):
         from .code import functions_section
         functions_section(cat, key, asset)
 
+    if asset["kind"] in ("database", "project"):
+        from .naming_box import naming_box
+        naming_box(cat, key)
     if asset["kind"] == "project":
         from .code import diagram_block, environment_section
         environment_section(cat, asset)
+        from .sources_extra import project_env_box
+        project_env_box(cat, key)
         with st.expander("Code map: how this connects to your libraries and data"):
             diagram_block(cat, asset["source"], f"proj-{key}")
 
     children = [c for c in cat.children(key) if c["kind"] != "series_file"]
     if children:
         st.subheader("Contains")
-        result_list([{**dict(c), "source": "", "note_count": 0} for c in children], "child")
+        if asset["kind"] == "folder":
+            from .item_boxes import contains_table
+            contains_table(cat, key, children)
+        else:
+            result_list([{**dict(c), "source": "", "note_count": 0} for c in children], "child")
 
+    from .item_boxes import history_box
+    history_box(cat, key)
     with st.expander("Details"):
         if attrs.get("definition"):
             st.code(attrs["definition"], language="sql")
@@ -137,7 +195,8 @@ def detail(cat: Catalogue, key: str) -> None:
                 st.markdown(f"**{label}:** " + ", ".join(f"`{x}`" for x in attrs[field]))
         hidden = ("definition", "imports", "functions", "classes", "function_info", "import_map", "environment",
                   "import_details", "queries", "measures", "model", "files", "pages", "tables", "relationships",
-                  "sheets", "connections", "pivots", "vba_sql", "expression", "used_on")
+                  "sheets", "connections", "pivots", "vba_sql", "expression", "used_on", "unknown_files", "runs",
+                  "write_patterns", "full_path", "git", "linked", "sql_strings")
         rest = {k: v for k, v in attrs.items() if k not in hidden and v not in (None, "", [])}
         st.json(rest, expanded=False)
         st.caption(f"First seen {asset['first_seen'][:10]} · last seen {asset['last_seen'][:10]}")
@@ -179,10 +238,13 @@ def about_form(cat: Catalogue, key: str, asset: dict | None, info: dict) -> None
                                          index=opts.index(cur) if cur in opts else 0)
             sensitive = c7.checkbox("🔒 Whole item is sensitive", value=bool(info.get("sensitive")),
                                     help="Values are never stored or shown, and it's left out of every export.")
+            sap = st.text_input("SAP: what this is in SAP", value=info.get("sap_name") or "",
+                                placeholder="e.g. MARC, or an extract of VBAP",
+                                help="The SAP table (or object) this holds or was extracted from")
             if st.form_submit_button("Save", type="primary"):
                 curation.set_item_info(cat, key, purpose=purpose, grain=grain, refresh=refresh, lifecycle=lifecycle,
                                        trust=trust, owner=owner, replaced_by=replaced_by,
-                                       freshness_column=freshness, sensitive=sensitive)
+                                       freshness_column=freshness, sensitive=sensitive, sap_name=sap)
                 st.toast("Saved")
                 st.rerun()
 
@@ -214,27 +276,44 @@ def _key_badge(k: dict | None) -> str:
 
 
 def column_editor(cat: Catalogue, key: str, df: pd.DataFrame) -> None:
-    """Edit descriptions and sensitivity in the table itself; Save writes only what changed.
-    Also where a column is marked as a company-wide key."""
+    """Edit descriptions, business names, SAP names and sensitivity in the table itself; Save writes only
+    what changed. Also where a column is marked as a company-wide key."""
     from .keys_pages import mark_key_form
     mark_key_form(cat, key, list(df["column"]))
+    mine = curation.column_info(cat, key)
+    df = df.copy()
+    df.insert(1, "business name", [mine.get(c, {}).get("business_name") or "" for c in df["column"]])
+    df["SAP"] = [mine.get(c, {}).get("sap_name") or "" for c in df["column"]]
+    editable = ("description", "sensitive", "business name", "SAP")
     edited = st.data_editor(df, hide_index=True, width="stretch", key=f"coled-{key}",
-                            disabled=[c for c in df.columns if c not in ("description", "sensitive")],
+                            disabled=[c for c in df.columns if c not in editable],
                             column_config={"sensitive": st.column_config.CheckboxColumn(
-                                "🔒", help="Sensitive: values are never stored, shown or exported")})
-    changed = [(r["column"], r["description"], r["sensitive"]) for (_, r), (_, o) in
-               zip(edited.iterrows(), df.iterrows()) if r["description"] != o["description"]
-               or r["sensitive"] != o["sensitive"]]
+                                "🔒", help="Sensitive: values are never stored, shown or exported"),
+                                "business name": st.column_config.TextColumn(
+                                    help="What people call it, for example the label a report shows"),
+                                "SAP": st.column_config.TextColumn(help="The SAP field it holds, for example WERKS")})
+    changed = [(r, o) for (_, r), (_, o) in zip(edited.iterrows(), df.iterrows())
+               if any(r[c] != o[c] for c in editable)]
     if changed:
         c1, c2 = st.columns([1, 3])
         also = c2.checkbox("Also describe same-named columns elsewhere that have no description", value=True,
                            key=f"coled-everywhere-{key}")
         if c1.button(f"Save {len(changed)} change(s)", type="primary", key=f"coled-save-{key}"):
-            for col, desc, sens in changed:
-                curation.set_column_info(cat, key, col, description=desc, sensitive=bool(sens), rebuild=False)
-                if also and desc:
-                    curation.describe_everywhere(cat, col, desc, only_empty=True)
-            cat.rebuild_search()
+            everywhere = False
+            for r, o in changed:
+                col = r["column"]
+                if r["description"] != o["description"] or r["sensitive"] != o["sensitive"]:
+                    curation.set_column_info(cat, key, col, description=r["description"],
+                                             sensitive=bool(r["sensitive"]), rebuild=False)
+                    if also and r["description"] and r["description"] != o["description"]:
+                        curation.describe_everywhere(cat, col, r["description"], only_empty=True)
+                        everywhere = True
+                if r["business name"] != o["business name"]:
+                    curation.set_column_extra(cat, key, col, "business_name", r["business name"])
+                if r["SAP"] != o["SAP"]:
+                    curation.set_column_extra(cat, key, col, "sap_name", r["SAP"])
+            if not everywhere:  # describe_everywhere already rebuilt the search index
+                cat.reindex_search(key)
             st.session_state.pop(f"coled-{key}", None)
             st.rerun()
 
@@ -356,11 +435,12 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
                 continue
             seen.add(ident)
             rel = RELATION_LABELS.get(l["relation"], l["relation"])
-            c1, c2, c3 = st.columns([1, 4, 2])
+            c1, c2, c3, c4 = st.columns([1, 4, 2, 0.4])
             c1.caption(rel)
             with c2:
                 if l["dst_key"]:
-                    asset_button(l["dst_key"], l["dst_name"] or l["dst_key"], l["dst_kind"] or "table", f"uses-{i}")
+                    link_button(l["dst_key"], l["dst_name"] or l["dst_key"], l["dst_kind"] or "table", f"uses-{i}",
+                                l["unimportant"])
                     if l["relation"] == "imports" and l["evidence"]:
                         st.caption(f"uses {l['evidence']}")
                 else:
@@ -369,6 +449,8 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
                     st.button(f"{'📄' if kind == 'file' else '❔'} {name}", key=f"uses-{i}", type="tertiary",
                               on_click=go, args=(l["dst_ref"],), help=f"{what} · {l['evidence'] or ''}")
             c3.caption(_how(l))
+            with c4:
+                link_menu(cat, l, l["src_key"], l["relation"], l["dst_key"] or l["dst_ref"], f"uses-m-{i}")
     left, right = st.columns(2)
     with left:
         if made_by or asset["kind"] in TABLE_LIKE:
@@ -376,8 +458,13 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
             if not made_by:
                 st.caption("Nothing found.")
             for i, l in enumerate(made_by):
-                asset_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"madeby-{i}")
-                st.caption(_how(l))
+                a, b = st.columns([6, 1])
+                with a:
+                    link_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"madeby-{i}",
+                                l["unimportant"])
+                    st.caption(_how(l))
+                with b:
+                    link_menu(cat, l, l["src_key"], l["relation"], key, f"madeby-m-{i}")
             if asset["kind"] in TABLE_LIKE:
                 from .extras import manual_link_form
                 with st.popover("➕ Link a script"):
@@ -387,14 +474,49 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
             st.subheader("Read by" if asset["kind"] in TABLE_LIKE else "Used by")
             for i, l in enumerate(read_by):
                 rel = RELATION_LABELS.get(l["relation"], l["relation"]).lower()
-                asset_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"readby-{i}")
-                st.caption(f"{rel} {l['evidence']}" if l["relation"] == "imports" and l["evidence"] else _how(l))
+                a, b = st.columns([6, 1])
+                with a:
+                    link_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"readby-{i}",
+                                l["unimportant"])
+                    st.caption(f"{rel} {l['evidence']}" if l["relation"] == "imports" and l["evidence"] else _how(l))
+                with b:
+                    link_menu(cat, l, l["src_key"], l["relation"], key, f"readby-m-{i}")
+
+
+def link_button(key: str, label: str, kind: str, widget_key: str, unimportant: bool) -> None:
+    if unimportant:
+        st.button(f":gray[{icon(kind)} {label} · not important]", key=widget_key, on_click=go, args=(key,),
+                  type="tertiary", help="Marked not important: left out of diagrams, grouping and counts")
+    else:
+        asset_button(key, label, kind, widget_key)
+
+
+def link_menu(cat: Catalogue, l: dict, src: str, relation: str, dst: str, widget_key: str) -> None:
+    """Remove a link the scanner got wrong, or mark one that's right but noise as not important."""
+    from pdcat.links import hide_link, set_link_mark
+    if relation == "imports":
+        return
+    with st.popover("⋯", help="Remove this link, or mark it not important"):
+        if l.get("unimportant"):
+            if st.button("Important again", key=f"{widget_key}-imp"):
+                set_link_mark(cat, src, relation, dst, None)
+                st.rerun()
+        elif st.button("Not important", key=f"{widget_key}-unimp",
+                       help="Right but noise: stays listed, greyed out, and is left out of diagrams and counts"):
+            set_link_mark(cat, src, relation, dst, "unimportant")
+            st.rerun()
+        if st.button("Remove: this link is wrong", key=f"{widget_key}-rm",
+                     help="Kept out through rescans. Undo from the edit history or Settings → Removed links"):
+            hide_link(cat, src, relation, dst)
+            st.rerun()
 
 
 def _how(l) -> str:
-    how = l["how"] if "how" in l.keys() else None
+    keys = l.keys()
+    how = l["how"] if "how" in keys else None
     ev = l["evidence"] or ""
-    return " · ".join(b for b in (how, ev) if b)
+    note = l["match_note"] if "match_note" in keys and l["match_note"] else None
+    return " · ".join(b for b in (how, ev, f"⚠️ {note}" if note else None) if b)
 
 
 def notes_section(cat: Catalogue, key: str, column_names: list[str]) -> None:

@@ -7,7 +7,7 @@ import streamlit as st
 from pdcat import keys as K
 from pdcat.store import Catalogue
 
-from .common import asset_button, go
+from .common import asset_button, go, page_title
 
 
 def keys_page(cat: Catalogue) -> None:
@@ -69,6 +69,10 @@ def key_page(cat: Catalogue, key: str) -> None:
     for problem in K.checks(cat, k["name"]):
         st.warning(problem)
     confirmed = K.key_columns(cat, k["name"], "confirmed")
+    from pdcat.sapterms import column_sap_names, meaning
+    saps = sorted({column_sap_names(cat, c["asset_key"]).get(c["column_name"]) for c in confirmed} - {None})
+    if saps:
+        st.caption("In SAP: " + ", ".join(f"`{s}` ({meaning(s)})" if meaning(s) else f"`{s}`" for s in saps))
     with st.expander("✏️ Edit this key"):
         with st.form(f"edit-key-{name}"):
             new_name = st.text_input("Name", value=k["name"])
@@ -142,7 +146,7 @@ def mark_key_form(cat: Catalogue, asset_key: str, columns: list[str]) -> None:
 
 def sensitive_page(cat: Catalogue) -> None:
     from pdcat import curation
-    st.title("Sensitive data")
+    page_title("Sensitive data")
     st.caption("Columns and items marked sensitive: their values are never stored, shown or exported (counts are "
                "kept). Below, columns whose names suggest personal data; mark them or dismiss them.")
     marked = cat.conn.execute(

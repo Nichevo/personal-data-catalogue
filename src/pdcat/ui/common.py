@@ -18,12 +18,14 @@ KIND_ICONS = {"table": "🗃️", "view": "👁️", "procedure": "⚙️", "dat
               "script": "🐍", "notebook": "📓", "sql_script": "📜", "sql_snippet": "✍️", "note": "📝",
               "data_file": "📄", "folder": "🗂️", "file_series": "🗓️", "package": "📦", "report": "📊",
               "workbook": "📗", "model": "🧠", "measure": "🧮", "bproject": "🧭", "knowledge": "💡",
-              "question": "❓", "metric": "📏", "feature": "🧬", "key": "🔑"}
+              "question": "❓", "metric": "📏", "feature": "🧬", "key": "🔑", "group": "👪", "query": "🧾",
+              "environment": "🐍", "access_db": "🗄️", "document": "📑"}
 KIND_LABELS = {"data_file": "data file", "sql_snippet": "pasted SQL", "sql_script": "SQL file",
                "file_series": "file series", "bproject": "business project", "workbook": "Excel workbook",
-               "report": "Power BI report", "model": "ML model"}
+               "report": "Power BI report", "model": "ML model", "access_db": "Access database",
+               "query": "SQL query", "environment": "conda environment"}
 NOTE_ICONS = {"note": "📝", "issue": "⚠️", "example": "🔢"}
-RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls", "imports": "Imports"}
+RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls", "imports": "Imports", "runs": "Runs"}
 LIFECYCLE_BADGES = {"experimental": "🧪 experimental", "deprecated": "⛔ deprecated", "retired": "🪦 retired"}
 TRUST_BADGES = {"trusted": "✅ trusted", "caution": "⚠️ use with caution", "do not use": "🚫 don't use"}
 
@@ -62,6 +64,28 @@ def go(key: str | None, fn: str | None = None) -> None:
     else:
         st.query_params.pop("fn", None)
         st.session_state.pop(f"zoom-{key}", None)
+
+
+def page_title(text: str) -> None:
+    """A page's title, left out when the page is shown as one view of a combined page."""
+    if not st.session_state.get("_sub_page"):
+        st.title(text)
+
+
+def go_page(name: str) -> None:
+    """Open a menu page by name (use as a button's on_click). Old page names open their new home."""
+    from .main import ALIASES, sections
+    page, view = ALIASES.get(name, (name, None))
+    section = next((s for s, pages in sections().items() if page in pages), None)
+    if section is None:
+        return
+    st.query_params.pop("asset", None)
+    st.query_params.pop("fn", None)
+    st.session_state["nav-section"] = section
+    st.session_state[f"nav-{section}"] = page
+    st.session_state.pop(f"nav-item-{section}", None)
+    if view:
+        st.session_state[f"sub-{page}"] = view
 
 
 def kind_label(kind: str) -> str:
@@ -121,6 +145,10 @@ def badges(info: dict | None) -> list[str]:
         out.append("🔒 sensitive")
     if info.get("copy_of"):
         out.append("📑 copy")
+    if info.get("relevance") == "not relevant":
+        out.append("🙈 not relevant")
+    elif info.get("relevance") == "old":
+        out.append("🗄️ old")
     return out
 
 
@@ -158,11 +186,16 @@ def row_get(r, field: str, default: Any = None) -> Any:
         return r.get(field, default)
 
 
+RESULT_PAGE = 200
+
+
 def result_list(rows, prefix: str, extra=None) -> None:
     if not rows:
         st.info("Nothing here yet.")
         return
-    for i, r in enumerate(rows):
+    # Thousands of rows of buttons take seconds to draw, so show them a page at a time.
+    shown = st.session_state.get(f"{prefix}-shown", RESULT_PAGE)
+    for i, r in enumerate(rows[:shown]):
         left, right = st.columns([4, 2])
         with left:
             asset_button(r["key"], r["name"], r["kind"], f"{prefix}-{i}")
@@ -177,6 +210,9 @@ def result_list(rows, prefix: str, extra=None) -> None:
             if extra:
                 bits.append(extra(r))
             st.caption(" · ".join(b for b in bits if b))
+    if len(rows) > shown:
+        st.button(f"Show {min(RESULT_PAGE, len(rows) - shown)} more (of {len(rows) - shown} not shown)",
+                  key=f"{prefix}-more", on_click=lambda: st.session_state.update({f"{prefix}-shown": shown + RESULT_PAGE}))
 
 
 def lazy_download(label: str, build: Callable[[Catalogue], bytes | str], file_name: str, mime: str, key: str,

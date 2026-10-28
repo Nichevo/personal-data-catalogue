@@ -1,4 +1,4 @@
-"""The feature dictionary for machine learning projects, and the models it found."""
+"""ML model features: the inputs to your machine learning models, and the models found."""
 from __future__ import annotations
 
 import pandas as pd
@@ -18,10 +18,10 @@ def _projects(cat: Catalogue) -> list[str]:
 
 
 def features_page(cat: Catalogue) -> None:
-    st.title("Feature dictionary")
-    st.caption("Every model input: what it means, where it comes from, how it's built, whether it's known at "
-               "prediction time, and which models use it. Suggestions come from your feature-building code and "
-               "saved LightGBM models.")
+    st.title("ML model features")
+    st.caption("The inputs to your machine learning models. For each one: what it means, the table and column "
+               "it comes from, the script that builds it, whether it's known at prediction time, and which models "
+               "use it. Suggestions come from your feature-building code and saved LightGBM models.")
     projects = _projects(cat)
     project = st.selectbox("Project", ["All", *projects], label_visibility="collapsed") if projects else "All"
     project = None if project == "All" else project
@@ -33,15 +33,7 @@ def features_page(cat: Catalogue) -> None:
         if not feats:
             st.info("No features in the dictionary yet. Confirm some suggestions, or add one.")
         else:
-            df = pd.DataFrame([{"feature": f["name"], "project": f["project"], "meaning": first_line(f["description"], 120),
-                                "window": f["window"] or "", "known at prediction": f["known_at_prediction"] or "",
-                                "models": len(f["models"]), "status": f["status"] or ""} for f in feats])
-            event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun",
-                                 selection_mode="single-row", key="features-table")
-            sel = event.selection.rows if event else []
-            if sel:
-                go(f"feature://{feats[sel[0]]['uid']}")
-                st.rerun()
+            features_list(cat, feats)
     with tab_sugg:
         sugg = M.list_features(cat, state="suggested", project=project)
         c1, c2 = st.columns([1, 4])
@@ -77,6 +69,59 @@ def features_page(cat: Catalogue) -> None:
         checks_section(cat, project)
     with tab_models:
         models_section(cat, project)
+
+
+MAX_LISTED = 200
+
+
+def features_list(cat: Catalogue, feats: list[dict]) -> None:
+    """One row per feature: the feature, the models using it, the script building it and where it comes from,
+    each a link."""
+    find = st.text_input("Filter", placeholder="Filter by name, model, script or table", key="features-filter",
+                         label_visibility="collapsed")
+    names: dict[str, str] = {}
+
+    def name(k: str) -> str:
+        if k not in names:
+            a = cat.get_asset(k)
+            names[k] = a["name"].rsplit("/", 1)[-1] if a else k
+        return names[k]
+
+    rows = []
+    for f in feats:
+        script = (f["built_by"] or "").partition("::")[0]
+        text = " ".join([f["name"], f["project"] or "", f["description"] or "", name(script) if script else "",
+                         *(name(m) for m in f["models"]), *(name(s.partition("#")[0]) + " " + s for s in f["sources"])])
+        if not find or find.lower() in text.lower():
+            rows.append(f)
+    st.caption(f"{len(rows)} feature(s)" + (f", showing the first {MAX_LISTED}" if len(rows) > MAX_LISTED else ""))
+    head = st.columns([2.2, 2.5, 2, 2.5])
+    for h, label in zip(head, ("Feature", "Used by models", "Built in", "Comes from")):
+        h.markdown(f"**{label}**")
+    for i, f in enumerate(rows[:MAX_LISTED]):
+        c1, c2, c3, c4 = st.columns([2.2, 2.5, 2, 2.5])
+        c1.button(f"🧬 {f['name']}", key=f"fl-f-{i}", on_click=go, args=(f"feature://{f['uid']}",), type="tertiary",
+                  help=first_line(f["description"], 200) or None)
+        flags = [f["window"] or "", "⚠️ may leak" if f["known_at_prediction"] == "no" else "", f["status"] or ""]
+        if any(flags):
+            c1.caption(" · ".join(x for x in flags if x))
+        with c2:
+            for j, m in enumerate(f["models"][:6]):
+                st.button(f"🤖 {name(m)}", key=f"fl-m-{i}-{j}", on_click=go, args=(m,), type="tertiary")
+            if len(f["models"]) > 6:
+                st.caption(f"and {len(f['models']) - 6} more")
+            if not f["models"]:
+                st.caption("no saved model")
+        with c3:
+            if f["built_by"]:
+                script, _, fn = f["built_by"].partition("::")
+                st.button(f"🐍 {name(script)}" + (f" › {fn}()" if fn else ""), key=f"fl-s-{i}", on_click=go,
+                          args=(script, fn or None), type="tertiary")
+        with c4:
+            for j, src in enumerate(f["sources"][:4]):
+                k, _, col = src.partition("#")
+                st.button(f"🗄️ {name(k)}" + (f" · {col}" if col else ""), key=f"fl-c-{i}-{j}", on_click=go,
+                          args=(k,), type="tertiary")
 
 
 def checks_section(cat: Catalogue, project: str | None) -> None:

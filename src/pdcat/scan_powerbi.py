@@ -28,7 +28,7 @@ from typing import Any
 
 from . import mquery
 
-READER_VERSION = 1
+READER_VERSION = 3  # 2: passwords removed from stored Power Query text; 3: visual positions for wireframes
 REPORT_SUFFIXES = (".pbix", ".pbit")
 
 
@@ -90,7 +90,33 @@ def _visual(cfg: dict) -> dict[str, Any] | None:
     if not vtype:
         return None
     fields = _fields_in(sv, {})
-    return {"type": vtype, "title": _title(cfg), "fields": fields}
+    out = {"type": vtype, "title": _title(cfg), "fields": fields}
+    labels = _display_names(sv)
+    if labels:
+        out["labels"] = labels
+    return out
+
+
+def _display_names(sv: dict) -> dict[str, str]:
+    """Field ("Sales.Units") -> the name the visual shows for it, where someone renamed it in the visual."""
+    out: dict[str, str] = {}
+    for ref, props in (sv.get("columnProperties") or {}).items():
+        if isinstance(props, dict) and props.get("displayName"):
+            out[ref] = props["displayName"]
+    state = ((sv.get("query") or {}).get("queryState") or {})
+    for role in state.values():
+        for p in (role or {}).get("projections", []) if isinstance(role, dict) else []:
+            if isinstance(p, dict) and p.get("displayName") and p.get("queryRef"):
+                out[p["queryRef"]] = p["displayName"]
+    return out
+
+
+def _pos(d: dict) -> list[float]:
+    """[x, y, width, height] of a visual on its page."""
+    try:
+        return [round(float(d.get(k) or 0), 1) for k in ("x", "y", "width", "height")]
+    except (TypeError, ValueError):
+        return [0, 0, 0, 0]
 
 
 def pages_from_layout(layout: dict) -> list[dict[str, Any]]:
@@ -105,8 +131,10 @@ def pages_from_layout(layout: dict) -> list[dict[str, Any]]:
                 continue
             v = _visual(cfg)
             if v:
+                v["pos"] = _pos(vc)
                 visuals.append(v)
-        pages.append({"name": sec.get("displayName") or sec.get("name", ""), "visuals": visuals})
+        pages.append({"name": sec.get("displayName") or sec.get("name", ""), "visuals": visuals,
+                      "size": [sec.get("width") or 1280, sec.get("height") or 720]})
     return pages
 
 
@@ -124,9 +152,11 @@ def pages_from_definition(files: dict[str, bytes]) -> list[dict[str, Any]]:
             continue
         if m.group(2) == "page.json":
             page["name"] = doc.get("displayName") or page["name"]
+            page["size"] = [doc.get("width") or 1280, doc.get("height") or 720]
         else:
             v = _visual(doc)
             if v:
+                v["pos"] = _pos(doc.get("position") or {})
                 page["visuals"].append(v)
     return list(pages.values())
 
@@ -171,6 +201,7 @@ def model_from_tmsl(doc: dict) -> dict[str, Any]:
 
 
 def _analyse_queries(queries: list[dict[str, str]]) -> list[dict[str, Any]]:
+    queries = [{**q, "expression": mquery.redact(q["expression"])} for q in queries]
     bodies = {q["name"]: q["expression"] for q in queries}
     params = mquery.parameters(bodies)
     out = []

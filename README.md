@@ -48,10 +48,10 @@ trigger words do:
 
 ![Knowledge page](docs/screenshots/knowledge.png)
 
-**Feature dictionary**: every model input, filled from your feature code and LightGBM
+**ML model features**: the inputs to your machine learning models, filled from your feature code and LightGBM
 models, with checks for leakage, unused features and drift:
 
-![Feature dictionary](docs/screenshots/features.png)
+![ML model features](docs/screenshots/features.png)
 
 ### Review
 
@@ -65,7 +65,8 @@ draft worked out from the scan):
 
 ![Coverage page](docs/screenshots/coverage.png)
 
-**Issue hotspots**: which schemas, folders and tables have the most problems:
+**Issue hotspots** (Review › Health): which schemas, folders and tables have the most
+problems:
 
 ![Issue hotspots page](docs/screenshots/hotspots.png)
 
@@ -96,11 +97,12 @@ environment.yml or pyproject.toml, compared with what the code really imports:
 
 ### Add
 
-**Data folders**: point it at any folder of CSV, Parquet, Power BI and Excel files:
+**Data folders** (Add › Sources): point it at any folder of CSV, Parquet, Power BI and
+Excel files:
 
 ![Data folders page](docs/screenshots/folders.png)
 
-**SQL scanning**: tables are only profiled when you ask. Approve them here; queries go
+**SQL scanning** (Add › Sources): tables are only profiled when you ask. Approve them here; queries go
 one at a time, and every query is logged:
 
 ![SQL scanning page](docs/screenshots/sql-scanning.png)
@@ -151,7 +153,31 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
-## Planned for version 2.1
+## New in version 2.1
+
+Version 2.1 adds the 46 items below. Some things to know first:
+
+- **The menu is tidier.** The app now opens on a **Home** page, the search box is always
+  at the top of the sidebar, and pages that belonged together are now one page with a
+  row of views: **To review** (with Data issues, Needs notes, Unmatched tables, Unlinked
+  data and Duplicates), **Health** (Coverage and Issue hotspots), **What's new** (Recent
+  notes and Recent changes), **Bulk edit** (Describe columns and Edit many items) and
+  **Sources** (Add SQL, Data folders and SQL scanning). Company-wide keys moved to
+  Knowledge, Packages to Map, and Sensitive data to Settings. The **📖 Menu guide** link
+  in the sidebar explains every page.
+- **Rescan after upgrading** (`pdcat scan`). Most of 2.1 is worked out from what a scan
+  reads, so the SQL query library, report wireframes, report labels, renames, git
+  history and the rest fill in on the first scan. Report page wireframes in particular
+  need the report to be read again.
+- **Switches.** Each step that runs after a scan can be turned off on the Settings page.
+  Nothing already found is deleted when you turn one off.
+- **Optional packages.** `sqlglot` (better SQL reading), `pypdf` (text of PDF
+  documents) and `pywin32` (Access databases on Windows) are used when installed, and
+  the app works without them: SQL is read with a simpler reader, PDFs are kept without
+  their text, and Access files are listed but not opened. Word documents need nothing
+  extra. Settings shows which are installed.
+- **Nothing is sent anywhere.** The Copilot round trip and the questions for colleagues
+  are files you carry yourself.
 
 - **"Called by" on script pages**: every other script that uses a script, in one list.
   That means scripts that import it (and which of its functions they call), and scripts
@@ -159,9 +185,19 @@ one at a time, and every query is logged:
   `!python`. Run links also show on the code map.
 - **Link files found in another folder**: when a script names `sales.csv` but the only
   `sales.csv` catalogued is in a different folder, link it anyway and flag it as a
-  possible wrong folder (today the folders must match). When the same file name turns up
-  in several folders, say so on the link and on the script and file pages (today the
-  newest is picked without a word).
+  possible wrong folder (before 2.1 the folders had to match). When the same file name
+  turns up in several folders, it says so on the link and on the script and file pages
+  (before, the newest was picked without a word).
+- **Folder roles**: when you add a folder, the app suggests what it is. A *master
+  folder* whose subfolders each look like their own project (their own `.git`, README,
+  `environment.yml` or requirements, `src/`) becomes one project per subfolder. A
+  *single project* keeps its subfolders together, each with a role suggested from its
+  name and contents: code (`code/`, `src/`, `scripts/`, `notebooks/`, `sql/`), raw data
+  (`raw_data/`, `raw/`, `input/`: data that comes in from outside), data (`data/`,
+  `processed/`), outputs (`output/`, `results/`), docs, archive (`archive/`, `old/`,
+  `backup/`: kept but treated as old), or ignore. Roles apply at any depth, so
+  `forecasting/data/raw_data/` is raw data inside the forecasting project. You confirm or change each one, the choices survive rescans, and new
+  subfolders that appear later are suggested the same way.
 - **Business projects**: add a whole folder (a project, a sub-folder like
   `forecasting/src`, or a data folder) in one go, with an option to keep adding new files
   that appear there. Start a new business project straight from a table or script page,
@@ -170,8 +206,8 @@ one at a time, and every query is logged:
   search, the review list, coverage, diagrams and exports; scans keep it hidden, and a
   list lets you bring it back. Tables SQL Server tools create for themselves (marked
   `microsoft_database_tools_support`, like `sysdiagrams`) are skipped by default.
-- **Clearer feature dictionary**: rename it "ML model features" and say up front that it
-  lists the inputs to your machine learning models. Each row names the models that use the
+- **ML model features** (was the feature dictionary): says up front that it lists the
+  inputs to your machine learning models. Each row names the models that use the
   feature, the script that builds it and the table and column it comes from, each one a
   link, instead of a bare count of models.
 - **Copilot pack test questions**: the Copilot pack page lists ten or so questions built
@@ -224,6 +260,202 @@ one at a time, and every query is logged:
   version shows on the code map, in search and in lineage. Older versions stay listed
   on its page with their dates and a "what changed" view, and you can split a pair that
   aren't really versions.
+- **Main and backup tables**: link a table on SQL Server with its copy elsewhere (an
+  Azure SQL backup with extra history, say) and mark which is the main one. Pairs are
+  suggested when the same table name and columns turn up on two servers, for you to
+  confirm. Both pages show the pair side by side: where each lives, the date range each
+  covers (from the profiles), row counts and any columns only one has. On the code map
+  and in lineage the pair shows as one table with a "main + backup" badge, so a script
+  that reads both is clear about why.
+- **Copilot round trip**: export a "gaps pack" of items with no description, with their
+  code and columns, for your Copilot agent to draft descriptions; import its answers as
+  suggestions you accept or edit. No AI service is connected to the catalogue. It's on
+  the Copilot pack page under Round trip: the pack asks for a CSV of `id,column,answer`,
+  which you paste or upload back. Naming rules the app couldn't read go in too, and
+  Copilot's rewrite comes back as rules to confirm.
+- **Descriptions from comments**: draft descriptions from SQL comments, docstrings,
+  notebook markdown and comments next to column renames, as suggestions.
+- **Column renames in lineage**: `rename({"Units": "qty"})` or `SELECT Units AS qty`
+  links the two columns. Both names are shown, with the script and line where it was
+  renamed, and the new column inherits the old one's description as a suggestion.
+  Column lineage follows the chain through every rename.
+- **Report labels**: Power BI display names and visual titles suggested as business
+  names for the SQL columns behind them.
+- **Git history**: who last changed a script, when, and the commit messages, used to
+  suggest owners and show a change log.
+- **Freshness and old items**: output files' modified dates show whether the scripts
+  that write them still run. Outputs that keep refreshing earn a "refreshing" badge and
+  drop out of your way; ones that stop go on the To review list asking for a refresh or
+  a note on whether they're still needed. Scripts and projects nobody has touched or
+  run in a long time are flagged the same way. You can mark projects, scripts and files
+  as old, which hides them from the code map and diagrams (a switch shows them again)
+  without deleting their notes.
+- **Rules become checks**: a rule you write ("Units is never negative", "loaded daily
+  by 7am") becomes a check run with each profile; failures go to review. Write them in
+  the **Rule checks** box on a table or file page. It reads never negative / always
+  positive, never blank, unique, between A and B, at least / at most N, one of A, B, C,
+  at least N rows, and loaded daily / weekly / monthly / every N days (optionally "by
+  7am", checked against the newest date in the data or a file's modified time). Rules
+  already sitting in notes and column descriptions are offered as checks to add.
+- **Questions for colleagues**: a share file holding only your open questions, which a
+  colleague answers in their catalogue and merges back into yours (Share › Share with
+  colleagues). Their reply is an answers file holding only the questions you asked.
+- **Five quick questions**: a short daily list of the highest-value gaps, each answerable
+  in under a minute, mostly by confirming a suggestion.
+- **Learn from your queries**: joins and filters that come up again and again in pasted
+  SQL and scripts become "how this table is usually used" notes and join hints.
+- **Home page**: opens first. It shows your follow-ups, what changed since your last
+  visit, your five quick questions, and anything failing or no longer refreshing.
+- **Follow up**: a "Follow up" tick on any table, script, file or knowledge page pins it
+  to the home page (with an optional note on where you were), so you can get back to
+  what you were working on. Untick it when you're done.
+- **Search box always in the sidebar**, so you can search from any page.
+- **Search results as a table**: a sortable table with kind, name, where it lives,
+  description, what it matched on, rows, last changed or scanned, notes, status and
+  trust, and how many scripts use it. Filter by kind or source in the table, click a row
+  to open it, and switch back to the card view if you prefer. File families show as
+  one row ("SOH: daily, weekly, monthly") that opens to its members. Quick filter
+  buttons above the results (Tables, Files, Code, Reports and measures, Metrics,
+  Knowledge) replace hunting through the Kind list, and a metric found in search shows
+  the Power BI measures and SQL that calculate it, and the reverse. A "Group by" choice
+  regroups the results: by the script that creates them (so ten outputs of one script
+  sit under that script, with anything nothing creates under "Not linked to a script"),
+  by family, by folder or database, by business project, or not at all.
+- **Remove or downplay links**: every link on an item's page (uses, created by, read by)
+  gets a small menu: *Remove* for a link the scanner got wrong, or *Not important* for
+  one that's right but noise (a script that only reads a lookup table, say). Unimportant
+  links stay listed but greyed out, and are left out of grouping, diagrams, lineage and
+  "used by" counts. Both survive rescans, show who set them, and can be undone from a
+  "Removed and unimportant links" list.
+- **SQL query library**: every SQL query found in scripts, notebooks, .sql files, Excel
+  (Power Query and macros), Power BI and reference documents becomes a saved query,
+  alongside the ones you paste in. Each gets a suggested name (from the variable or
+  function holding it, a comment above it, or its file), which you can change, and
+  records where it was found and the tables it uses. The same query found in several
+  places is shown once, listing every place. A "SQL queries" page lists them all as a
+  table you can sort, filter by table or source and pick from to see the query.
+  Each table's page gets a "SQL using this table" section listing every query that
+  references it, active ones first: in a scheduled script, a script whose outputs are
+  still refreshing, the current version of a script, a view or procedure that exists
+  now, or edited recently. Queries in old versions, old projects or items marked old
+  sit below, greyed out. Each shows its name, where it is, how it uses the table
+  (reads, joins on which columns, writes) and any SQL check findings.
+- **Query diagrams with fields**: looking at a query (saved, pasted, a view or a
+  procedure) shows a diagram of just the tables it uses, with their columns listed, the
+  columns the query uses highlighted, and lines between the exact fields it joins on
+  (from its ON clauses, plus the database's keys). Database diagrams get the same "show
+  fields" view for any group of tables.
+- **Access databases**: .accdb and .mdb files found in data folders are read for their
+  saved queries (name and SQL, which go in the SQL query library), linked tables (what
+  each points to, for example a SQL Server table, another Access file or a spreadsheet,
+  with the connection's password removed, and linked to that item in the catalogue),
+  and local tables with their columns and row counts. It opens the file read-only and
+  never runs a query. On Windows it uses the Access Database Engine through DAO (from
+  pywin32), so the engine's 32/64-bit version must match Python's; the setup page checks
+  this and says what to install if it's missing.
+- **SQL checks**: every saved query, view and procedure is checked (without running it)
+  for common problems, each with a short reason and a suggested fix:
+  - *Likely wrong results*: a join with no join condition, `NOT IN` on a column that can
+    be empty, joining on a column that isn't unique (rows multiply; checked against
+    profiles), comparing columns of different types, `BETWEEN` on date-times, dividing
+    without guarding against zero, tables or columns that no longer exist or are marked
+    deprecated.
+  - *Slow*: `SELECT *`, functions wrapped around filtered columns (`YEAR(SaleDate) = 2025`),
+    `LIKE '%...'`, `DISTINCT` covering duplicates, `UNION` where `UNION ALL` would do,
+    cursors and loops in procedures.
+  - *Risky*: `NOLOCK` on data that must be exact, hard-coded dates, missing schema names,
+    and SQL built by pasting variables into strings in scripts (an injection risk).
+  Findings show on the query's page and in a column on the SQL queries page, can be
+  marked "fine here", and the worst ones go on To review.
+- **Recently viewed** items in the sidebar.
+- **Edit history** on notes and descriptions: who changed what and when, with undo.
+- **Schedule scans from the app**: a Settings button that creates (or removes) the
+  weekly Task Scheduler task for you, and shows when it last ran and whether it worked.
+- **Naming rules audit**: paste a database's naming rules as text (from an email, say)
+  on its page. The text is kept as written, and each rule the app recognises becomes a
+  check you confirm or edit: prefixes (`vw_` for views, `usp_` for procedures), case
+  (PascalCase, snake_case), endings (`...ID`, `...Date`), no spaces or reserved words,
+  maximum length, which schema things belong in. Rules it can't turn into a check stay
+  as text, and the Copilot round trip can help write them. The audit shows each rule
+  with how many tables, views, procedures and columns pass, the ones that don't, and
+  lets you mark agreed exceptions. New objects that break a rule go on To review, the
+  results export to CSV, and the rules go in the Copilot pack so queries Copilot
+  writes follow them.
+  Rules can also be worked out from what's already there: for a database or a Python
+  project, the app looks for the habits most names follow (say 92% of views start with
+  `vw_`, columns are PascalCase, date columns end in `Date`, scripts are `snake_case.py`,
+  output files are named `<thing>_<yyyymmdd>.csv`) and suggests each as a rule, with how
+  many names follow it and examples of the ones that don't. You accept, edit or reject
+  each suggestion; accepted ones are audited like pasted rules.
+- **Tidier "Contains" lists**: a folder's contents show dated copies of the same data
+  as one line per series (`sales_{yyyy}{mm}.csv · 48 files · Jan 2022 to Dec 2025`),
+  opening to the files, and the rest grouped by subfolder and type, as a sortable table
+  with a filter box instead of a long list of buttons. Scripts help find the series: a
+  script that writes `f"out/sales_{run_date}.csv"` shows that every file matching
+  `out/sales_*.csv` is one output, so they're grouped even when the part that changes
+  isn't a recognisable date (a run number, a version, an odd date format), and the
+  series links back to the script that makes it.
+- **File families by grain**: files with the same base name and a grain suffix
+  (`SOH_D`, `SOH_W`, `SOH_M`; also `_daily`, `_weekly`, `_monthly`, `_Q`, `_Y`) are
+  grouped as one family, "SOH", while each stays its own item. The family page compares
+  them side by side: the grain (from the suffix, checked against the spacing of the
+  dates inside once profiled), date range, rows, columns that differ, and which scripts
+  write and read each. The grouping is suggested for you to confirm, and you can add
+  your own suffixes.
+- **Starter knowledge packs**: optional packs of general knowledge you can load into the
+  Knowledge section and Metric glossary, marked "general" so they're kept apart from
+  what's specific to your data, and editable like anything else (loading again never
+  overwrites your edits). First packs:
+  - *Supply chain*: forecast accuracy (MAPE, WAPE, bias), safety stock, lead time,
+    service level, fill rate, OTIF, inventory turns and days on hand, MOQ, ABC/XYZ,
+    S&OP, demand vs supply planning terms.
+  - *SAP*: the common tables and fields and what they mean (material master `MARA`/`MARC`,
+    plants `T001W`, sales orders `VBAK`/`VBAP`, deliveries `LIKP`/`LIPS`, purchase orders
+    `EKKO`/`EKPO`, stock movements `MATDOC`/`MSEG`; fields such as `MATNR`, `WERKS`,
+    `LGORT`, `MEINS`), plus APO (planning books, key figures, DP and SNP), EWM
+    (warehouse tasks, storage bins, handling units) and IBP (key figures, planning
+    levels, attributes such as `PRDID` and `LOCID`).
+  - *SQL Server good practice*: a general reference for writing and reviewing T-SQL:
+    joins and NULLs, sargable filters and indexes, date handling, `NOLOCK` and isolation
+    levels, temp tables vs table variables vs CTEs, window functions, set-based work
+    instead of cursors, safe dynamic SQL, naming and formatting. Each SQL check links to
+    the article that explains it, and the articles go in the Copilot pack.
+  - *APO to IBP*: what changed in the move, as a side-by-side guide: APO DP becomes IBP
+    for demand, SNP becomes IBP for supply (and response); planning books and data views
+    become planning views (mostly in the Excel add-in); characteristics and CVCs become
+    master data attributes and planning objects; location products become
+    product-location master data; macros become key figure calculations and planning
+    operators; and how forecasting, time buckets, lifecycle and realignment differ.
+    Each pair says what to check when an old APO report, extract or metric is rebuilt
+    on IBP data.
+- **Link data to SAP**: mark what a table or column is in SAP terms ("PlantID is SAP
+  `WERKS`", "this table is an extract of `MARC`"). Matches are suggested from column
+  names (SAP field names, or common English names such as Material and Plant), for you
+  to confirm. Linked items show the SAP meaning on their page, company-wide keys gain
+  their SAP field, and the Copilot pack explains both so Copilot can answer in either.
+  Data and scripts that still use APO (its tables, extracts or key figures) are flagged
+  with the IBP equivalent, so you can see what needs moving and what already has.
+- **Power BI measures as a table**: a report's measures (some have hundreds) show as a
+  sortable, filterable table: name, home table, display folder, format, what it uses
+  (columns and other measures), which pages and visuals show it, and whether it's in
+  the glossary. Group by home table or display folder, filter to "uses another
+  measure", and click a row to open it. Each measure is marked used or unused: used
+  means a visual shows it, or a used measure builds on it (followed through every
+  step). Unused ones are hidden by default, with a count and a switch to show them.
+  Because other reports connected to a published dataset can use measures this file
+  can't see, it says "not used in this file" rather than "unused".
+- **Report page pictures**: a .pbix holds the layout of each page but no picture of
+  the charts (Power BI draws them when the report opens). So each report page gets a
+  wireframe drawn from its layout: every visual in its place, with its type, title and
+  fields, and a click shows its measures. You can also paste or upload a screenshot of
+  a page or visual to keep with it. Screenshots stay on your machine and are left out of
+  share files and exports unless you tick them in, since they can show real numbers.
+- **A tidier menu**: To review takes in Data issues, Needs notes, Unmatched tables,
+  Unlinked data and Duplicates as filter tabs; Coverage and Issue hotspots become one
+  Health page; Recent notes and Recent changes become one What's new page; Describe
+  columns and Edit many items become one Bulk edit page; Add SQL, Data folders and SQL
+  scanning become one Sources page; Company-wide keys moves to Knowledge, Packages to
+  Map, and Sensitive data to Settings.
 - **Suggested metrics**: the Metric glossary suggests metrics found in your code and
   reports: functions such as `wape()` or `forecast_accuracy()`, named calculations
   (`mape = ...`), computed SQL columns (`SUM(x) / SUM(y) AS fill_rate`), and Power BI
@@ -239,6 +471,9 @@ Install the new version the same way as before (`pip install -e .` or
 untouched copy of the old file next to it (the path is shown in the app and on the
 Settings page). Nothing is removed; every note is kept. Rescan to fill in the new
 details (`pdcat scan`).
+
+To upgrade from 2.0 to 2.1, install the same way and rescan; see
+[New in version 2.1](#new-in-version-21).
 
 Version 2 needs Streamlit 1.62 or later; both install commands above update it. With an
 older Streamlit the app can stop with "Exception in ASGI application … Expected
@@ -422,6 +657,10 @@ Everything else can be done from the app, or from the terminal:
 **[Command reference](docs/commands.md)**: every option, with examples and what the
 output looks like. In the terminal, `pdcat --help` lists the commands and
 `pdcat <command> --help` shows one command's options and examples.
+
+To refresh the catalogue automatically every week, see
+[Scan on a schedule](docs/commands.md#scan-on-a-schedule): a ready-made batch file and one
+Task Scheduler command.
 
 ## Export format
 

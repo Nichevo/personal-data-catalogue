@@ -82,6 +82,23 @@ def bproject_page(cat: Catalogue, key: str) -> None:
         if c2.button("Remove", key=f"bprm-{i}"):
             B.remove_member(cat, uid, m["key"])
             st.rerun()
+    with st.popover("📁 Add a whole folder"):
+        st.caption("A Python project, a subfolder such as forecasting/src, a data folder, or a database: everything in "
+                   "it is added.")
+        folders = B.folder_choices(cat)
+        with st.form(f"bp-folder-{uid}", clear_on_submit=True):
+            prefix = st.selectbox("Folder", list(folders), format_func=folders.get, index=None)
+            follow = st.checkbox("Keep adding new files that appear there", value=True)
+            if st.form_submit_button("Add the folder") and prefix:
+                n = B.add_folder(cat, uid, prefix, follow=follow)
+                st.toast(f"{n} item(s) added")
+                st.rerun()
+        for f in B.followed_folders(cat, uid):
+            c1, c2 = st.columns([4, 1])
+            c1.caption(f"Following {f.split('://', 1)[1]}")
+            if c2.button("Stop", key=f"bp-unfollow-{uid}-{f}"):
+                B.stop_following(cat, uid, f)
+                st.rerun()
     options = _item_options(cat)
     with st.form(f"bp-add-{uid}", clear_on_submit=True):
         picked = st.multiselect("Add items", [k for k in options if k not in {m["key"] for m in have}],
@@ -90,6 +107,9 @@ def bproject_page(cat: Catalogue, key: str) -> None:
             for k in picked:
                 B.set_member(cat, uid, k)
             st.rerun()
+
+    from .documents_page import documents_section
+    documents_section(cat, key)
 
     if have or p["purpose"]:
         st.subheader("Suggested")
@@ -117,12 +137,11 @@ def bproject_page(cat: Catalogue, key: str) -> None:
 
 
 def projects_box(cat: Catalogue, key: str) -> None:
-    """On an item's page: the business projects it belongs to, and a way to add it to one."""
+    """On an item's page: the business projects it belongs to, a way to add it to one, and to start a new one
+    with it."""
     mine = B.projects_for(cat, key)
     projects = B.list_projects(cat)
-    if not projects:
-        return
-    line = st.columns([4, 2])
+    line = st.columns([4, 2, 1.4])
     with line[0]:
         if mine:
             st.caption("Part of business project" + ("s" if len(mine) > 1 else "") + ":")
@@ -138,3 +157,12 @@ def projects_box(cat: Catalogue, key: str) -> None:
             B.set_member(cat, pick, key)
             st.session_state.pop(f"bpadd-{key}", None)
             st.rerun()
+    with line[2].popover("🧭 New project"):
+        with st.form(f"bpnew-{key}", clear_on_submit=True):
+            name = st.text_input("Business project name")
+            purpose = st.text_area("Purpose (optional)", height=70)
+            if st.form_submit_button("Start it with this item", type="primary") and name.strip():
+                uid = B.save_project(cat, name, purpose=purpose, status="active")
+                B.set_member(cat, uid, key)
+                go(f"bp://{uid}")
+                st.rerun()
