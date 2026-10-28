@@ -15,12 +15,25 @@ from .common import asset_button, go
 
 def schedules_page(cat: Catalogue) -> None:
     st.title("Schedules")
-    st.caption("Bring in a CSV listing scheduled jobs (a Task Scheduler export, a job list or a sheet you keep). "
+    st.caption("Bring in a CSV or Excel workbook listing scheduled jobs (a Task Scheduler export, a job list or a "
+               "sheet you keep). "
                "Each job is matched to the scripts it runs; script pages then show when they run. In a terminal, "
                "`schtasks /query /fo csv /v > tasks.csv` exports Windows Task Scheduler.")
-    up = st.file_uploader("Schedule list (CSV)", type=["csv", "txt"], key="sched-up")
+    up = st.file_uploader("Schedule list (CSV or Excel)", type=["csv", "txt", "xlsx", "xlsm"], key="sched-up",
+                          help="An old .xls workbook: open it in Excel and save it as .xlsx first.")
     if up is not None:
-        cols, rows = schedules.read_csv(up.getvalue())
+        if up.name.lower().endswith((".xlsx", ".xlsm")):
+            from pdcat.excelimport import sheet_names
+            try:
+                sheets = sheet_names(up.getvalue())
+            except Exception as e:  # a damaged or password-protected workbook
+                st.error(f"Couldn't read that workbook ({type(e).__name__}). Save it again from Excel, or as CSV.")
+                return
+            best = next((i for i, n in enumerate(sheets) if "sched" in n.lower()), 0)
+            sheet = st.selectbox("Sheet", sheets, index=best, key="sched-sheet") if len(sheets) > 1 else sheets[0]
+            cols, rows = schedules.read_sheet(up.getvalue(), sheet)
+        else:
+            cols, rows = schedules.read_csv(up.getvalue())
         if not rows:
             st.warning("No rows found in that file.")
         else:

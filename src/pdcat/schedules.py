@@ -51,6 +51,16 @@ def read_csv(data: bytes) -> tuple[list[str], list[dict[str, str]]]:
     return cols, rows
 
 
+def read_sheet(data: bytes, sheet: str) -> tuple[list[str], list[dict[str, str]]]:
+    """Columns and rows of one sheet of an Excel workbook (.xlsx / .xlsm), read without any extra package."""
+    from .excelimport import as_records
+    from .excelimport import read_sheet as read
+    rows = read(data, sheet)
+    # the header is the first row with at least two filled cells (titles above a table are skipped)
+    start = next((i for i, r in enumerate(rows) if sum(bool(c.strip()) for c in r) >= 2), 0)
+    return as_records(rows, start)
+
+
 def guess_columns(columns: list[str]) -> dict[str, str | None]:
     low = {c.lower().strip(): c for c in columns}
 

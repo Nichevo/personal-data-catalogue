@@ -136,6 +136,8 @@ def sidebar(cat: Catalogue) -> tuple[str, Page]:
             page = st.radio("Page", list(pages), key=f"nav-{section}", label_visibility="collapsed",
                             on_change=leave_item)
         recently_viewed(cat)
+        from .arrowsafe import sidebar_note
+        sidebar_note()
         from .common import go_page
         st.button("📖 Menu guide", key="menu-guide-link", on_click=go_page, args=("Menu guide",), type="tertiary",
                   help="What every page in the menu is for")
@@ -172,6 +174,8 @@ def session_start(cat: Catalogue) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Data catalogue", page_icon="🗃️", layout="wide")
+    from .arrowsafe import install
+    install()  # tables fall back to plain HTML when pyarrow's DLLs won't load
     st.session_state["_timings"] = []
     cat = open_catalogue()
     try:
