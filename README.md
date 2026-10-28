@@ -166,8 +166,11 @@ one at a time, and every query is logged:
   folder* whose subfolders each look like their own project (their own `.git`, README,
   `environment.yml` or requirements, `src/`) becomes one project per subfolder. A
   *single project* keeps its subfolders together, each with a role suggested from its
-  name and contents: code (`src/`, `notebooks/`, `sql/`), data, outputs, docs, old, or
-  ignore. You confirm or change each one, the choices survive rescans, and new
+  name and contents: code (`code/`, `src/`, `scripts/`, `notebooks/`, `sql/`), raw data
+  (`raw_data/`, `raw/`, `input/`: data that comes in from outside), data (`data/`,
+  `processed/`), outputs (`output/`, `results/`), docs, archive (`archive/`, `old/`,
+  `backup/`: kept but treated as old), or ignore. Roles apply at any depth, so
+  `forecasting/data/raw_data/` is raw data inside the forecasting project. You confirm or change each one, the choices survive rescans, and new
   subfolders that appear later are suggested the same way.
 - **Business projects**: add a whole folder (a project, a sub-folder like
   `forecasting/src`, or a data folder) in one go, with an option to keep adding new files
