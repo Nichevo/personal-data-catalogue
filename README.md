@@ -289,6 +289,12 @@ one at a time, and every query is logged:
   records where it was found and the tables it uses. The same query found in several
   places is shown once, listing every place. A "SQL queries" page lists them all as a
   table you can sort, filter by table or source and pick from to see the query.
+  Each table's page gets a "SQL using this table" section listing every query that
+  references it, active ones first: in a scheduled script, a script whose outputs are
+  still refreshing, the current version of a script, a view or procedure that exists
+  now, or edited recently. Queries in old versions, old projects or items marked old
+  sit below, greyed out. Each shows its name, where it is, how it uses the table
+  (reads, joins on which columns, writes) and any SQL check findings.
 - **Query diagrams with fields**: looking at a query (saved, pasted, a view or a
   procedure) shows a diagram of just the tables it uses, with their columns listed, the
   columns the query uses highlighted, and lines between the exact fields it joins on
