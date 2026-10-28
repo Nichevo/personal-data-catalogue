@@ -154,6 +154,7 @@ def _scan_notebook(text: str) -> Found:
     funcs, imports, errors, import_details, feature_rows, runs = [], set(), [], [], [], []
     unknown: list[dict] = []
     patterns: list[str] = []
+    sql_strings: list[dict] = []
     merged: dict[str, dict] = {"function_info": {}, "import_map": {}, "function_refs": {}}
     for i, cell in enumerate(cells, start=1):
         source = "".join(cell.get("source", []))
@@ -163,7 +164,10 @@ def _scan_notebook(text: str) -> Found:
         if cell.get("cell_type") != "code":
             continue
         if cell.get("source") and source.lstrip().lower().startswith(("%%sql", "%sql")):
-            found.refs += [(r.relation, f"table:{r.name}", 0) for r in extract_refs(source.split("\n", 1)[-1])]
+            body = source.split("\n", 1)[-1]
+            found.refs += [(r.relation, f"table:{r.name}", 0) for r in extract_refs(body)]
+            sql_strings.append({"sql": body[:MAX_SQL_LEN], "line": 0, "cell": i, "name": f"cell {i}",
+                                "function": None, "built_from_variables": False})
             continue
         # %run other.py and !python other.py run another script.
         runs += [{"target": t, "line": 0, "how": f"notebook {how} (cell {i})"}
@@ -180,6 +184,7 @@ def _scan_notebook(text: str) -> Found:
         feature_rows += cell_found.attrs.get("feature_assignments", [])
         runs += [{**r, "line": 0, "how": f"{r['how']} (cell {i})"} for r in cell_found.attrs.get("runs", [])]
         unknown += [{**u, "cell": i} for u in cell_found.attrs.get("unknown_files", [])]
+        sql_strings += [{**q, "cell": i} for q in cell_found.attrs.get("sql_strings", [])]
         patterns += cell_found.attrs.get("write_patterns", [])
         for name, value in merged.items():
             for k, v in cell_found.attrs.get(name, {}).items():
@@ -196,6 +201,8 @@ def _scan_notebook(text: str) -> Found:
         found.attrs["runs"] = runs
     if unknown:
         found.attrs["unknown_files"] = unknown
+    if sql_strings:
+        found.attrs["sql_strings"] = sql_strings[:MAX_SQL]
     if patterns:
         found.attrs["write_patterns"] = sorted(set(patterns))
     if errors:
@@ -227,7 +234,7 @@ def scan_python_source(text: str) -> Found:
     # Docstrings are prose, and the literal pieces inside an f-string are handled with the f-string.
     skip = _docstring_nodes(tree) | {id(v) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for v in n.values}
     consts = _module_constants(tree)
-    env = build_env(tree)
+    env = build_env(tree, text)
     collected = _collect_refs(tree, skip, consts, env)
     found.refs = [(rel, ref, line) for (rel, ref), (line, _) in collected.items()]
     found.how = {k: how for k, (_, how) in collected.items() if how}
@@ -258,6 +265,8 @@ def scan_python_source(text: str) -> Found:
         found.attrs["unknown_files"] = sorted(env.unknown.values(), key=lambda u: u["line"])
     if env.patterns:
         found.attrs["write_patterns"] = sorted(set(env.patterns))
+    if env.sql:
+        found.attrs["sql_strings"] = sorted(env.sql.values(), key=lambda q: q["line"])
     return found
 
 
@@ -272,6 +281,11 @@ def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str], env: di
             if s and looks_like_sql(s):
                 for r in extract_refs(s):
                     refs.setdefault((r.relation, f"table:{r.name}"), (node.lineno, "SQL in the code"))
+                if isinstance(env, Env) and len(env.sql) < MAX_SQL:
+                    env.sql.setdefault((node.lineno, s[:200]), {
+                        "sql": s[:MAX_SQL_LEN], "line": node.lineno, "name": _sql_name(node, env),
+                        "function": env.enclosing.get(id(node)),
+                        "built_from_variables": isinstance(node, ast.JoinedStr) and "{}" in s})
             elif s and s.lstrip().lower().startswith("bcp "):
                 for rel, ref in _bcp_refs(s.split()):
                     refs.setdefault((rel, ref), (node.lineno, "bcp command"))
@@ -436,6 +450,25 @@ def _magic_runs(line: str) -> list[tuple[str, str]]:
     return []
 
 
+MAX_SQL = 200          # SQL strings kept per file
+MAX_SQL_LEN = 20_000
+
+
+def _sql_name(node: ast.AST, env: "Env") -> str | None:
+    """A name for a SQL string: the variable holding it, or the comment just above it."""
+    if id(node) in env.assigned_to:
+        return env.assigned_to[id(node)]
+    line = getattr(node, "lineno", 0)
+    for back in (1, 2):
+        if 0 < line - back <= len(env.lines):
+            text = env.lines[line - back - 1].strip()
+            if text.startswith("#") and len(text) > 2:
+                return text.lstrip("# ").strip()[:80]
+            if text:
+                break
+    return None
+
+
 class Env(dict):
     """name -> the expression first assigned to it, plus what's needed to follow paths further:
     every assignment of a name (if/else branches), the function each node is in, what callers pass
@@ -452,6 +485,9 @@ class Env(dict):
         self.withs: set[str] = set()
         self.unknown: dict[tuple, dict] = {}
         self.patterns: list[str] = []
+        self.sql: dict[tuple, dict] = {}
+        self.assigned_to: dict[int, str] = {}
+        self.lines: list[str] = []
 
 
 # module name -> {constant name: value}, for every module in the project being scanned
@@ -497,13 +533,15 @@ def project_constants(root: Path, files: list[Path]) -> dict[str, dict[str, str]
     return out
 
 
-def build_env(tree: ast.Module) -> Env:
+def build_env(tree: ast.Module, text: str = "") -> Env:
     env = Env(_assignment_env(tree))
+    env.lines = text.splitlines()
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for t in node.targets:
                 if isinstance(t, ast.Name):
                     env.alts.setdefault(t.id, []).append(node.value)
+                    env.assigned_to.setdefault(id(node.value), t.id)
                 elif isinstance(t, ast.Attribute):  # self.out_path = "...", cfg.out = "..."
                     env.setdefault(_src(t, 200), node.value)
         elif isinstance(node, (ast.With, ast.AsyncWith)):
