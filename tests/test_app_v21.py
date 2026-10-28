@@ -189,3 +189,14 @@ def test_folder_page_contains_table(app, catalogue, tmp_path):
     assert len(df) == 2 and "dated series" in set(df["type"])
     app.text_input(key="contains-filter-files://share").input("notes").run()
     assert len(app.dataframe(key="contains-files://share").value) == 1
+
+
+def test_copilot_page_round_trip(app, catalogue):
+    from test_app import goto
+    goto(app.run(), "Copilot pack")
+    assert not app.exception
+    app.text_area(key="copilot-answer-text").input(f"id,column,answer\n{SALES},,Daily sales by store.\n")
+    [b for b in app.button if b.label == "Read the answers"][0].click().run()
+    assert not app.exception
+    assert suggestions.open_suggestions(catalogue, "copilot")
+    assert any(b.label.startswith("Accept") for b in app.button)
