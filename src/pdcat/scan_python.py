@@ -315,12 +315,13 @@ def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str], env: di
             for relation, ref, how in _call_refs(node, env):
                 refs.setdefault((relation, ref), (node.lineno, how))
             if isinstance(env, Env) and isinstance(node.func, ast.Attribute) and node.func.attr == "rename":
-                env.renames += _renames(node)
+                env.renames += _renames(node, env.lines)
     return refs
 
 
-def _renames(call: ast.Call) -> list[dict]:
-    """df.rename(columns={"Units": "qty"}) -> [{"old": "Units", "new": "qty", "line"}]."""
+def _renames(call: ast.Call, lines: list[str] | None = None) -> list[dict]:
+    """df.rename(columns={"Units": "qty"}) -> [{"old": "Units", "new": "qty", "line"}], with the comment at the
+    end of the pair's line when there is one (`"Units": "qty",  # units sold`)."""
     mapping = next((k.value for k in call.keywords if k.arg == "columns"), None)
     if mapping is None and call.args and not any(k.arg == "index" for k in call.keywords):
         mapping = call.args[0] if any(k.arg == "axis" and isinstance(k.value, ast.Constant)
@@ -331,7 +332,12 @@ def _renames(call: ast.Call) -> list[dict]:
     for k, v in zip(mapping.keys, mapping.values):
         if isinstance(k, ast.Constant) and isinstance(v, ast.Constant) and isinstance(k.value, str) \
                 and isinstance(v.value, str) and k.value != v.value:
-            out.append({"old": k.value, "new": v.value, "line": call.lineno})
+            item = {"old": k.value, "new": v.value, "line": call.lineno}
+            src = lines[k.lineno - 1] if lines and 0 < k.lineno <= len(lines) else ""
+            m = re.search(r"#\s*(.+)$", src)
+            if m and lines and len([1 for kk in mapping.keys if getattr(kk, "lineno", 0) == k.lineno]) == 1:
+                item["comment"] = m.group(1).strip()
+            out.append(item)
     return out
 
 

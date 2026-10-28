@@ -43,7 +43,7 @@ def optional_packages() -> dict[str, bool]:
     """Optional packages and whether they're installed."""
     out = {}
     for name, mod in (("sqlglot", "sqlglot"), ("pywin32", "win32com.client"), ("pbixray", "pbixray"),
-                      ("olefile", "olefile"), ("python-docx", "docx"), ("pypdf", "pypdf")):
+                      ("olefile", "olefile"), ("pypdf", "pypdf")):
         try:
             __import__(mod)
             out[name] = True
