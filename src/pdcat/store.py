@@ -373,9 +373,172 @@ CREATE TABLE IF NOT EXISTS source_map (
     my_source   TEXT NOT NULL,
     PRIMARY KEY (author, their_source)
 );
+
+-- Version 2.1 --------------------------------------------------------------------------
+
+-- Things the catalogue suggests and you accept, edit or reject (script versions, file families,
+-- SAP meanings, metrics, naming rules...). A rejected suggestion never comes back.
+CREATE TABLE IF NOT EXISTS suggestions (
+    id          TEXT PRIMARY KEY,           -- "<kind>:<subject>:<detail>", stable across scans
+    kind        TEXT NOT NULL,
+    subject     TEXT NOT NULL,              -- the item it is about
+    title       TEXT NOT NULL,
+    detail      TEXT,
+    payload     TEXT NOT NULL DEFAULT '{}', -- what accepting it does
+    score       REAL NOT NULL DEFAULT 0,
+    state       TEXT NOT NULL DEFAULT 'open',  -- open | accepted | rejected | gone (no longer found)
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    decided_by  TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_suggestions_kind ON suggestions(kind, state);
+CREATE INDEX IF NOT EXISTS ix_suggestions_subject ON suggestions(subject);
+
+-- Items that belong together: file families by grain (SOH_D, SOH_W, SOH_M), script versions,
+-- a main table and its backup. Each item stays its own item; the group adds a page and a row.
+CREATE TABLE IF NOT EXISTS item_groups (
+    uid         TEXT PRIMARY KEY,
+    type        TEXT NOT NULL,              -- family | versions | backup
+    name        TEXT NOT NULL,
+    main_key    TEXT,                       -- the current version, the main table
+    attrs       TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT,
+    author      TEXT,
+    import_batch INTEGER
+);
+CREATE TABLE IF NOT EXISTS group_members (
+    group_uid   TEXT NOT NULL,
+    asset_key   TEXT NOT NULL,
+    label       TEXT,                       -- "daily", "v3", "backup"...
+    PRIMARY KEY (group_uid, asset_key)
+);
+CREATE INDEX IF NOT EXISTS ix_group_members_asset ON group_members(asset_key);
+
+-- How much a link matters: "unimportant" links stay listed but are left out of diagrams and counts.
+CREATE TABLE IF NOT EXISTS link_marks (
+    src_key     TEXT NOT NULL,
+    relation    TEXT NOT NULL,
+    dst_key     TEXT NOT NULL,
+    mark        TEXT NOT NULL,              -- unimportant
+    created_at  TEXT,
+    author      TEXT,
+    PRIMARY KEY (src_key, relation, dst_key)
+);
+
+-- Every change you make (notes, descriptions, item details, links, decisions), with who and when,
+-- so it can be shown and undone.
+CREATE TABLE IF NOT EXISTS edits (
+    id          INTEGER PRIMARY KEY,
+    at          TEXT NOT NULL,
+    author      TEXT,
+    item        TEXT NOT NULL,              -- the asset key (or bp://, kb://...) it is about
+    what        TEXT NOT NULL,              -- "note", "description", "item_info.owner", "link", ...
+    old_value   TEXT,
+    new_value   TEXT,
+    target      TEXT,                       -- JSON: how to put the old value back
+    undone      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_edits_item ON edits(item);
+
+-- SQL queries found anywhere (scripts, notebooks, .sql files, Excel, Power BI, Access, documents)
+-- or pasted in. The same query found in several places is one row with several places.
+CREATE TABLE IF NOT EXISTS sql_queries (
+    uid         TEXT PRIMARY KEY,           -- hash of the normalised SQL
+    name        TEXT NOT NULL,
+    named_by    TEXT NOT NULL DEFAULT 'auto',  -- auto | you
+    sql         TEXT NOT NULL,
+    tables      TEXT NOT NULL DEFAULT '[]',
+    analysis    TEXT NOT NULL DEFAULT '{}',
+    first_seen  TEXT,
+    last_seen   TEXT,
+    status      TEXT NOT NULL DEFAULT 'active'  -- active | missing
+);
+CREATE TABLE IF NOT EXISTS sql_query_places (
+    query_uid   TEXT NOT NULL,
+    item        TEXT NOT NULL,              -- the script, workbook, report, Access file... it is in
+    location    TEXT NOT NULL DEFAULT '',   -- line, function, query name
+    name_hint   TEXT,
+    source      TEXT,
+    PRIMARY KEY (query_uid, item, location)
+);
+CREATE INDEX IF NOT EXISTS ix_query_places_item ON sql_query_places(item);
+
+-- Findings from checking SQL, and the ones you marked "fine here".
+CREATE TABLE IF NOT EXISTS sql_findings_ok (
+    query_uid   TEXT NOT NULL,
+    rule        TEXT NOT NULL,
+    detail      TEXT NOT NULL DEFAULT '',
+    author      TEXT,
+    at          TEXT,
+    PRIMARY KEY (query_uid, rule, detail)
+);
+
+-- Column-level lineage: renames and copies between columns (Units -> qty), from code and SQL.
+CREATE TABLE IF NOT EXISTS column_links (
+    src_item    TEXT NOT NULL,
+    src_column  TEXT NOT NULL,
+    dst_item    TEXT NOT NULL,
+    dst_column  TEXT NOT NULL,
+    how         TEXT NOT NULL,              -- rename | alias | copy
+    evidence    TEXT,                       -- script and line
+    source      TEXT,
+    PRIMARY KEY (src_item, src_column, dst_item, dst_column)
+);
+
+-- Naming rules for a database or project, pasted as text or worked out from existing names.
+CREATE TABLE IF NOT EXISTS naming_rules (
+    uid         TEXT PRIMARY KEY,
+    scope       TEXT NOT NULL,              -- the database or project key
+    applies_to  TEXT NOT NULL,              -- table | view | procedure | column | script | file
+    check_type  TEXT NOT NULL,              -- prefix | suffix | case | pattern | max_length | no_spaces | ...
+    value       TEXT,
+    text        TEXT,                       -- the rule as written
+    state       TEXT NOT NULL DEFAULT 'active',
+    created_at  TEXT,
+    author      TEXT
+);
+CREATE TABLE IF NOT EXISTS naming_exceptions (
+    rule_uid    TEXT NOT NULL,
+    asset_key   TEXT NOT NULL,
+    column_name TEXT NOT NULL DEFAULT '',
+    reason      TEXT,
+    PRIMARY KEY (rule_uid, asset_key, column_name)
+);
+
+-- Things you follow up on, pinned to the home page; and what you looked at recently.
+CREATE TABLE IF NOT EXISTS follow_ups (
+    item        TEXT PRIMARY KEY,
+    note        TEXT,
+    created_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS recent_views (
+    item        TEXT PRIMARY KEY,
+    at          TEXT NOT NULL
+);
+
+-- Documents: reference documents on business projects (every version kept), and screenshots.
+CREATE TABLE IF NOT EXISTS documents (
+    uid         TEXT PRIMARY KEY,
+    owner       TEXT NOT NULL,              -- the business project or item it belongs to
+    title       TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'reference',  -- reference | screenshot
+    created_at  TEXT,
+    author      TEXT
+);
+CREATE TABLE IF NOT EXISTS document_versions (
+    doc_uid     TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    file_name   TEXT,
+    mime        TEXT,
+    content     BLOB,
+    text        TEXT,                       -- extracted text, for search and highlighting
+    added_at    TEXT,
+    author      TEXT,
+    PRIMARY KEY (doc_uid, version)
+);
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3  # 3 = version 2.1
 
 # Columns added to v1 tables. Added in place by the upgrade; nothing is dropped.
 ADDED_COLUMNS = {
@@ -383,7 +546,9 @@ ADDED_COLUMNS = {
               "import_batch": "INTEGER"},
     "links": {"how": "TEXT"},
     "profiles": {"histogram": "TEXT", "percentiles": "TEXT", "hints": "TEXT"},
-    "folders": {"canonical": "TEXT"},
+    "folders": {"canonical": "TEXT", "roles": "TEXT"},
+    "item_info": {"relevance": "TEXT", "sap_name": "TEXT"},
+    "column_info": {"sap_name": "TEXT"},
 }
 
 

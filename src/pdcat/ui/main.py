@@ -105,7 +105,7 @@ def main() -> None:
     try:
         session_start(cat)
         if st.session_state.get("_upgraded"):
-            st.success("Upgraded your catalogue to version 2. Every note was kept, and an untouched copy of the "
+            st.success("Upgraded your catalogue to version 2.1. Every note was kept, and an untouched copy of the "
                        f"old file is at `{st.session_state['_upgraded']}`.", icon="✅")
             st.button("OK", on_click=lambda: st.session_state.pop("_upgraded", None))
         if st.session_state.get("_backup_error"):

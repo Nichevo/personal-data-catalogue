@@ -55,7 +55,7 @@ def test_second_open_does_not_back_up_again(v1_db):
     cat = Catalogue(v1_db)
     assert cat.upgrade_backup is None
     cat.close()
-    assert len(list(v1_db.parent.glob("*.before-v2-*"))) == 1
+    assert len(list(v1_db.parent.glob(f"*.before-v{SCHEMA_VERSION}-*"))) == 1
 
 
 def test_new_catalogue_needs_no_backup(tmp_path):
@@ -71,7 +71,7 @@ def test_failed_upgrade_points_to_the_backup(v1_db, monkeypatch):
     monkeypatch.setattr(Catalogue, "_migrate", broken)
     with pytest.raises(UpgradeError) as err:
         Catalogue(v1_db)
-    assert "before-v2" in str(err.value)
+    assert f"before-v{SCHEMA_VERSION}" in str(err.value)
     # The original notes are untouched.
     assert len(_rows(v1_db, "SELECT * FROM notes")) == 3
 
