@@ -8,14 +8,14 @@ import streamlit as st
 from pdcat import coverage, curation
 from pdcat.store import Catalogue
 
-from .common import asset_button, go, kind_label
+from .common import asset_button, go, kind_label, page_title
 
 EDIT_KINDS = ("table", "view", "data_file", "file_series", "script", "notebook", "sql_script", "procedure", "report",
               "workbook", "model")
 
 
 def describe_columns_page(cat: Catalogue) -> None:
-    st.title("Describe columns")
+    page_title("Describe columns")
     st.caption("Column names that appear in several places. Describe one once and it's applied everywhere it has "
                "no description yet. Descriptions you've already written are kept unless you tick the box.")
     names = curation.undescribed_column_names(cat)
@@ -45,7 +45,7 @@ def describe_columns_page(cat: Catalogue) -> None:
 
 
 def bulk_edit_page(cat: Catalogue) -> None:
-    st.title("Edit many items")
+    page_title("Edit many items")
     st.caption("Fill in purpose, grain, refresh, status, trust and owner for many items at once, like a spreadsheet. "
                "Only the rows you change are saved.")
     sources = [r[0] for r in cat.conn.execute("SELECT DISTINCT source FROM assets WHERE status = 'active' "
@@ -95,7 +95,7 @@ def save_bulk(cat: Catalogue, before: pd.DataFrame, after: pd.DataFrame, fields)
 
 
 def coverage_page(cat: Catalogue) -> None:
-    st.title("Coverage")
+    page_title("Coverage")
     st.caption("How well documented the catalogue is. Each item scores out of 100 for its description, grain, owner, "
                "refresh, column descriptions, notes and status. Weighted counts the items your code and reports use "
                "and the big ones for more.")

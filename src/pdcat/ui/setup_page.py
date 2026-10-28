@@ -78,7 +78,7 @@ def setup_page(cat: Catalogue) -> None:
                 except Exception as e:
                     st.error(str(e))
     if cfg.sqlserver:
-        st.caption("Scan from the **SQL scanning** page (Add section): queries go one at a time, at the pace set "
+        st.caption("Scan from **Add › Sources › SQL scanning**: queries go one at a time, at the pace set "
                    "in Settings.")
 
     st.subheader("3. Python projects")
@@ -115,7 +115,7 @@ def setup_page(cat: Catalogue) -> None:
             st.rerun()
 
     st.subheader("4. Data files, reports and workbooks")
-    st.caption("Add folders of CSV, Parquet, Power BI and Excel files on the **Data folders** page (Add section).")
+    st.caption("Add folders of CSV, Parquet, Power BI and Excel files under **Add › Sources › Data folders**.")
     st.subheader("5. Backups")
     st.caption("Off until you choose a folder on the **Settings** page, for example one OneDrive keeps in sync.")
     st.caption(f"Settings file: `{path}` · catalogue: `{Path(cat.path)}`")

@@ -6,11 +6,11 @@ import streamlit as st
 from pdcat.links import unlinked_data
 from pdcat.store import Catalogue
 
-from .common import result_list
+from .common import page_title, result_list
 
 
 def unlinked_page(cat: Catalogue) -> None:
-    st.title("Unlinked data")
+    page_title("Unlinked data")
     st.caption("Tables and data files that nothing in the catalogue creates or loads. The script may build the "
                "name in a way the scanner can't follow, or the data comes from outside your code. Open one and "
                "use \"Link a script\" to record who makes it; the link is kept through rescans.")
@@ -26,7 +26,7 @@ def changes_page(cat: Catalogue) -> None:
     import pandas as pd
 
     from pdcat.history import recent_changes
-    st.title("Recent changes")
+    page_title("Recent changes")
     st.caption("What changed between scans: new and dropped items, columns added, removed or retyped.")
     days = st.select_slider("Over the last", [7, 30, 90, 365], value=30, format_func=lambda d: f"{d} days")
     rows = recent_changes(cat, days)
@@ -49,7 +49,7 @@ def duplicates_page(cat: Catalogue) -> None:
 
     from pdcat.duplicates import add_drive_alias, drive_aliases, report
     from .common import asset_button, size_label
-    st.title("Duplicates")
+    page_title("Duplicates")
     st.caption("The same file in more than one place, folders that are copies of each other, sources that overlap, "
                "and files named like copies. Mapped drives count as their network path, so S:\\ and "
                "\\\\server\\share are the same place.")
@@ -58,7 +58,7 @@ def duplicates_page(cat: Catalogue) -> None:
         st.success("No duplicates found.")
     if r["overlapping_sources"]:
         st.subheader("Sources that overlap")
-        st.caption("The same files are catalogued twice. Remove one of the folders on the Data folders page.")
+        st.caption("The same files are catalogued twice. Remove one of the folders under Add › Sources › Data folders.")
         st.dataframe(pd.DataFrame([{"source": o["a"], "path": o["a_path"], "and": o["b"], "path ": o["b_path"],
                                     "how": o["how"]} for o in r["overlapping_sources"]]), hide_index=True,
                      width="stretch")

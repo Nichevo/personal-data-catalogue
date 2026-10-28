@@ -7,11 +7,11 @@ import streamlit as st
 
 from pdcat.store import MANUAL_SOURCE, Catalogue
 
-from .common import asset_button, go
+from .common import asset_button, go, page_title
 
 
 def add_sql_page(cat: Catalogue) -> None:
-    st.title("Add SQL")
+    page_title("Add SQL")
     st.caption("Paste a query or snippet you want to remember. It becomes searchable, and the tables it "
                "reads and writes are linked, so it shows up under \"Read by\" on those tables.")
     snippet_form(cat)
@@ -20,7 +20,7 @@ def add_sql_page(cat: Catalogue) -> None:
 def folders_page(cat: Catalogue) -> None:
     from pdcat.scan_files import scan_folder
 
-    st.title("Data folders")
+    page_title("Data folders")
     st.caption("Point the catalogue at any folder and it records every CSV and Parquet file in it (size, "
                "modified date, row count, columns and value ranges), every Power BI report (.pbix, .pbit, .pbip: "
                "pages, visuals, measures and what they load) and every Excel workbook (sheets, Power Query, "

@@ -7,7 +7,7 @@ import streamlit as st
 from pdcat import keys as K
 from pdcat.store import Catalogue
 
-from .common import asset_button, go
+from .common import asset_button, go, page_title
 
 
 def keys_page(cat: Catalogue) -> None:
@@ -146,7 +146,7 @@ def mark_key_form(cat: Catalogue, asset_key: str, columns: list[str]) -> None:
 
 def sensitive_page(cat: Catalogue) -> None:
     from pdcat import curation
-    st.title("Sensitive data")
+    page_title("Sensitive data")
     st.caption("Columns and items marked sensitive: their values are never stored, shown or exported (counts are "
                "kept). Below, columns whose names suggest personal data; mark them or dismiss them.")
     marked = cat.conn.execute(

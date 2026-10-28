@@ -9,38 +9,92 @@ import streamlit as st
 from pdcat.export import rows_to_csv
 from pdcat.store import Catalogue
 
-from .common import (asset_button, badges, first_line, go, icon, kind_label, note_meta, result_list, row_get,
-                     size_label)
+from .common import (asset_button, badges, first_line, go, icon, kind_label, note_meta, page_title, result_list,
+                     row_get, size_label)
 
 DETAILED = 15  # results shown with their matching columns; the rest stay one line each
 
 
 def search_page(cat: Catalogue) -> None:
+    from pdcat import searchview as SV
     st.title("Search")
-    c1, c2, c3, c4 = st.columns([4, 1.2, 1.2, 1.2])
-    text = c1.text_input("Search", placeholder="table, column, script, note, rule or tag…",
+    text = st.text_input("Search", placeholder="table, column, script, note, rule or tag…", key="search-text",
                          label_visibility="collapsed")
-    mode = c2.selectbox("Show", ["Items", "Columns only"], label_visibility="collapsed",
+    quick = st.radio("Show", ["Everything", *SV.QUICK_FILTERS], horizontal=True, key="search-quick",
+                     label_visibility="collapsed")
+    c1, c2, c3, c4 = st.columns([1.3, 1.6, 1.3, 1.3])
+    view = c1.selectbox("View", ["Table", "Cards", "Columns only"], key="search-view",
                         help="Columns only: every matching column in every table and file, as one list.")
-    kind = c3.selectbox("Kind", ["Any kind", *cat.kinds(), "knowledge", "question", "metric", "feature"],
-                        label_visibility="collapsed",
-                        format_func=lambda k: k if k == "Any kind" else kind_label(k))
-    source = c4.selectbox("Source", ["Any source", *cat.sources()], label_visibility="collapsed")
-    if mode == "Columns only":
+    group_by = c2.selectbox("Group by", SV.GROUP_BY, key="search-group", disabled=view != "Table")
+    kinds = SV.QUICK_FILTERS.get(quick)
+    kind_choices = [k for k in [*cat.kinds(), "knowledge", "question", "metric", "feature"]
+                    if not kinds or k in kinds]
+    kind = c3.selectbox("Kind", ["Any kind", *kind_choices], format_func=lambda k: k if k == "Any kind" else kind_label(k),
+                        key="search-kind")
+    source = c4.selectbox("Source", ["Any source", *cat.sources()], key="search-source")
+    if view == "Columns only":
         columns_only(cat, text)
         return
     rows = [dict(r) for r in cat.search(text, kind=None if kind == "Any kind" else kind,
-                                        source=None if source == "Any source" else source)]
+                                        source=None if source == "Any source" else source,
+                                        kinds=kinds, limit=300)]
     if not rows:
         st.info("No matches." if text else "Nothing here yet.")
         return
+    related_knowledge(cat, text)
+    metric_measure_box(cat, rows)
+    if view == "Cards":
+        for i, r in enumerate(rows):
+            result_card(cat, r, text, i, detailed=bool(text) and i < DETAILED)
+    else:
+        results_table(cat, SV.rows_for(cat, rows), group_by)
     st.download_button(f"⬇️ Download these {len(rows)} results (CSV)",
                        rows_to_csv([{k: r.get(k) for k in ("key", "kind", "source", "name", "description",
                                                             "note_count")} for r in rows]),
                        "search-results.csv", "text/csv")
-    related_knowledge(cat, text)
-    for i, r in enumerate(rows):
-        result_card(cat, r, text, i, detailed=bool(text) and i < DETAILED)
+
+
+TABLE_COLUMNS = ["kind", "name", "where", "description", "matched on", "rows", "changed", "notes", "status",
+                 "trust", "used by", "made by"]
+
+
+def results_table(cat: Catalogue, rows: list[dict], group_by: str) -> None:
+    """Results as sortable tables, one per group. Picking a row opens it (a file family opens to its members)."""
+    from pdcat import searchview as SV
+    groups = SV.grouped(rows, group_by)
+    st.caption(f"{len(rows)} result(s)" + (f" in {len(groups)} group(s)" if group_by != "Not at all" else "")
+               + ". Click a column heading to sort, or a row to open it.")
+    for gi, (head, items) in enumerate(groups):
+        if head:
+            st.markdown(f"**{head}** · {len(items)}")
+        df = pd.DataFrame([{**{c: r.get(c) for c in TABLE_COLUMNS},
+                            "kind": f"{icon(r['kind'])} {kind_label(r['kind']) if r['kind'] != 'group' else 'file family'}"}
+                           for r in items])
+        df = df[[c for c in TABLE_COLUMNS if c in ("kind", "name") or df[c].astype(str).str.strip().replace(
+            {"0": "", "None": "", "nan": ""}).any()]]
+        event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
+                             key=f"search-table-{gi}", column_config={
+                                 "rows": st.column_config.NumberColumn(format="%d"),
+                                 "description": st.column_config.TextColumn(width="large")})
+        sel = event.selection.rows if event and hasattr(event, "selection") else []
+        if sel:
+            go(items[sel[0]]["key"])
+            st.rerun()
+
+
+def metric_measure_box(cat: Catalogue, rows: list[dict]) -> None:
+    """A metric in the results shows the measures and SQL that calculate it; a measure shows its metric."""
+    from pdcat import searchview as SV
+    links = SV.metric_links(cat, rows[:50])
+    if not links:
+        return
+    with st.container(border=True):
+        for i, link in enumerate(links[:6]):
+            st.markdown(f"**{link['from_name']}** {link['what']}:")
+            cols = st.columns(min(4, len(link["to"])))
+            for j, (key, name, kind) in enumerate(link["to"]):
+                with cols[j % len(cols)]:
+                    asset_button(key, name, kind, f"mm-{i}-{j}")
 
 
 def result_card(cat: Catalogue, r: dict, text: str, i: int, *, detailed: bool) -> None:
@@ -174,7 +228,7 @@ def related_knowledge(cat: Catalogue, text: str) -> None:
 # ---- plain lists ---------------------------------------------------------------
 
 def data_issues_page(cat: Catalogue) -> None:
-    st.title("Data issues")
+    page_title("Data issues")
     st.caption("Open data issues logged on tables, columns and files. Resolve them from the item's page.")
     issues = cat.open_issues()
     if not issues:
@@ -184,14 +238,14 @@ def data_issues_page(cat: Catalogue) -> None:
 
 
 def needs_notes_page(cat: Catalogue) -> None:
-    st.title("Needs notes")
+    page_title("Needs notes")
     st.caption("Tables and views with no description and no notes, the ones your code uses most first.")
     result_list(cat.needs_documentation(), "todo",
                 extra=lambda r: f"used by {r['used_by']} file(s)" if r["used_by"] else "")
 
 
 def recent_notes_page(cat: Catalogue) -> None:
-    st.title("Recent notes")
+    page_title("Recent notes")
     notes = cat.recent_notes()
     if not notes:
         st.info("No notes yet. Open any table or script to add one.")
@@ -209,7 +263,7 @@ def _note_card(n, key: str) -> None:
 
 
 def unmatched_page(cat: Catalogue) -> None:
-    st.title("Unmatched tables")
+    page_title("Unmatched tables")
     st.caption("Table names found in your code that don't match any scanned table. They may live on a server "
                "you haven't added, be built dynamically, or be a false positive from the SQL detector.")
     rows = cat.unresolved_refs()

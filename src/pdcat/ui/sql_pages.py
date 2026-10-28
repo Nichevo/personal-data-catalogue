@@ -22,7 +22,7 @@ def queries_page(cat: Catalogue) -> None:
                "to see it, rename it, and see the tables and fields it uses.")
     rows = _library(cat)
     if not rows:
-        st.info("No SQL found yet. Scan some code, workbooks or reports, or paste SQL under Add → Add SQL. "
+        st.info("No SQL found yet. Scan some code, workbooks or reports, or paste SQL under Add › Sources › Add SQL. "
                 "If you've scanned already, build the library now.")
         if st.button("Build the SQL library"):
             sqllibrary.build_library(cat)

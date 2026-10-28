@@ -179,7 +179,11 @@ def detail(cat: Catalogue, key: str) -> None:
     children = [c for c in cat.children(key) if c["kind"] != "series_file"]
     if children:
         st.subheader("Contains")
-        result_list([{**dict(c), "source": "", "note_count": 0} for c in children], "child")
+        if asset["kind"] == "folder":
+            from .item_boxes import contains_table
+            contains_table(cat, key, children)
+        else:
+            result_list([{**dict(c), "source": "", "note_count": 0} for c in children], "child")
 
     from .item_boxes import history_box
     history_box(cat, key)

@@ -151,3 +151,41 @@ def test_ml_model_features_page_links(app, catalogue):
     [b for b in app.button if b.label.startswith("🗄️ ")][0].click().run()
     assert not app.exception
     assert app.query_params.get("asset") in (SALES, [SALES])
+
+
+def test_home_page_follow_ups_quick_questions_and_combined_pages(app, catalogue):
+    from test_app import goto
+
+    from pdcat import followups
+    from pdcat.ui.main import ALIASES
+    followups.follow(catalogue, STORE, "check the regions")
+    sid = suggestions.add(catalogue, "description", SALES, "dbo.SalesDaily: “daily sales”",
+                          payload={"key": SALES, "text": "daily sales"})
+    app.run()
+    assert not app.exception and app.title[0].value == "Home"
+    assert any("dbo.Store" in b.label for b in app.button)
+    [b for b in app.button if b.key == f"qq-yes-description:{sid}" or b.key == f"qq-yes-suggestion:{sid}"][0].click().run()
+    assert not app.exception
+    assert suggestions.state(catalogue, sid) == "accepted"
+    [b for b in app.button if b.key == "home-fu-done-0"][0].click().run()
+    assert not followups.follow_ups(catalogue)
+    for old in ALIASES:
+        goto(app, old)
+        assert not app.exception, old
+
+
+def test_folder_page_contains_table(app, catalogue, tmp_path):
+    from pdcat.scan_files import scan_folder
+    root = tmp_path / "share"
+    root.mkdir()
+    for m in ("01", "02", "03"):
+        (root / f"sales_2024{m}.csv").write_text("a,b\n1,2\n")
+    (root / "notes.csv").write_text("a\n1\n")
+    scan_folder(catalogue, "share", root)
+    app.query_params["asset"] = "files://share"
+    app.run()
+    assert not app.exception
+    df = app.dataframe(key="contains-files://share").value
+    assert len(df) == 2 and "dated series" in set(df["type"])
+    app.text_input(key="contains-filter-files://share").input("notes").run()
+    assert len(app.dataframe(key="contains-files://share").value) == 1

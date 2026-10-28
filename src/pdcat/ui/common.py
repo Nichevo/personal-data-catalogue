@@ -66,6 +66,28 @@ def go(key: str | None, fn: str | None = None) -> None:
         st.session_state.pop(f"zoom-{key}", None)
 
 
+def page_title(text: str) -> None:
+    """A page's title, left out when the page is shown as one view of a combined page."""
+    if not st.session_state.get("_sub_page"):
+        st.title(text)
+
+
+def go_page(name: str) -> None:
+    """Open a menu page by name (use as a button's on_click). Old page names open their new home."""
+    from .main import ALIASES, sections
+    page, view = ALIASES.get(name, (name, None))
+    section = next((s for s, pages in sections().items() if page in pages), None)
+    if section is None:
+        return
+    st.query_params.pop("asset", None)
+    st.query_params.pop("fn", None)
+    st.session_state["nav-section"] = section
+    st.session_state[f"nav-{section}"] = page
+    st.session_state.pop(f"nav-item-{section}", None)
+    if view:
+        st.session_state[f"sub-{page}"] = view
+
+
 def kind_label(kind: str) -> str:
     return KIND_LABELS.get(kind, kind)
 

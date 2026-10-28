@@ -225,3 +225,28 @@ def rule_checks_box(cat: Catalogue, key: str) -> None:
                 if c3.button("No", key=f"rc-rej-{s['id']}", type="tertiary"):
                     suggestions.reject(cat, s["id"])
                     st.rerun()
+
+
+def contains_table(cat: Catalogue, key: str, children: list) -> None:
+    """A folder's contents as a sortable table with a filter box: series and script outputs as one line each."""
+    import pandas as pd
+
+    from pdcat.contents import contents_rows
+    rows = contents_rows(cat, key, [dict(c) for c in children])
+    find = st.text_input("Filter", key=f"contains-filter-{key}", placeholder="Filter by name, subfolder or type",
+                         label_visibility="collapsed")
+    if find:
+        low = find.lower()
+        rows = [r for r in rows if low in f"{r['name']} {r['subfolder']} {r['type']} {r['made by']}".lower()]
+    st.caption(f"{len(rows)} line(s). Dated copies of the same data and files one script writes show as one line. "
+               "Click a heading to sort, or a row to open it.")
+    if not rows:
+        return
+    df = pd.DataFrame([{"subfolder": r["subfolder"] or "·", "name": r["name"], "type": r["type"], "detail": r["detail"],
+                        "rows": r["rows"], "changed": r["changed"]} for r in rows])
+    event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
+                         key=f"contains-{key}", column_config={"rows": st.column_config.NumberColumn(format="%d")})
+    sel = event.selection.rows if event and hasattr(event, "selection") else []
+    if sel:
+        go(rows[sel[0]]["key"])
+        st.rerun()
