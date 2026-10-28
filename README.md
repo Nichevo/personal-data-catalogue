@@ -293,6 +293,24 @@ one at a time, and every query is logged:
   `out/sales_*.csv` is one output, so they're grouped even when the part that changes
   isn't a recognisable date (a run number, a version, an odd date format), and the
   series links back to the script that makes it.
+- **Starter knowledge packs**: optional packs of general knowledge you can load into the
+  Knowledge section and Metric glossary, marked "general" so they're kept apart from
+  what's specific to your data, and editable like anything else (loading again never
+  overwrites your edits). First packs:
+  - *Supply chain*: forecast accuracy (MAPE, WAPE, bias), safety stock, lead time,
+    service level, fill rate, OTIF, inventory turns and days on hand, MOQ, ABC/XYZ,
+    S&OP, demand vs supply planning terms.
+  - *SAP*: the common tables and fields and what they mean (material master `MARA`/`MARC`,
+    plants `T001W`, sales orders `VBAK`/`VBAP`, deliveries `LIKP`/`LIPS`, purchase orders
+    `EKKO`/`EKPO`, stock movements `MATDOC`/`MSEG`; fields such as `MATNR`, `WERKS`,
+    `LGORT`, `MEINS`), plus APO (planning books, key figures, DP and SNP), EWM
+    (warehouse tasks, storage bins, handling units) and IBP (key figures, planning
+    levels, attributes such as `PRDID` and `LOCID`).
+- **Link data to SAP**: mark what a table or column is in SAP terms ("PlantID is SAP
+  `WERKS`", "this table is an extract of `MARC`"). Matches are suggested from column
+  names (SAP field names, or common English names such as Material and Plant), for you
+  to confirm. Linked items show the SAP meaning on their page, company-wide keys gain
+  their SAP field, and the Copilot pack explains both so Copilot can answer in either.
 - **Power BI measures as a table**: a report's measures (some have hundreds) show as a
   sortable, filterable table: name, home table, display folder, format, what it uses
   (columns and other measures), which pages and visuals show it, and whether it's in
