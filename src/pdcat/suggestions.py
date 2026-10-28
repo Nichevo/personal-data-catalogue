@@ -162,7 +162,7 @@ def _load_handlers() -> None:
     """Handlers live next to the finders; import them so accepting works from any page."""
     import importlib
     for mod in ("groups", "sapterms", "metricfind", "naming", "drafts2", "schedules", "colrenames", "folderroles",
-                "learned", "rulechecks"):
+                "learned", "rulechecks", "gitinfo", "backups", "copilot_roundtrip", "labels"):
         try:
             importlib.import_module(f"pdcat.{mod}")
         except ImportError:

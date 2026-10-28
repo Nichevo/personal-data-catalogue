@@ -16,7 +16,7 @@ Page = Callable[[Catalogue], None]
 
 def sections() -> dict[str, dict[str, Page]]:
     from . import (bproject_pages, curation_pages, erd_page, groups_page, keys_pages, knowledge_pages, lists,
-                   ml_pages, scanning, setup_page)
+                   ml_pages, scanning, setup_page, sources_extra)
     return {
         "🔎 Find": {"Search": search.search_page, "Company-wide keys": keys_pages.keys_page,
                    "Packages": code.packages_page},
@@ -31,7 +31,8 @@ def sections() -> dict[str, dict[str, Page]]:
                      "Sensitive data": keys_pages.sensitive_page, "Duplicates": lists.duplicates_page},
         "🗺️ Map": {"Code map": code.code_map_page, "Database diagrams": erd_page.erd_page},
         "➕ Add": {"Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
-                  "SQL scanning": scanning.scanning_page},
+                  "SQL scanning": scanning.scanning_page, "Schedules": sources_extra.schedules_page,
+                  "Conda environments": sources_extra.envs_page},
         "📤 Share": {"Share with colleagues": share.sharing_page, "Copilot pack": share.copilot_page,
                     "Export": share.export_page},
         "⚙️ Settings": {"Settings": settings_page.settings_page, "Get started": setup_page.setup_page},

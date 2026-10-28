@@ -330,6 +330,9 @@ def hidden_from_map(cat: Catalogue, show_old: bool = False) -> set[str]:
     from .curation import hidden_keys
     from .groups import older_versions
     hidden = hidden_keys(cat, old=not show_old) | older_versions(cat)
+    if not show_old:
+        from .folderroles import archived
+        hidden |= archived(cat)  # inside a folder whose role is archive
     if hidden:
         old_parents = tuple(hidden)
         marks = ", ".join("?" * len(old_parents))

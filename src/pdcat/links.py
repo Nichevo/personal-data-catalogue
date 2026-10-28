@@ -143,7 +143,15 @@ def links_for(cat: Catalogue, key: str, asset: dict | None) -> tuple[list, list,
 
 def unlinked_data(cat: Catalogue) -> list[dict[str, Any]]:
     """Tables and data files that nothing in the catalogue creates or loads. Your code may build them in a
-    way the scanner can't follow; link the script by hand from the item's page."""
+    way the scanner can't follow; link the script by hand from the item's page. Files in raw data folders
+    come from outside, so they aren't listed, nor are items marked not relevant."""
+    from .curation import hidden_keys
+    from .folderroles import item_roles
+    skip = hidden_keys(cat) | {k for k, r in item_roles(cat).items() if r in ("raw data", "archive")}
+    return [r for r in _unlinked(cat) if r["key"] not in skip]
+
+
+def _unlinked(cat: Catalogue) -> list[dict[str, Any]]:
     return [dict(r) for r in cat.conn.execute(
         """SELECT a.key, a.kind, a.name, a.source, a.description, a.status,
                   (SELECT COUNT(DISTINCT l.src_key) FROM links l WHERE l.dst_key = a.key AND l.relation != 'writes')

@@ -34,8 +34,15 @@ def folders_page(cat: Catalogue) -> None:
             if c2.button("Re-scan", key=f"rescan-{i}"):
                 _run_folder_scan(cat, scan_folder, f["name"], f["path"], bool(f["recursive"]))
             if c3.button("Remove", key=f"remove-{i}", help="Forget this folder and its files (notes are kept)"):
+                for lib in cat.libraries():
+                    if lib["from_folder"] == f["name"]:
+                        cat.remove_library(lib["name"])
                 cat.remove_folder(f["name"])
                 st.rerun()
+            code = [lib for lib in cat.libraries() if lib["from_folder"] == f["name"]]
+            if code:
+                st.caption("🐍 Code catalogued as " + ", ".join(f"**{lib['name']}**" for lib in code))
+            roles_editor(cat, f["path"], f["name"])
 
     st.subheader("Add a folder")
     with st.form("add-folder"):
@@ -44,6 +51,9 @@ def folders_page(cat: Catalogue) -> None:
         c1, c2 = st.columns([2, 1])
         name = c1.text_input("Short name", placeholder="e.g. forecast-extracts")
         recursive = c2.checkbox("Include subfolders", value=True)
+        with_code = st.checkbox("Also catalogue the Python code in it (scripts, notebooks, .sql files)", value=True,
+                                help="A master folder holding several projects becomes one code project per "
+                                     "project folder; a single project becomes one.")
         submitted = st.form_submit_button("Add and scan", type="primary")
     if submitted:
         path = path.strip().strip('"')
@@ -61,7 +71,72 @@ def folders_page(cat: Catalogue) -> None:
                        "same files would be catalogued twice. Press Add and scan again to add it anyway.")
         else:
             cat.add_folder(name, path, recursive)
+            from pdcat.folderroles import analyse, save
+            found = analyse(path)
+            save(cat, path, found["roles"], confirmed=False, mode=found["mode"])
+            if with_code:
+                add_code_projects(cat, name, path, found)
             _run_folder_scan(cat, scan_folder, name, path, recursive)
+
+
+def add_code_projects(cat: Catalogue, name: str, path: str, found: dict) -> None:
+    """Catalogue the Python code in a data folder: one project per project folder in a master folder."""
+    from pdcat.config import PythonSource
+    from pdcat.scan_python import scan_project
+    root = Path(path)
+    if not any(root.rglob("*.py")) and not any(root.rglob("*.ipynb")):
+        return
+    targets = [(f"{name}-{sub}", root / sub) for sub in found["projects"]] if found["mode"] == "master" \
+        else [(f"{name}-code", root)]
+    with st.spinner("Reading the code …"):
+        for lib_name, lib_path in targets:
+            cat.add_library(lib_name, str(lib_path), role="project", from_folder=name)
+            try:
+                scan_project(cat, PythonSource(name=lib_name, path=lib_path, role="project", data_files=False))
+            except Exception as e:  # one unreadable project must not stop the folder
+                st.warning(f"Couldn't read the code in {lib_path}: {type(e).__name__}: {e}")
+
+
+def roles_editor(cat: Catalogue, path: str, source: str) -> None:
+    """The folder's role (master folder or single project) and each subfolder's role, to confirm or change."""
+    import pandas as pd
+
+    from pdcat.folderroles import ROLES, analyse, mode_of, roles_under, save
+    stored = roles_under(cat, path)
+    pending = sum(not v.get("confirmed") for v in stored.values())
+    mode = mode_of(cat, path)
+    label = "📂 Folder roles" + (f" ({pending} to confirm)" if pending else f" ({len(stored)})" if stored else "")
+    with st.expander(label, expanded=bool(pending)):
+        if not stored and not mode:
+            if st.button("Suggest roles for this folder's subfolders", key=f"roles-suggest-{source}"):
+                found = analyse(path)
+                save(cat, path, found["roles"], confirmed=False, mode=found["mode"])
+                st.rerun()
+            return
+        modes = {"single": "A single project: its subfolders belong together",
+                 "master": "A master folder: each project folder is its own project"}
+        new_mode = st.radio("This folder is", list(modes), index=list(modes).index(mode or "single"),
+                            format_func=modes.get, key=f"roles-mode-{source}")
+        df = pd.DataFrame([{"folder": rel + "/", "role": v["role"],
+                            "status": "confirmed" if v.get("confirmed") else "suggested"}
+                           for rel, v in sorted(stored.items())])
+        if df.empty:
+            df = pd.DataFrame(columns=["folder", "role", "status"])
+        edited = st.data_editor(df, hide_index=True, width="stretch", key=f"roles-ed-{source}", num_rows="dynamic",
+                                column_config={"role": st.column_config.SelectboxColumn(
+                                    "role", options=[r for r in ROLES if r], help="; ".join(
+                                        f"{k}: {v}" for k, v in ROLES.items() if k)),
+                                    "status": st.column_config.TextColumn(disabled=True)})
+        st.caption("Roles apply to everything below the folder. Archive folders are treated as old (hidden from "
+                   "the code map); ignored folders aren't catalogued from the next scan; raw data isn't expected "
+                   "to be made by your scripts. Add a row to give any folder at any depth a role.")
+        if st.button("Confirm these roles", key=f"roles-ok-{source}", type="primary"):
+            roles = {str(r["folder"]).strip().strip("/"): r["role"] or "" for _, r in edited.iterrows()
+                     if str(r["folder"]).strip()}
+            gone = {rel: "" for rel in stored if rel not in roles}
+            save(cat, path, {**gone, **roles}, confirmed=True, mode=new_mode)
+            st.toast("Saved. Rescan the folder for ignored folders to drop out.")
+            st.rerun()
 
 
 def _run_folder_scan(cat: Catalogue, scan_folder, name: str, path: str, recursive: bool) -> None:
@@ -74,6 +149,7 @@ def _run_folder_scan(cat: Catalogue, scan_folder, name: str, path: str, recursiv
     msg = f"Scanned {counts['files']} file(s)" + (f" ({counts['series']} dated series)" if counts.get("series") else "") \
         + (f", {counts['reports']} Power BI report(s)" if counts.get("reports") else "") \
         + (f", {counts['workbooks']} Excel workbook(s)" if counts.get("workbooks") else "") \
+        + (f", {counts['access']} Access database(s)" if counts.get("access") else "") \
         + (f", {counts['errors']} couldn't be read" if counts["errors"] else "")
     from pdcat.postscan import after_scan
     after_scan(cat)

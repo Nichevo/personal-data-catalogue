@@ -68,12 +68,21 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
     if not root.is_dir():
         raise FileNotFoundError(f"Folder not found: {root}")
     folder_key = f"files://{name}"
+    from .folderroles import ignored_dirs
+    ignored = ignored_dirs(cat, root)
     with cat.scan(name):
         cat.upsert_asset(folder_key, "folder", name, name, attrs={"path": str(root), "recursive": recursive})
-        counts = ingest_files(cat, root, sorted(iter_data_files(root, recursive)), folder_key, name, max_rows)
-        office = ingest_office(cat, root, folder_key, name, recursive)
+        paths = [p for p in iter_data_files(root, recursive) if not under(p.relative_to(root).as_posix(), ignored)]
+        counts = ingest_files(cat, root, sorted(paths), folder_key, name, max_rows)
+        office = ingest_office(cat, root, folder_key, name, recursive, {Path(i).name for i in ignored} or None)
         counts = {**office, **counts, "errors": counts["errors"] + office["errors"]}
-    return {k: counts[k] for k in ("files", "series", "reports", "workbooks", "errors")}
+    return {k: counts[k] for k in ("files", "series", "reports", "workbooks", "access", "errors")}
+
+
+def under(rel: str, folders: set[str]) -> bool:
+    """Is this relative path inside one of these relative folders?"""
+    low = rel.lower()
+    return any(low == f or low.startswith(f + "/") for f in folders)
 
 
 def ingest_office(cat: Catalogue, root: Path, parent_key: str, source: str, recursive: bool = True,
@@ -81,7 +90,7 @@ def ingest_office(cat: Catalogue, root: Path, parent_key: str, source: str, recu
     """Power BI reports and Excel workbooks under a folder."""
     from .scan_excel import find_workbooks, ingest_workbook
     from .scan_powerbi import find_reports, ingest_report
-    counts = {"reports": 0, "workbooks": 0, "errors": 0}
+    counts = {"reports": 0, "workbooks": 0, "access": 0, "errors": 0}
     for path in find_reports(root, recursive, skip):
         rel = path.relative_to(root).as_posix()
         counts["errors"] += bool(ingest_report(cat, path, f"{parent_key}/{rel}", rel, source, parent_key))
@@ -90,6 +99,13 @@ def ingest_office(cat: Catalogue, root: Path, parent_key: str, source: str, recu
         rel = path.relative_to(root).as_posix()
         counts["errors"] += bool(ingest_workbook(cat, path, f"{parent_key}/{rel}", rel, source, parent_key))
         counts["workbooks"] += 1
+    from .features import on
+    if on(cat, "access"):
+        from .scan_access import find_access, ingest_access
+        for path in find_access(root, recursive, skip):
+            rel = path.relative_to(root).as_posix()
+            ingest_access(cat, path, f"{parent_key}/{rel}", rel, source, parent_key)
+            counts["access"] += 1
     return counts
 
 

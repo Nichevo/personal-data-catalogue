@@ -47,7 +47,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         return 0
     failures = 0
     app_folders = [r for r in cat.folders() if r["name"] not in cfg.source_names()]
-    app_libraries = [PythonSource(name=r["name"], path=Path(r["path"]), role="library", data_files=False)
+    app_libraries = [PythonSource(name=r["name"], path=Path(r["path"]), role=r["role"] or "library", data_files=False)
                      for r in cat.libraries() if r["name"] not in cfg.source_names()]
     # SQL Server first, so table names in code can be matched straight away.
     jobs = [(s.name, lambda s=s: scan_server(cat, s, args.database)) for s in cfg.sqlserver]

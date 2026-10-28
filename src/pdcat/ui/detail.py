@@ -122,10 +122,15 @@ def detail(cat: Catalogue, key: str) -> None:
     from .extras import item_extras_bottom
     item_extras_bottom(cat, key, asset)
 
-    if asset["kind"] in ("script", "notebook"):
+    if asset["kind"] in ("script", "notebook", "sql_script"):
         from .item_boxes import called_by_box, unknown_files_box
+        from .sources_extra import script_runs_box
+        script_runs_box(cat, key)
         called_by_box(cat, key)
         unknown_files_box(cat, key)
+    if asset["kind"] == "access_db":
+        from .sources_extra import access_section
+        access_section(cat, key, asset)
     if asset["kind"] in ("script", "notebook") and attrs.get("function_info"):
         from .code import functions_section
         functions_section(cat, key, asset)
@@ -133,6 +138,8 @@ def detail(cat: Catalogue, key: str) -> None:
     if asset["kind"] == "project":
         from .code import diagram_block, environment_section
         environment_section(cat, asset)
+        from .sources_extra import project_env_box
+        project_env_box(cat, key)
         with st.expander("Code map: how this connects to your libraries and data"):
             diagram_block(cat, asset["source"], f"proj-{key}")
 
@@ -152,7 +159,7 @@ def detail(cat: Catalogue, key: str) -> None:
         hidden = ("definition", "imports", "functions", "classes", "function_info", "import_map", "environment",
                   "import_details", "queries", "measures", "model", "files", "pages", "tables", "relationships",
                   "sheets", "connections", "pivots", "vba_sql", "expression", "used_on", "unknown_files", "runs",
-                  "write_patterns", "full_path", "git")
+                  "write_patterns", "full_path", "git", "linked")
         rest = {k: v for k, v in attrs.items() if k not in hidden and v not in (None, "", [])}
         st.json(rest, expanded=False)
         st.caption(f"First seen {asset['first_seen'][:10]} · last seen {asset['last_seen'][:10]}")

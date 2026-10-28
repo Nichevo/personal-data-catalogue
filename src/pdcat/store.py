@@ -505,6 +505,49 @@ CREATE TABLE IF NOT EXISTS naming_exceptions (
     PRIMARY KEY (rule_uid, asset_key, column_name)
 );
 
+-- Scheduled jobs imported from a CSV (a Task Scheduler export, a job list), and the scripts they run.
+CREATE TABLE IF NOT EXISTS schedules (
+    uid         TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    command     TEXT,
+    timing      TEXT,
+    raw         TEXT NOT NULL DEFAULT '{}',  -- the whole CSV row
+    import_file TEXT,
+    imported_at TEXT
+);
+CREATE TABLE IF NOT EXISTS schedule_links (
+    schedule_uid TEXT NOT NULL,
+    asset_key    TEXT NOT NULL,
+    state        TEXT NOT NULL DEFAULT 'confirmed',  -- confirmed | suggested | rejected
+    how          TEXT,
+    PRIMARY KEY (schedule_uid, asset_key)
+);
+
+-- Installed conda environments read from conda-meta, and which project runs in which.
+CREATE TABLE IF NOT EXISTS conda_envs (
+    name        TEXT PRIMARY KEY,
+    path        TEXT NOT NULL,
+    python      TEXT,
+    packages    TEXT NOT NULL DEFAULT '[]',   -- [{"name", "version", "channel", "build"}]
+    scanned_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS project_envs (
+    project_key TEXT PRIMARY KEY,
+    env_name    TEXT NOT NULL,
+    how         TEXT
+);
+
+-- Commits that touched each script, read from the project's git history.
+CREATE TABLE IF NOT EXISTS git_history (
+    asset_key   TEXT NOT NULL,
+    commit_id   TEXT NOT NULL,
+    at          TEXT NOT NULL,
+    author      TEXT,
+    message     TEXT,
+    PRIMARY KEY (asset_key, commit_id)
+);
+CREATE INDEX IF NOT EXISTS ix_git_asset ON git_history(asset_key);
+
 -- Things you follow up on, pinned to the home page; and what you looked at recently.
 CREATE TABLE IF NOT EXISTS follow_ups (
     item        TEXT PRIMARY KEY,
@@ -547,6 +590,7 @@ ADDED_COLUMNS = {
     "links": {"how": "TEXT", "match_note": "TEXT"},
     "profiles": {"histogram": "TEXT", "percentiles": "TEXT", "hints": "TEXT"},
     "folders": {"canonical": "TEXT", "roles": "TEXT"},
+    "libraries": {"role": "TEXT NOT NULL DEFAULT 'library'", "from_folder": "TEXT"},
     "item_info": {"relevance": "TEXT", "sap_name": "TEXT"},
     "column_info": {"sap_name": "TEXT"},
 }
@@ -1215,10 +1259,13 @@ class Catalogue:
         resolve_imports(self)
         self.rebuild_search()
 
-    def add_library(self, name: str, path: str) -> None:
+    def add_library(self, name: str, path: str, role: str = "library", from_folder: str | None = None) -> None:
+        """A Python folder added from the app: a home-built library, or (role "project") the code in a data
+        folder you added."""
         with self.conn:
-            self.conn.execute("INSERT INTO libraries (name, path, added_at) VALUES (?, ?, ?) "
-                              "ON CONFLICT(name) DO UPDATE SET path = excluded.path", (name, path, now()))
+            self.conn.execute("INSERT INTO libraries (name, path, added_at, role, from_folder) VALUES (?, ?, ?, ?, ?) "
+                              "ON CONFLICT(name) DO UPDATE SET path = excluded.path, role = excluded.role, "
+                              "from_folder = excluded.from_folder", (name, path, now(), role, from_folder))
 
     def libraries(self) -> list[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM libraries ORDER BY name").fetchall()

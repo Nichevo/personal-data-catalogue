@@ -61,7 +61,10 @@ def _scan_project(cat: Catalogue, src: PythonSource, root: Path, project_key: st
         readme = _readme_summary(root)
         cat.upsert_asset(project_key, "project", src.name, src.name, description=readme,
                          attrs={"path": str(root), "role": src.role, "environment": read_environment(root)})
-        paths = sorted(_iter_files(root, skip))
+        from .folderroles import ignored_dirs
+        from .scan_files import under
+        ignored = ignored_dirs(cat, root)
+        paths = sorted(p for p in _iter_files(root, skip) if not under(p.relative_to(root).as_posix(), ignored))
         token = _PROJECT.set(project_constants(root, paths))
         try:
             _scan_files(cat, src, root, project_key, paths, counts)

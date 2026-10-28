@@ -4,6 +4,7 @@
   * versions: copies of one script (forecast_v2.py, forecast_v3.py); only the main one shows on
               the code map, in search and in lineage
   * backup:   a main table and its copy elsewhere (SQL Server and an Azure backup with more history)
+  * outputs:  the files one script writes from one pattern (f"out/sales_{run}.csv"), made automatically
 
 A group has a page of its own ("group://<uid>") that compares its members side by side.
 """
@@ -16,7 +17,8 @@ from typing import Any
 from . import suggestions
 from .store import Catalogue, now
 
-TYPES = {"family": "File family", "versions": "Script versions", "backup": "Main and backup"}
+TYPES = {"family": "File family", "versions": "Script versions", "backup": "Main and backup",
+         "outputs": "Files one script writes"}
 
 
 def create(cat: Catalogue, type_: str, name: str, members: dict[str, str | None], *, main_key: str | None = None,

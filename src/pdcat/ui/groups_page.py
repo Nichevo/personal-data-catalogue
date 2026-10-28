@@ -9,11 +9,12 @@ import pandas as pd
 import streamlit as st
 
 from pdcat import groups, suggestions
+from pdcat.families import grain_check
 from pdcat.store import Catalogue
 
 from .common import asset_button, go, kind_label, size_label
 
-ICONS = {"family": "👪", "versions": "🗂️", "backup": "🪞"}
+ICONS = {"family": "👪", "versions": "🗂️", "backup": "🪞", "outputs": "📤"}
 
 
 def group_page(cat: Catalogue, key: str) -> None:
@@ -30,6 +31,10 @@ def group_page(cat: Catalogue, key: str) -> None:
                    "listed here with their notes.")
     elif g["type"] == "family":
         st.caption("The same data at different grains. Each file stays its own item; the family brings them together.")
+    elif g["type"] == "outputs":
+        st.caption(f"Every file matching `{g['attrs'].get('pattern', '')}`, written by one script.")
+        if g["attrs"].get("script"):
+            st.button("Open the script that writes them", on_click=go, args=(g["attrs"]["script"],))
     else:
         st.caption("A main table and its copy elsewhere. Code that reads both reads one table and its history.")
     st.dataframe(compare(cat, g), hide_index=True, width="stretch")
@@ -42,7 +47,7 @@ def group_page(cat: Catalogue, key: str) -> None:
         if label != (m["label"] or ""):
             groups.set_label(cat, g["uid"], m["asset_key"], label)
             st.rerun()
-        main_word = {"versions": "current", "backup": "main", "family": "main"}[g["type"]]
+        main_word = {"versions": "current", "backup": "main", "family": "main", "outputs": "newest"}[g["type"]]
         if g["main_key"] == m["asset_key"]:
             c3.markdown(f"⭐ **{main_word}**")
         elif c3.button(f"Make {main_word}", key=f"gmm-{i}"):
@@ -78,7 +83,7 @@ def compare(cat: Catalogue, g: dict) -> pd.DataFrame:
             "item": m["name"], "label": m["label"] or "", "main": "⭐" if g["main_key"] == key else "",
             "kind": kind_label(m["kind"] or ""), "where": a.get("server") or a.get("path") or m["source"] or "",
             "rows": a.get("row_count") if a.get("row_count") is not None else (prof[0]["row_count"] if prof else None),
-            "date range": rng, "grain": a.get("grain_hint") or "",
+            "date range": rng, "grain check": grain_check(cat, key) if g["type"] == "family" else "",
             "modified": str(a.get("modified") or a.get("mtime_iso") or "")[:16].replace("T", " "),
             "size": size_label(a["size_bytes"]) if a.get("size_bytes") is not None else "",
             "columns": len(all_cols[key]), "only here": ", ".join(only[:8]) + (" …" if len(only) > 8 else ""),
