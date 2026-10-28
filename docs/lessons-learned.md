@@ -115,3 +115,21 @@ Neither was reported; both were found by reading code with a linter's eye.
 
 Both are the second pattern again: a feature added at the edge of the system without
 walking back to the places that enumerate "every kind of thing".
+
+## 9. A long job with no feedback looks broken (2.12)
+
+A folder scan was reported as "stuck". Nothing had hung for good, but every slow part was
+silent: the scan sat under one spinner, the two dozen post-scan steps ran after the spinner
+had gone, the folder was walked four times (once per file type, plus once more for code),
+the walk went into `.git`, `node_modules` and conda environments, a big `.pbix` was unpacked
+by a third-party library with no time limit, and an Excel workbook full of data had all of
+its shared strings parsed just to read a header row.
+
+The fix was mostly plumbing: one walk that steps around tool folders, a `report(text, done,
+total)` function passed down to every scanner, a progress box in the app that names the file
+being read and mentions any that take long, the same updates in the terminal, and the
+third-party parser run in its own process with a timeout.
+
+**For other projects:** give every long-running job a progress callback from day one, even if
+the first caller ignores it. Run libraries you don't control in a subprocess with a timeout
+when they chew on user files. Walk a file tree once and prune what you will never want.

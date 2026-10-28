@@ -19,6 +19,7 @@ from pathlib import Path
 from .config import PythonSource
 from .envinfo import read_environment
 from .scan_files import ingest_files, iter_data_files
+from .scanprogress import Report, Steps, quiet
 from .sqlrefs import extract_refs, looks_like_sql
 from .store import Catalogue
 
@@ -40,7 +41,9 @@ class Found:
     how: dict[tuple[str, str], str] = field(default_factory=dict)  # how each link was found
 
 
-def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
+def scan_project(cat: Catalogue, src: PythonSource, report: Report = quiet) -> dict[str, int]:
+    """Catalogue a project's scripts, notebooks and .sql files (and its data files, if `src.data_files`).
+    `report(text, done, total)` hears how far it has got."""
     root = Path(src.path)
     if not root.is_dir():
         raise FileNotFoundError(f"Python project folder not found: {root}")
@@ -50,13 +53,13 @@ def scan_project(cat: Catalogue, src: PythonSource) -> dict[str, int]:
 
     token = _CONFIG.set(read_config_values(root))
     try:
-        return _scan_project(cat, src, root, project_key, skip, counts)
+        return _scan_project(cat, src, root, project_key, skip, counts, report)
     finally:
         _CONFIG.reset(token)
 
 
 def _scan_project(cat: Catalogue, src: PythonSource, root: Path, project_key: str, skip: set[str],
-                  counts: dict[str, int]) -> dict[str, int]:
+                  counts: dict[str, int], report: Report) -> dict[str, int]:
     with cat.scan(src.name):
         readme = _readme_summary(root)
         cat.upsert_asset(project_key, "project", src.name, src.name, description=readme,
@@ -64,27 +67,31 @@ def _scan_project(cat: Catalogue, src: PythonSource, root: Path, project_key: st
         from .folderroles import ignored_dirs
         from .scan_files import under
         ignored = ignored_dirs(cat, root)
+        report(f"Looking for code in {root} …")
         paths = sorted(p for p in _iter_files(root, skip) if not under(p.relative_to(root).as_posix(), ignored))
         token = _PROJECT.set(project_constants(root, paths))
         try:
-            _scan_files(cat, src, root, project_key, paths, counts)
+            _scan_files(cat, src, root, project_key, paths, counts, report)
         finally:
             _PROJECT.reset(token)
         from .mlfeatures import scan_models
+        report(f"Looking for model files in {src.name} …")
         counts["models"] = scan_models(cat, root, project_key, src.name, skip)
         if src.data_files:
             data_paths = [p for p in iter_data_files(root, skip=skip)
                           if not under(p.relative_to(root).as_posix(), ignored)]
-            got = ingest_files(cat, root, sorted(data_paths), project_key, src.name, src.max_rows)
+            got = ingest_files(cat, root, sorted(data_paths), project_key, src.name, src.max_rows,
+                               Steps(report, len(data_paths)))
             counts["data files"] += got["files"]
             counts["errors"] += got["errors"]
     return counts
 
 
 def _scan_files(cat: Catalogue, src: PythonSource, root: Path, project_key: str, paths: list[Path],
-                counts: dict[str, int]) -> None:
-    for path in paths:
+                counts: dict[str, int], report: Report = quiet) -> None:
+    for i, path in enumerate(paths):
         rel = path.relative_to(root).as_posix()
+        report(f"Reading code file {i + 1:,} of {len(paths):,} in {src.name}: {rel}", i, len(paths))
         found = scan_file(path)
         try:
             st = path.stat()

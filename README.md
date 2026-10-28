@@ -153,6 +153,31 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.12
+
+Folder scans no longer look stuck, and big folders scan faster.
+
+- **A progress box while scanning.** Adding or re-scanning a data folder (and scanning code)
+  shows which file is being read, how many are left, how long it has taken, and any file
+  that took longer than 20 seconds. The suggestions and review list worked out after a scan
+  show step by step too; before, they ran with nothing on screen. A **Stop** button ends a
+  scan, leaving the folder as it was before. When the scan finishes, the Data folders page
+  says what was found and how long it took.
+- **The terminal says what's happening.** The window the app was started from (and
+  `pdcat scan`, including the weekly scheduled scan) prints an update every 30 seconds and
+  names anything slow, so you can tell a long scan from a stuck one.
+- **One pass over the folder.** The folder is walked once instead of four times, and the
+  walk steps around folders that never hold your data: `.git`, `__pycache__`,
+  `node_modules`, Python and conda environments, the recycle bin, and folders marked
+  *ignore* in Folder roles. This matters most on network drives.
+- **No more waiting on one big Power BI file.** With pbixray installed, a `.pbix` model is
+  read in a separate process and given three minutes. If it takes longer it is stopped,
+  the report page says so, and the scan carries on.
+- **Big Excel workbooks read faster.** Only the start of a workbook's shared text is read to
+  get the header rows, instead of all of it.
+- **Adding a folder is quicker.** The app no longer re-examines the folder on every click
+  while you fill in the form.
+
 ## New in version 2.11
 
 A tidy-up release after a code review. Nothing new to learn; the app looks and works the

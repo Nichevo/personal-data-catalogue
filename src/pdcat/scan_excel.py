@@ -48,16 +48,29 @@ def _rels(z: zipfile.ZipFile, part: str) -> dict[str, str]:
     return out
 
 
-def _shared_strings(z: zipfile.ZipFile) -> list[str]:
-    if "xl/sharedStrings.xml" not in z.namelist():
-        return []
-    out = []
-    for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", NS):
-        out.append("".join(t.text or "" for t in si.iter(f"{{{NS['m']}}}t")))
-    return out
+class SharedStrings:
+    """A workbook's shared strings, read only as far as needed: a workbook full of data can hold millions of
+    them, while a header row needs a handful from near the start."""
+
+    def __init__(self, z: zipfile.ZipFile) -> None:
+        self._items: list[str] = []
+        self._events = ET.iterparse(z.open("xl/sharedStrings.xml"), events=("end",)) \
+            if "xl/sharedStrings.xml" in z.namelist() else None
+
+    def get(self, idx: int) -> str:
+        while idx >= len(self._items) and self._events is not None:
+            try:
+                _, el = next(self._events)
+            except (StopIteration, ET.ParseError):
+                self._events = None
+                break
+            if el.tag == f"{{{NS['m']}}}si":
+                self._items.append("".join(t.text or "" for t in el.iter(f"{{{NS['m']}}}t")))
+                el.clear()
+        return self._items[idx] if idx < len(self._items) else ""
 
 
-def _first_row(z: zipfile.ZipFile, part: str, strings: list[str]) -> tuple[list[str], str]:
+def _first_row(z: zipfile.ZipFile, part: str, strings: SharedStrings) -> tuple[list[str], str]:
     """The header row and used range of a sheet, reading no further than the first row."""
     header, dims = [], ""
     with z.open(part) as f:
@@ -69,8 +82,7 @@ def _first_row(z: zipfile.ZipFile, part: str, strings: list[str]) -> tuple[list[
                 for c in el.findall("m:c", NS):
                     v = c.find("m:v", NS)
                     if c.get("t") == "s" and v is not None and v.text and v.text.isdigit():
-                        idx = int(v.text)
-                        header.append(strings[idx] if idx < len(strings) else "")
+                        header.append(strings.get(int(v.text)))
                     elif c.get("t") == "inlineStr":
                         header.append("".join(t.text or "" for t in c.iter(f"{{{NS['m']}}}t")))
                     elif v is not None:
@@ -140,7 +152,7 @@ def read_sheets(z: zipfile.ZipFile, connections: dict[str, str]) -> list[dict[st
     if "xl/workbook.xml" not in z.namelist():
         return []
     wb_rels = _rels(z, "xl/workbook.xml")
-    strings = _shared_strings(z)
+    strings = SharedStrings(z)
     sheets = []
     for s in ET.fromstring(z.read("xl/workbook.xml")).iter(f"{{{NS['m']}}}sheet"):
         part = wb_rels.get(s.get(f"{{{NS['r']}}}id"), "")
@@ -316,13 +328,6 @@ def read_workbook(path: Path) -> dict[str, Any]:
                 out["not_read"].append("Macros were searched without olefile, so some may be missed. "
                                        "pip install olefile to read them exactly.")
     return out
-
-
-def find_workbooks(root: Path, recursive: bool = True, skip: set[str] | None = None) -> list[Path]:
-    pattern = root.rglob("*") if recursive else root.glob("*")
-    return sorted(p for p in pattern if p.suffix.lower() in WORKBOOK_SUFFIXES and p.is_file()
-                  and not p.name.startswith("~$")
-                  and not (skip and any(part in skip for part in p.relative_to(root).parts[:-1])))
 
 
 def ingest_workbook(cat, path: Path, key: str, name: str, source: str, parent: str) -> str | None:

@@ -337,6 +337,37 @@ def _model_from_pbixray(path: Path) -> dict[str, Any] | None:
         return None
 
 
+PBIXRAY_TIMEOUT = 180  # seconds; pbixray unpacks the whole model, which can take long on a big .pbix
+
+
+def _model_in_own_process(path: Path, timeout: int = PBIXRAY_TIMEOUT) -> tuple[dict[str, Any] | None, str | None]:
+    """The model read by pbixray in a separate process, so a huge or unusual .pbix can't hold up the scan.
+    Returns (model, None), or (None, why not) when it ran out of time, or (None, None) without pbixray."""
+    import importlib.util
+    import os
+    import subprocess
+    import sys
+    if importlib.util.find_spec("pbixray") is None:
+        return None, None
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(Path(__file__).resolve().parents[1]),
+                                                                     os.environ.get("PYTHONPATH")]))}
+    try:
+        done = subprocess.run([sys.executable, "-m", "pdcat.scan_powerbi", str(path)], capture_output=True,
+                              timeout=timeout, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        return None, (f"The model wasn't read: pbixray was still unpacking it after {timeout} seconds, so it was "
+                      "stopped to let the scan carry on. Save a copy as .pbit or .pbip next to it to read the model.")
+    except OSError:
+        return _model_from_pbixray(path), None
+    lines = done.stdout.decode("utf-8", errors="replace").strip().splitlines()
+    if done.returncode or not lines or not lines[-1].startswith(_MODEL_MARK):
+        return None, None
+    return json.loads(lines[-1][len(_MODEL_MARK):]), None
+
+
+_MODEL_MARK = "pdcat-model:"
+
+
 # ---- whole reports ------------------------------------------------------------------------------
 
 def read_pbix(path: Path) -> dict[str, Any]:
@@ -380,9 +411,11 @@ def read_pbix(path: Path) -> dict[str, Any]:
                 pass
         has_model = "DataModel" in names
     if model is None and has_model:
-        model = _model_from_pbixray(path)
+        model, problem = _model_in_own_process(path)
         if model:
             out["read_with"].append("pbixray")
+        elif problem:
+            out["not_read"].append(problem)
         else:
             out["not_read"].append("The model (tables, DAX measures, queries) is compressed inside the .pbix. "
                                    "Install pbixray (pip install pbixray), or save a copy as .pbit or .pbip next to "
@@ -459,17 +492,6 @@ def read_report(path: Path) -> dict[str, Any]:
     return read_pbip(path) if path.suffix.lower() == ".pbip" else read_pbix(path)
 
 
-def find_reports(root: Path, recursive: bool = True, skip: set[str] | None = None) -> list[Path]:
-    pattern = root.rglob("*") if recursive else root.glob("*")
-    out = []
-    for p in pattern:
-        if p.suffix.lower() in REPORT_SUFFIXES + (".pbip",) and p.is_file():
-            if skip and any(part in skip for part in p.relative_to(root).parts[:-1]):
-                continue
-            out.append(p)
-    return sorted(out)
-
-
 def measure_key(report_key: str, table: str, name: str) -> str:
     return f"{report_key}/measures/{table}.{name}".lower()
 
@@ -516,3 +538,8 @@ def link_queries(cat, key: str, source: str, queries: list[dict[str, Any]]) -> N
             cat.add_link(key, "reads", ref, source, hint=hint, how=how)
         for f in q.get("files", []):
             cat.add_link(key, "reads", f"file:{f}", source, how=how)
+
+
+if __name__ == "__main__":  # python -m pdcat.scan_powerbi report.pbix: the model as JSON, for _model_in_own_process
+    import sys
+    print(_MODEL_MARK + json.dumps(_model_from_pbixray(Path(sys.argv[1])), default=str))

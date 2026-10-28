@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from . import suggestions
+from .scanprogress import has_files
 from .store import Catalogue
 
 ROLES = {"code": "Code", "raw data": "Raw data (comes in from outside)", "data": "Data", "outputs": "Outputs",
@@ -122,7 +123,7 @@ def as_mode(found: dict[str, Any], path: str | Path, mode: str) -> dict[str, Any
     if mode == "master":
         for d in sorted(root.iterdir()) if root.is_dir() else []:
             if d.is_dir() and not d.name.startswith(".") and role_from_name(d.name) not in ("ignore", "archive") and \
-                    any(f.suffix in CODE_EXT for f in d.rglob("*") if f.is_file()):
+                    has_files(d, CODE_EXT):
                 projects.append(d.name)
                 roles[d.name] = "project"
                 why[d.name] = "you said this is a master folder"

@@ -105,6 +105,7 @@ def test_data_folder_page_adds_and_scans(app, catalogue, tmp_path):
     [b for b in app.button if b.label == "Add and scan"][0].click().run()
     assert not app.exception
     assert catalogue.get_asset("files://extracts/sales.csv")["attrs"]["row_count"] == 2
+    assert any(m.value.startswith("Last scan: extracts: Scanned 1 file(s)") for m in app.success)
 
     # The file page shows its profile and can be compared with the SQL table.
     catalogue.save_profile(SALES, [{"name": "StoreId", "rows": 1200, "nulls": 0, "min": 1, "max": 40},

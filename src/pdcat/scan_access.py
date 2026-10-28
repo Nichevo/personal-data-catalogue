@@ -48,12 +48,6 @@ def engine_status() -> tuple[bool, str]:
                    "Microsoft Access Database Engine (2016 Redistributable), the same bitness as Python.")
 
 
-def find_access(root: Path, recursive: bool = True, skip: set[str] | None = None) -> list[Path]:
-    pattern = root.rglob("*") if recursive else root.glob("*")
-    return sorted(p for p in pattern if p.suffix.lower() in SUFFIXES and p.is_file() and not p.name.startswith("~")
-                  and not (skip and any(part in skip for part in p.relative_to(root).parts[:-1])))
-
-
 def read_access(path: Path) -> dict[str, Any]:
     import win32com.client
     engine = None

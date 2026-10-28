@@ -102,15 +102,18 @@ def setup_page(cat: Catalogue) -> None:
                     st.error(str(e))
     if cfg.python:
         if st.button("Scan Python projects now"):
-            from pdcat.postscan import after_scan
             from pdcat.scan_python import scan_project
-            with st.spinner("Scanning…"):
-                for p in cfg.python:
-                    try:
-                        scan_project(cat, p)
-                    except Exception as e:
-                        st.error(f"{p.name}: {type(e).__name__}: {e}")
-                after_scan(cat)
+
+            from .scan_status import ScanStatus, after_scan_with_status
+            status = ScanStatus("Scanning Python projects …")
+            for p in cfg.python:
+                status.phase(f"Scanning {p.name} …")
+                try:
+                    scan_project(cat, p, status)
+                except Exception as e:
+                    st.error(f"{p.name}: {type(e).__name__}: {e}")
+            after_scan_with_status(cat, status)
+            status.done("Scanned")
             st.toast("Scanned")
             st.rerun()
 
