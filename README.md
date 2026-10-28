@@ -285,6 +285,15 @@ one at a time, and every query is logged:
   output files are named `<thing>_<yyyymmdd>.csv`) and suggests each as a rule, with how
   many names follow it and examples of the ones that don't. You accept, edit or reject
   each suggestion; accepted ones are audited like pasted rules.
+- **Tidier "Contains" lists**: a folder's contents show dated copies of the same data
+  as one line per series (`sales_{yyyy}{mm}.csv · 48 files · Jan 2022 to Dec 2025`),
+  opening to the files, and the rest grouped by subfolder and type, as a sortable table
+  with a filter box instead of a long list of buttons.
+- **Power BI measures as a table**: a report's measures (some have hundreds) show as a
+  sortable, filterable table: name, home table, display folder, format, what it uses
+  (columns and other measures), which pages and visuals show it, and whether it's in
+  the glossary. Group by home table or display folder, filter to "not used on any
+  page" or "uses another measure", and click a row to open it.
 - **A tidier menu**: To review takes in Data issues, Needs notes, Unmatched tables,
   Unlinked data and Duplicates as filter tabs; Coverage and Issue hotspots become one
   Health page; Recent notes and Recent changes become one What's new page; Describe
