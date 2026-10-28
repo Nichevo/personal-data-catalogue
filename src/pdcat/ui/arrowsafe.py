@@ -21,9 +21,12 @@ import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
 MAX_ROWS = 500
-FIX = ("To repair it, open Anaconda Prompt, run `conda activate pdcat`, then "
-       "`pip uninstall -y pyarrow` and `conda install -c conda-forge pyarrow`. If that doesn't help, install the "
-       "latest Microsoft Visual C++ Redistributable (x64) and restart the app.")
+FIX = ("To repair it: close the app, open Anaconda Prompt, run `conda activate pdcat`, then "
+       "`pip uninstall -y pyarrow` and `conda remove -y --force pyarrow pyarrow-core`. Now "
+       "`python -c \"import pyarrow; print(pyarrow.__path__)\"` should fail; if it prints a folder instead, delete "
+       "that folder. Then `conda install -y -c conda-forge pyarrow` and check with "
+       "`python -c \"import pyarrow; print(pyarrow.table({'a': [1]}))\"`. If a DLL error remains, install the "
+       "latest Microsoft Visual C++ Redistributable (x64).")
 
 
 @functools.lru_cache(maxsize=1)
@@ -32,11 +35,21 @@ def arrow_error() -> str | None:
     if os.environ.get("PDCAT_NO_ARROW"):
         return "turned off with PDCAT_NO_ARROW"
     try:
-        import pyarrow  # noqa: F401
+        import pyarrow
         import pyarrow.lib  # noqa: F401
-    except (ImportError, OSError) as e:
+    except (ImportError, OSError, AttributeError) as e:
         return f"{type(e).__name__}: {e}"
+    # A half-removed install leaves an empty pyarrow folder that still imports, but holds nothing.
+    if getattr(pyarrow, "__file__", None) is None or not hasattr(pyarrow, "table"):
+        where = ", ".join(str(p) for p in getattr(pyarrow, "__path__", []))
+        return f"pyarrow is only partly installed (an empty or broken folder at {where or 'an unknown place'})"
     return None
+
+
+def _is_arrow_failure(e: BaseException) -> bool:
+    if isinstance(e, (ImportError, OSError)):
+        return True
+    return isinstance(e, AttributeError) and "pyarrow" in str(e)  # "module 'pyarrow' has no attribute 'table'"
 
 
 def _frame(data: Any) -> pd.DataFrame:
@@ -128,7 +141,9 @@ def _guard(name: str, original: Any, stand_in: Any) -> Any:
             return stand_in(self, *args, **kwargs)
         try:
             return original(self, *args, **kwargs)
-        except (ImportError, OSError) as e:  # "DLL load failed while importing lib", and the like
+        except (ImportError, OSError, AttributeError) as e:  # "DLL load failed while importing lib", and the like
+            if not _is_arrow_failure(e):
+                raise
             _RUNTIME_ERROR.append(f"{type(e).__name__}: {e}")
             return stand_in(self, *args, **kwargs)
     return run

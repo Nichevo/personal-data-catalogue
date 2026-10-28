@@ -98,11 +98,13 @@ def pick_from_item(section: str) -> None:
 
 
 def search_from_sidebar() -> None:
-    """Typing in the sidebar search box opens the Search page with those words."""
+    """The sidebar search box opens the Search page with those words. The box empties after each search, so the
+    same words can be searched again from any page."""
     from .common import go_page
     text = st.session_state.get("sidebar-search", "")
+    st.session_state["sidebar-search"] = ""
     if text.strip():
-        st.session_state["search-text"] = text
+        st.session_state["search-text"] = text.strip()
         go_page("Search")
 
 
@@ -122,8 +124,11 @@ def sidebar(cat: Catalogue) -> tuple[str, Page]:
     secs = sections()
     with st.sidebar:
         st.header("Data catalogue")
-        st.text_input("Search", key="sidebar-search", placeholder="🔎 Search everything", label_visibility="collapsed",
-                      on_change=search_from_sidebar)
+        with st.form("sidebar-search-form", clear_on_submit=True, border=False):
+            c1, c2 = st.columns([4, 1], vertical_alignment="center")
+            c1.text_input("Search", key="sidebar-search", placeholder="🔎 Search everything",
+                          label_visibility="collapsed")
+            c2.form_submit_button("🔎", on_click=search_from_sidebar, help="Search (or press Enter)")
         section = st.selectbox("Section", list(secs), key="nav-section", label_visibility="collapsed",
                                on_change=leave_item)
         pages = secs[section]

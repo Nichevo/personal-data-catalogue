@@ -7,6 +7,7 @@ pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from pdcat.ui import arrowsafe  # noqa: E402
+from test_app import sidebar_search  # noqa: E402
 
 APP = str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py")
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
@@ -37,7 +38,7 @@ def test_every_page_renders_without_arrow(app):
 
 def test_search_row_opens_from_the_drop_down(app):
     app.run()
-    app.sidebar.text_input(key="sidebar-search").input("sales").run()
+    sidebar_search(app, "sales")
     assert not app.exception and app.title[0].value == "Search"
     assert any("dbo.SalesDaily" in m.value for m in app.markdown)
     box = [s for s in app.selectbox if s.key and s.key.startswith("arrowsafe-search-table-")][0]
@@ -68,11 +69,50 @@ def test_a_pyarrow_failure_while_drawing_falls_back(catalogue, monkeypatch):
         assert arrowsafe.install() is False
         app = AppTest.from_file(APP, default_timeout=30)
         app.run()
-        app.sidebar.text_input(key="sidebar-search").input("sales").run()
+        sidebar_search(app, "sales")
         assert not app.exception
         assert any("dbo.SalesDaily" in m.value for m in app.markdown)
         assert arrowsafe._RUNTIME_ERROR
         assert st.dataframe.__func__ is DeltaGenerator.dataframe
+    finally:
+        arrowsafe.uninstall()
+        monkeypatch.undo()
+        st.dataframe = st._main.dataframe
+
+
+def test_an_empty_pyarrow_folder_counts_as_broken(monkeypatch, tmp_path):
+    import sys
+    import types
+    empty = types.ModuleType("pyarrow")
+    empty.__path__ = [str(tmp_path / "pyarrow")]  # a namespace package: imports, holds nothing
+    lib = types.ModuleType("pyarrow.lib")
+    monkeypatch.setitem(sys.modules, "pyarrow", empty)
+    monkeypatch.setitem(sys.modules, "pyarrow.lib", lib)
+    monkeypatch.delenv("PDCAT_NO_ARROW", raising=False)
+    arrowsafe.arrow_error.cache_clear()
+    try:
+        assert "partly installed" in arrowsafe.arrow_error()
+    finally:
+        arrowsafe.arrow_error.cache_clear()
+
+
+def test_attribute_error_from_pyarrow_while_drawing_falls_back(catalogue, monkeypatch):
+    import streamlit as st
+    from streamlit.delta_generator import DeltaGenerator
+    monkeypatch.setenv("PDCAT_DB", str(catalogue.path))
+    monkeypatch.delenv("PDCAT_NO_ARROW", raising=False)
+    arrowsafe.uninstall()
+
+    def broken(self, *a, **k):
+        raise AttributeError("module 'pyarrow' has no attribute 'table'")
+    monkeypatch.setattr(DeltaGenerator, "dataframe", broken)
+    try:
+        arrowsafe.install()
+        app = AppTest.from_file(APP, default_timeout=30)
+        app.run()
+        sidebar_search(app, "sales")
+        assert not app.exception
+        assert any("dbo.SalesDaily" in m.value for m in app.markdown)
     finally:
         arrowsafe.uninstall()
         monkeypatch.undo()
