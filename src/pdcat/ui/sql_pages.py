@@ -161,6 +161,36 @@ def _findings_box(cat: Catalogue, q: dict) -> None:
                             "Knowledge to read it here")
 
 
+def snippet_box(cat: Catalogue, asset: dict) -> None:
+    """On a pasted SQL page: the tables it uses (each opens its page) and a diagram of them and their joins."""
+    sql = asset["attrs"].get("sql", "")
+    uid = sqllibrary.uid_for(sql)
+    q = sqllibrary.get(cat, uid)
+    if q is None and sql.strip():  # pasted before the library was kept up to date on save
+        sqllibrary.build_library(cat)
+        q = sqllibrary.get(cat, uid)
+    if q is None or not q["tables"]:
+        return
+    st.subheader("Tables it uses")
+    for i, t in enumerate(q["tables"]):
+        what = {"reads": "reads", "writes": "writes", "calls": "calls"}.get(t["relation"], t["relation"])
+        cols = ", ".join(t["columns"][:15]) if t["columns"] else "no named columns (or SELECT *)"
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            if t.get("key"):
+                asset_button(t["key"], t["name"], "table", f"snt-{uid}-{i}")
+            else:
+                st.button(f"❔ {t['name']}", key=f"snt-{uid}-{i}", type="tertiary", on_click=go,
+                          args=(f"table:{t['name']}",), help="Not matched to a scanned table")
+        c2.caption(f"{what} · {cols}" + ("" if t.get("key") else " · not scanned"))
+    st.markdown("**Diagram**")
+    st.caption("Each table with the columns this SQL uses, and lines for its joins.")
+    from .graphview import graph_view
+    graph_view(cat, sqllibrary.field_elements(q, cat), key=f"sndiag-{uid}", height=420, name=f"pasted-{uid[:6]}")
+    st.button("Open as a query (checks, places, rename)", key=f"snq-{uid}", on_click=go, args=(f"query://{uid}",),
+              type="tertiary")
+
+
 def using_table_box(cat: Catalogue, key: str) -> None:
     """On a table page: the SQL that uses it, active first, old ones greyed."""
     rows = sqllibrary.using_table(cat, key)

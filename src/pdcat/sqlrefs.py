@@ -57,13 +57,23 @@ def strip_comments(sql: str) -> str:
     return re.sub(r"--[^\n]*", " ", sql)
 
 
-def normalise(ident: str) -> str | None:
-    """'[dbo].[Sales]' -> 'dbo.sales'. Returns None for temp tables, variables and dynamic names."""
+def normalise(ident: str, dynamic: bool = False) -> str | None:
+    """'[dbo].[Sales]' -> 'dbo.sales'. Returns None for temp tables, variables and dynamic names.
+
+    With dynamic=True (SQL that code builds from variables it couldn't fill in), an unknown database or schema
+    is left out ("{}.sales" -> "sales") and a partly known name is kept as a pattern ("dbo.sales_{}")."""
     parts = [p.strip().strip("[]\"").strip() for p in re.split(r"\s*\.\s*", ident.strip())]
     if not parts or any(not p for p in parts):
         # "db..table" means the default schema
         parts = [p if p else "dbo" for p in parts]
-    if any(p.startswith(("#", "@")) or "{" in p or "}" in p for p in parts):
+    if dynamic:
+        if not parts[-1].replace("{}", "").strip("_-"):
+            return None  # the whole name is a variable
+        unknown = [i for i, p in enumerate(parts[:-1]) if "{" in p]
+        if unknown:
+            parts = parts[unknown[-1] + 1:]  # "{}.sales" and "db.{}.sales" -> "sales"
+    if any(p.startswith(("#", "@")) for p in parts) or any("{" in p or "}" in p for p in parts[:-1]) \
+            or (not dynamic and ("{" in parts[-1] or "}" in parts[-1])):
         return None
     if len(parts) == 1 and parts[0].lower() in _NOT_TABLES:
         return None
@@ -72,21 +82,21 @@ def normalise(ident: str) -> str | None:
     return ".".join(p.lower() for p in parts)
 
 
-def extract_refs(sql: str) -> list[SqlRef]:
-    """Return the distinct tables read, written and procedures called by a piece of SQL."""
+def extract_refs(sql: str, dynamic: bool = False) -> list[SqlRef]:
+    """Return the distinct tables read, written and procedures called by a piece of SQL. dynamic: see normalise."""
     sql = strip_comments(sql)
     ctes = {m.group(1).lower() for m in re.finditer(_CTE_PATTERN, sql, re.IGNORECASE)}
     # "UPDATE f SET ... FROM dbo.Forecast f" writes to dbo.Forecast, so map aliases back to tables.
     aliases = {}
     for m in re.finditer(_ALIAS_PATTERN, sql, re.IGNORECASE):
         alias = m.group("a").lower()
-        if alias not in _KEYWORDS and (target := normalise(m.group("t"))):
+        if alias not in _KEYWORDS and (target := normalise(m.group("t"), dynamic)):
             aliases[alias] = target
     refs: dict[tuple[str, str], None] = {}
     write_spans: set[int] = set()
 
     def add(relation: str, ident: str) -> None:
-        name = normalise(ident)
+        name = normalise(ident, dynamic)
         if name and name != aliases.get(name, name):
             name = aliases[name]
         if name and name not in ctes:

@@ -10,6 +10,13 @@ APP = str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py")
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 
 
+def sidebar_search(app, text: str):
+    """Type in the sidebar search box and press its button."""
+    app.sidebar.text_input(key="sidebar-search").input(text)
+    [b for b in app.sidebar.button if b.label == "🔎"][0].click().run()
+    return app
+
+
 def goto(app, page: str):
     """Pick a page from the sidebar: its section first, then the page."""
     from pdcat.ui.main import ALIASES, sections
@@ -34,7 +41,7 @@ def test_search_page_lists_results(app):
     app.run()
     assert not app.exception
     assert app.title[0].value == "Home"
-    app.sidebar.text_input(key="sidebar-search").input("sales").run()
+    sidebar_search(app, "sales")
     assert not app.exception
     assert app.title[0].value == "Search"
     assert any("dbo.SalesDaily" in str(v) for d in app.dataframe for v in d.value["name"])
@@ -92,7 +99,8 @@ def test_data_folder_page_adds_and_scans(app, catalogue, tmp_path):
     pd.DataFrame({"StoreId": [1, 2], "Units": [3.0, 4.0]}).to_csv(folder / "sales.csv", index=False)
     app.run()
     goto(app, "Data folders")
-    [t for t in app.text_input if t.label == "Folder path"][0].input(f'"{folder}"')
+    [t for t in app.text_input if t.label == "Folder path"][0].input(f'"{folder}"').run()
+    assert any("single project" in m.value for m in app.markdown)
     [t for t in app.text_input if t.label == "Short name"][0].input("extracts")
     [b for b in app.button if b.label == "Add and scan"][0].click().run()
     assert not app.exception
@@ -287,3 +295,14 @@ def test_copilot_preview_is_built_only_when_asked(app, monkeypatch):
     assert not calls and not app.exception
     app.toggle(key="copilot-preview").set_value(True).run()
     assert calls and not app.exception
+
+
+def test_sidebar_search_twice_with_the_same_words(app):
+    app.run()
+    sidebar_search(app, "sales")
+    assert app.title[0].value == "Search"
+    assert app.sidebar.text_input(key="sidebar-search").value == ""  # emptied, ready for the next search
+    goto(app, "Menu guide")
+    sidebar_search(app, "sales")
+    assert not app.exception and app.title[0].value == "Search"
+    assert app.text_input(key="search-text").value == "sales"

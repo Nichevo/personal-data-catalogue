@@ -28,3 +28,28 @@ def test_parse_query():
     assert s["worked"] is True and s["last_run"].startswith("27/10/2026") and "Weekly" in s["schedule"]
     assert T.parse_query(out.replace("Last Result: 0", "Last Result: 2"))["worked"] is False
     assert T.parse_query(out.replace("Last Result: 0", "Last Result: 267011"))["worked"] is None
+
+
+def test_schedule_list_from_an_excel_sheet():
+    from test_v21_excel_import import xlsx
+
+    from pdcat import schedules
+    data = xlsx({"Notes": [["nothing here"]],
+                 "Schedule": [["Weekly jobs"], ["Job", "Runs", "When"],
+                              ["Forecast", "python forecast.py", "Mon 07:00"], ["", "", ""],
+                              ["Stock", "stock.bat", "Daily 06:00"]]})
+    cols, rows = schedules.read_sheet(data, "Schedule")
+    assert cols == ["Job", "Runs", "When"]
+    assert [r["Job"] for r in rows] == ["Forecast", "Stock"]
+    assert schedules.guess_columns(cols)["command"] == "Runs"
+
+
+def test_schedules_page_takes_an_xlsx(catalogue, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from test_app import goto
+    monkeypatch.setenv("PDCAT_DB", str(catalogue.path))
+    app = AppTest.from_file(str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py"), default_timeout=30)
+    goto(app.run(), "Schedules")
+    assert not app.exception
+    [up] = [u for u in app.get("file_uploader") if u.proto.label.startswith("Schedule list")]
+    assert ".xlsx" in list(up.proto.type)

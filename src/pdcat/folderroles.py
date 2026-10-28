@@ -110,6 +110,25 @@ def analyse(path: str | Path) -> dict[str, Any]:
     return {"mode": mode, "projects": projects, "roles": roles, "why": why}
 
 
+def as_mode(found: dict[str, Any], path: str | Path, mode: str) -> dict[str, Any]:
+    """The analysis redone for the mode you picked. A master folder you name yourself takes every subfolder that
+    holds code as a project; a single project drops the per-project roles."""
+    if mode == found["mode"]:
+        return found
+    root = Path(path).expanduser()
+    roles = {k: v for k, v in found["roles"].items() if v != "project"}
+    why = {k: v for k, v in found["why"].items() if k in roles}
+    projects: list[str] = []
+    if mode == "master":
+        for d in sorted(root.iterdir()) if root.is_dir() else []:
+            if d.is_dir() and not d.name.startswith(".") and role_from_name(d.name) not in ("ignore", "archive") and \
+                    any(f.suffix in CODE_EXT for f in d.rglob("*") if f.is_file()):
+                projects.append(d.name)
+                roles[d.name] = "project"
+                why[d.name] = "you said this is a master folder"
+    return {"mode": mode, "projects": projects, "roles": roles, "why": why}
+
+
 def _walk(root: Path):
     stack = [(root, 0)]
     while stack:

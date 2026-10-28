@@ -292,7 +292,17 @@ def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str], env: di
     """{(relation, ref): (line, how)} for everything this code reads and writes."""
     env = env if env is not None else {}
     refs: dict[tuple[str, str], tuple[int, str]] = {}
+    inner: set[int] = set()  # pieces of a SQL string already read as part of the whole
     for node in ast.walk(root):
+        if id(node) in inner:
+            continue
+        if isinstance(env, Env) and _builds_string(node) and id(node) not in skip:
+            env.at = node
+            s = _expr_value(node, env)[0]
+            if s and looks_like_sql(s):
+                inner.update(id(n) for n in ast.walk(node) if n is not node)
+                _sql_refs(node, s, refs, env, "SQL built from variables")
+                continue
         if isinstance(node, (ast.Constant, ast.JoinedStr)) and id(node) not in skip:
             s = _string_value(node, consts)
             if s and looks_like_sql(s):
@@ -314,9 +324,37 @@ def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str], env: di
         elif isinstance(node, ast.Call):
             for relation, ref, how in _call_refs(node, env):
                 refs.setdefault((relation, ref), (node.lineno, how))
+            if isinstance(env, Env) and _call_name(node) and _call_name(node).split(".")[-1] in SQL_RUNNERS \
+                    and node.args and isinstance(node.args[0], ast.Name):  # sql = "..."; sql += table; run(sql)
+                env.at = node
+                s = _expr_value(node.args[0], env)[0]
+                if s and looks_like_sql(s) and not isinstance(env.value_node(node.args[0].id), ast.Constant):
+                    _sql_refs(node, s, refs, env, "SQL built from variables")
             if isinstance(env, Env) and isinstance(node.func, ast.Attribute) and node.func.attr == "rename":
                 env.renames += _renames(node, env.lines)
     return refs
+
+
+SQL_RUNNERS = {"read_sql", "read_sql_query", "execute", "executemany", "exec_driver_sql", "query"}
+
+
+def _builds_string(node: ast.AST) -> bool:
+    """"FROM " + schema + "." + table, f"FROM {schema}.{table}", "FROM %s" % t, "FROM {}".format(t)."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        return True
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(v, ast.FormattedValue) for v in node.values)
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format"
+
+
+def _sql_refs(node: ast.AST, s: str, refs: dict, env: "Env", how: str) -> None:
+    """Tables in a SQL string the code puts together; names it couldn't fill in are left as patterns."""
+    for r in extract_refs(s, dynamic=True):
+        refs.setdefault((r.relation, f"table:{r.name}"), (node.lineno, how))
+    if len(env.sql) < MAX_SQL:
+        env.sql.setdefault((node.lineno, s[:200]), {
+            "sql": s[:MAX_SQL_LEN], "line": node.lineno, "name": _sql_name(node, env),
+            "function": env.enclosing.get(id(node)), "built_from_variables": True})
 
 
 def _renames(call: ast.Call, lines: list[str] | None = None) -> list[dict]:
@@ -530,6 +568,25 @@ class Env(dict):
         self.renames: list[dict] = []
         self.assigned_to: dict[int, str] = {}
         self.lines: list[str] = []
+        self.at: ast.AST | None = None  # the code being worked out, so a name takes its value from just before it
+
+    def value_node(self, name: str) -> ast.AST | None:
+        """What `name` holds at self.at: its last assignment before that line in the same function, else what
+        callers pass for it when it's a parameter, else its module-level value."""
+        if self.at is None or not hasattr(self.at, "lineno"):
+            return None
+        fn = self.enclosing.get(id(self.at))
+        alts = sorted(self.alts.get(name, []), key=lambda a: (a.lineno, a.col_offset))
+        before = [a for a in alts if self.enclosing.get(id(a)) == fn and a.lineno <= self.at.lineno
+                  and a is not self.at]
+        if before:
+            return before[-1]
+        for value, _ in self.params.get((fn, name), []) if fn else []:
+            return value
+        module = [a for a in alts if self.enclosing.get(id(a)) is None]
+        if fn and module:
+            return module[-1]
+        return None
 
 
 # module name -> {constant name: value}, for every module in the project being scanned
@@ -600,6 +657,18 @@ def build_env(tree: ast.Module, text: str = "") -> Env:
         if len(rets) == 1 and "." not in name:
             env.returns.setdefault(name, rets[0])
     _caller_values(tree, env)
+    # name += "x" is name + "x" from that line on
+    augs = sorted((n for n in ast.walk(tree) if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add)
+                   and isinstance(n.target, ast.Name)), key=lambda n: (n.lineno, n.col_offset))
+    for n in augs:
+        env.at = n.value
+        env.enclosing[id(n.value)] = env.enclosing.get(id(n))
+        prev = env.value_node(n.target.id)
+        joined = ast.copy_location(ast.BinOp(left=prev if prev is not None else ast.Name(n.target.id, ast.Load()),
+                                             op=ast.Add(), right=n.value), n.value)
+        env.enclosing[id(joined)] = env.enclosing.get(id(n))
+        env.alts.setdefault(n.target.id, []).append(joined)
+    env.at = None
     return env
 
 
@@ -698,6 +767,14 @@ def _expr_value(node: ast.AST, env: dict[str, ast.AST], depth: int = 0) -> tuple
         text = "".join(out)
         return text, "f-string pattern" if "{}" in text else how
     if isinstance(node, ast.Name):
+        found = env.value_node(node.id) if isinstance(env, Env) else None
+        if found is not None:
+            outer, env.at = env.at, found  # names inside it take their values from where it is
+            try:
+                val, how = _expr_value(found, env, depth + 1)
+            finally:
+                env.at = outer
+            return val, how or "variable"
         if node.id in env:
             val, how = _expr_value(env[node.id], env, depth + 1)
             return val, how or "variable"
@@ -718,13 +795,23 @@ def _expr_value(node: ast.AST, env: dict[str, ast.AST], depth: int = 0) -> tuple
         return None, ""
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div, ast.Mod)):
         left, lh = _expr_value(node.left, env, depth + 1)
-        if isinstance(node.op, ast.Mod) and left is not None:
-            return re.sub(r"%[sdif]", "{}", left), "string formatting"
+        if isinstance(node.op, ast.Mod) and left is not None:  # "FROM %s.%s" % (schema, table)
+            given = node.right.elts if isinstance(node.right, ast.Tuple) else [node.right]
+            filled = iter([_expr_value(g, env, depth + 1)[0] for g in given])
+            return re.sub(r"%[sdif]", lambda m: next(filled, None) or "{}", left), "string formatting"
         right, rh = _expr_value(node.right, env, depth + 1)
-        if left is None or right is None:
+        if left is None and right is None:
             return None, ""
+        if left is None or right is None:  # a date, a loop variable, a folder from the environment...
+            if isinstance(node.op, ast.Mod):
+                return None, ""
+            if left is None:
+                left = "{}/" if _folder_name(node.left) and not right.startswith(("/", "\\")) else "{}"
+            else:
+                right = "{}"
+            lh = rh = "pattern built with +"
         if isinstance(node.op, ast.Div):
-            return _join(left, right), "pathlib path"
+            return _join(left, right), lh or rh or "pathlib path"
         return left + right, lh or rh
     if isinstance(node, ast.Subscript):
         key = node.slice.value if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str) else None
@@ -754,9 +841,19 @@ def _expr_value(node: ast.AST, env: dict[str, ast.AST], depth: int = 0) -> tuple
             return _join(*args), "pathlib path" if "Path" in name else "variable"
         if name in ("resolve", "absolute", "expanduser", "strip") and isinstance(func, ast.Attribute):
             return _expr_value(func.value, env, depth + 1)
-        if name == "format" and isinstance(func, ast.Attribute):
+        if name == "format" and isinstance(func, ast.Attribute):  # "FROM {}.{}".format(schema, table)
             base, _ = _expr_value(func.value, env, depth + 1)
-            return (re.sub(r"\{[^}]*\}", "{}", base), "string formatting") if base is not None else (None, "")
+            if base is None:
+                return None, ""
+            named = {k.arg: _expr_value(k.value, env, depth + 1)[0] for k in node.keywords if k.arg}
+            order = iter(args)
+
+            def fill(m: re.Match) -> str:
+                field = m.group(1).split("!")[0].split(":")[0]
+                got = named.get(field) if field and not field.isdigit() else \
+                    (args[int(field)] if field.isdigit() and int(field) < len(args) else next(order, None))
+                return got if got is not None and "{}" not in got else "{}"
+            return re.sub(r"\{([^{}]*)\}", fill, base), "string formatting"
         if name == "get" and node.args and isinstance(node.args[0], ast.Constant) and \
                 isinstance(node.args[0].value, str) and node.args[0].value in _CONFIG.get():
             return _CONFIG.get()[node.args[0].value], "config file"
@@ -764,6 +861,19 @@ def _expr_value(node: ast.AST, env: dict[str, ast.AST], depth: int = 0) -> tuple
             val, _ = _expr_value(env.returns[func.id], env, depth + 1)  # a helper that returns the path
             return val, f"returned by {func.id}()" if val is not None else ""
     return None, ""
+
+
+def _too_vague(path: str) -> bool:
+    """"{}.csv" or "{}/{}" could be any file at all, so it's left for you to say which file it is."""
+    folder, _, leaf = path.replace("\\", "/").rpartition("/")
+    stem = re.sub(r"\.[A-Za-z0-9]+$", "", leaf).replace("{}", "").strip("_-. ")
+    return not stem and not folder.replace("{}", "").strip("/.")
+
+
+def _folder_name(node: ast.AST) -> bool:
+    """sDataFolder, out_dir, base_path: a name that holds a folder, so `folder + "x.csv"` is x.csv inside it."""
+    name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else ""
+    return bool(re.search(r"folder|dir|path|root|location|loc$", name, re.I))
 
 
 def _resolve_name(node: ast.AST, env, depth: int = 0) -> ast.AST | None:
@@ -1010,6 +1120,8 @@ def _call_refs(call: ast.Call, env: dict[str, ast.AST] | None = None) -> list[tu
     name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
     if name is None:
         return []
+    if isinstance(env, Env):
+        env.at = call
     owner = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else None
 
     def node_of(pos: int, *kw: str) -> ast.AST | None:
@@ -1028,9 +1140,9 @@ def _call_refs(call: ast.Call, env: dict[str, ast.AST] | None = None) -> list[tu
             return []
         out = []
         for value, found_how in _values(node, env, call):
-            if value and check(value):
+            if value and check(value) and not _too_vague(value):
                 out.append((relation, f"file:{value}", found_how or how))
-                if "{}" in value and relation == "writes" and isinstance(env, Env):
+                if "{}" in value.rsplit("/", 1)[-1] and relation == "writes" and isinstance(env, Env):
                     env.patterns.append(value)
         if not out:
             _unknown(env, call, relation, how)
@@ -1122,7 +1234,11 @@ def _values(node: ast.AST, env, call: ast.Call | None = None) -> list[tuple[str 
     fn = env.enclosing.get(id(call)) if call is not None else None
     if fn and (fn, node.id) in env.params:
         for value_node, how in env.params[(fn, node.id)]:
-            v = _expr_value(value_node, env)[0]
+            outer, env.at = env.at, value_node
+            try:
+                v = _expr_value(value_node, env)[0]
+            finally:
+                env.at = outer
             out.append((v, how))
     out = [o for o in dict.fromkeys(out) if o[0]]
     return out or [first]
