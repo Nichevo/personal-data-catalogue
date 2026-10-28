@@ -92,7 +92,8 @@ def test_data_folder_page_adds_and_scans(app, catalogue, tmp_path):
     pd.DataFrame({"StoreId": [1, 2], "Units": [3.0, 4.0]}).to_csv(folder / "sales.csv", index=False)
     app.run()
     goto(app, "Data folders")
-    [t for t in app.text_input if t.label == "Folder path"][0].input(f'"{folder}"')
+    [t for t in app.text_input if t.label == "Folder path"][0].input(f'"{folder}"').run()
+    assert any("single project" in m.value for m in app.markdown)
     [t for t in app.text_input if t.label == "Short name"][0].input("extracts")
     [b for b in app.button if b.label == "Add and scan"][0].click().run()
     assert not app.exception

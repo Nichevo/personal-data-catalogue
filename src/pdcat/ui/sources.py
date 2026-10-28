@@ -30,7 +30,10 @@ def folders_page(cat: Catalogue) -> None:
             c1, c2, c3 = st.columns([4, 1, 1])
             with c1:
                 asset_button(f"files://{f['name']}", f["name"], "folder", f"folder-{i}")
-                st.caption(f"`{f['path']}`" + (" · includes subfolders" if f["recursive"] else ""))
+                from pdcat.folderroles import mode_of
+                kind = {"master": " · master folder (each project folder is its own project)",
+                        "single": " · a single project"}.get(mode_of(cat, f["path"]) or "", "")
+                st.caption(f"`{f['path']}`" + (" · includes subfolders" if f["recursive"] else "") + kind)
             if c2.button("Re-scan", key=f"rescan-{i}"):
                 _run_folder_scan(cat, scan_folder, f["name"], f["path"], bool(f["recursive"]))
             if c3.button("Remove", key=f"remove-{i}", help="Forget this folder and its files (notes are kept)"):
@@ -45,38 +48,70 @@ def folders_page(cat: Catalogue) -> None:
             roles_editor(cat, f["path"], f["name"])
 
     st.subheader("Add a folder")
+    path = st.text_input("Folder path", placeholder=r"C:\Users\you\data\extracts", key="add-folder-path",
+                         help="Tip: in File Explorer, Shift + right-click the folder → Copy as path.").strip().strip('"')
+    found = None
+    if path and Path(path).is_dir():
+        from pdcat.folderroles import analyse, as_mode
+        found = folder_preview(path, analyse(path))
+        found = as_mode(found, path, st.session_state.get(f"add-folder-mode-{path}", found["mode"]))
+    elif path:
+        st.error(f"Can't find a folder at {path}")
     with st.form("add-folder"):
-        path = st.text_input("Folder path", placeholder=r"C:\Users\you\data\extracts",
-                             help="Tip: in File Explorer, Shift + right-click the folder → Copy as path.")
         c1, c2 = st.columns([2, 1])
         name = c1.text_input("Short name", placeholder="e.g. forecast-extracts")
         recursive = c2.checkbox("Include subfolders", value=True)
         with_code = st.checkbox("Also catalogue the Python code in it (scripts, notebooks, .sql files)", value=True,
-                                help="A master folder holding several projects becomes one code project per "
-                                     "project folder; a single project becomes one.")
-        submitted = st.form_submit_button("Add and scan", type="primary")
-    if submitted:
-        path = path.strip().strip('"')
+                                help="As one code project for a single project, or one per project folder for a "
+                                     "master folder.")
+        submitted = st.form_submit_button("Add and scan", type="primary", disabled=found is None)
+    if submitted and found is not None:
         name = (name.strip() or Path(path).name or "folder").replace("/", "-")
         taken = set(cat.sources()) - {f["name"] for f in cat.folders()}
-        if not path:
-            st.warning("Paste a folder path first.")
-        elif name in taken or name == MANUAL_SOURCE:
+        if name in taken or name == MANUAL_SOURCE:
             st.warning(f"The name '{name}' is already used by another source. Pick another.")
-        elif not Path(path).is_dir():
-            st.error(f"Can't find a folder at {path}")
         elif cat.folder_overlaps(path) and not st.session_state.get(f"overlap-ok-{path}"):
             st.session_state[f"overlap-ok-{path}"] = True
             st.warning(f"This overlaps a folder you already added ({', '.join(cat.folder_overlaps(path))}), so the "
                        "same files would be catalogued twice. Press Add and scan again to add it anyway.")
         else:
             cat.add_folder(name, path, recursive)
-            from pdcat.folderroles import analyse, save
-            found = analyse(path)
+            from pdcat.folderroles import save
             save(cat, path, found["roles"], confirmed=False, mode=found["mode"])
             if with_code:
                 add_code_projects(cat, name, path, found)
             _run_folder_scan(cat, scan_folder, name, path, recursive)
+
+
+MODES = {"master": "A master folder: each project folder in it is its own project",
+         "single": "A single project: everything in it belongs together"}
+
+
+def folder_preview(path: str, found: dict) -> dict:
+    """What the app makes of a folder before it's added: master folder or single project, and why."""
+    with st.container(border=True):
+        st.markdown("**How this folder will be treated**")
+        st.caption("A **master folder** holds several separate projects side by side (for example `forecasting/`, "
+                   "`pricing/`, `stock/`, each with its own README, environment file or git repository). Each one "
+                   "becomes its own code project, so the code map and search keep them apart. A **single project** is "
+                   "one piece of work whose subfolders (`code/`, `data/`, `raw_data/`, `output/`, `archive/`…) "
+                   "belong together; each subfolder gets a role instead. Either way, all the data files in the "
+                   "folder are catalogued as one data folder.")
+        if found["mode"] == "master":
+            st.markdown(f"It looks like a **master folder**: {len(found['projects'])} project folders found.")
+            for p in found["projects"]:
+                st.caption(f"📁 {p}/ ({found['why'].get(p, '')})")
+        else:
+            st.markdown("It looks like a **single project**: fewer than two subfolders look like projects of their "
+                        "own (a project folder has at least two of: README, environment.yml or requirements.txt, "
+                        "pyproject.toml, setup.py, src/, or its own .git).")
+        st.radio("Treat it as", list(MODES), index=list(MODES).index(found["mode"]), format_func=MODES.get,
+                 key=f"add-folder-mode-{path}")
+        roles = {k: v for k, v in found["roles"].items() if v != "project"}
+        if roles:
+            st.caption("Suggested roles for subfolders (you can change them after adding): " + ", ".join(
+                f"`{k}/` {v}" for k, v in sorted(roles.items())[:12]) + (" …" if len(roles) > 12 else ""))
+    return found
 
 
 def add_code_projects(cat: Catalogue, name: str, path: str, found: dict) -> None:

@@ -212,3 +212,24 @@ def test_menu_guide_covers_every_page(app):
     assert not app.exception and app.title[0].value == "Menu guide"
     [b for b in app.button if b.key == "guide-SQL queries"][0].click().run()
     assert not app.exception and app.title[0].value == "SQL queries"
+
+
+def test_add_folder_shows_master_or_single_and_can_be_overridden(app, catalogue, tmp_path):
+    from test_app import goto
+
+    from pdcat.folderroles import mode_of
+    root = tmp_path / "work"
+    for p in ("forecasting", "pricing"):
+        (root / p / "src").mkdir(parents=True)
+        (root / p / "README.md").write_text("x")
+        (root / p / "src" / "run.py").write_text("print(1)\n")
+    goto(app.run(), "Data folders")
+    [t for t in app.text_input if t.label == "Folder path"][0].input(str(root)).run()
+    assert not app.exception
+    assert any("master folder" in m.value and "2 project folders" in m.value for m in app.markdown)
+    app.radio(key=f"add-folder-mode-{root}").set_value("single").run()
+    [t for t in app.text_input if t.label == "Short name"][0].input("work")
+    [b for b in app.button if b.label == "Add and scan"][0].click().run()
+    assert not app.exception
+    assert mode_of(catalogue, str(root)) == "single"
+    assert [lib["name"] for lib in catalogue.libraries() if lib["from_folder"] == "work"] == ["work-code"]
