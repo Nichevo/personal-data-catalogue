@@ -282,6 +282,18 @@ one at a time, and every query is logged:
   links stay listed but greyed out, and are left out of grouping, diagrams, lineage and
   "used by" counts. Both survive rescans, show who set them, and can be undone from a
   "Removed and unimportant links" list.
+- **SQL query library**: every SQL query found in scripts, notebooks, .sql files, Excel
+  (Power Query and macros), Power BI and reference documents becomes a saved query,
+  alongside the ones you paste in. Each gets a suggested name (from the variable or
+  function holding it, a comment above it, or its file), which you can change, and
+  records where it was found and the tables it uses. The same query found in several
+  places is shown once, listing every place. A "SQL queries" page lists them all as a
+  table you can sort, filter by table or source and pick from to see the query.
+- **Query diagrams with fields**: looking at a query (saved, pasted, a view or a
+  procedure) shows a diagram of just the tables it uses, with their columns listed, the
+  columns the query uses highlighted, and lines between the exact fields it joins on
+  (from its ON clauses, plus the database's keys). Database diagrams get the same "show
+  fields" view for any group of tables.
 - **Recently viewed** items in the sidebar.
 - **Edit history** on notes and descriptions: who changed what and when, with undo.
 - **Schedule scans from the app**: a Settings button that creates (or removes) the
