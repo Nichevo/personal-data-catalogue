@@ -5,9 +5,11 @@ from pathlib import Path
 
 import streamlit as st
 
+from pdcat.scanprogress import find_files, gb, size_up, size_warning
 from pdcat.store import MANUAL_SOURCE, Catalogue
 
 from .common import asset_button, go, page_title
+from .scan_status import ScanStatus, after_scan_with_status
 
 
 def add_sql_page(cat: Catalogue) -> None:
@@ -21,6 +23,8 @@ def folders_page(cat: Catalogue) -> None:
     from pdcat.scan_files import scan_folder
 
     page_title("Data folders")
+    if st.session_state.get("last-folder-scan"):
+        st.success("Last scan: " + st.session_state.pop("last-folder-scan"), icon="✅")
     st.caption("Point the catalogue at any folder and it records every CSV and Parquet file in it (size, "
                "modified date, row count, columns and value ranges), every Power BI report (.pbix, .pbit, .pbip: "
                "pages, visuals, measures and what they load) and every Excel workbook (sheets, Power Query, "
@@ -35,7 +39,8 @@ def folders_page(cat: Catalogue) -> None:
                         "single": " · a single project"}.get(mode_of(cat, f["path"]) or "", "")
                 st.caption(f"`{f['path']}`" + (" · includes subfolders" if f["recursive"] else "") + kind)
             if c2.button("Re-scan", key=f"rescan-{i}"):
-                _run_folder_scan(cat, scan_folder, f["name"], f["path"], bool(f["recursive"]))
+                _run_folder_scan(cat, scan_folder, f["name"], f["path"], bool(f["recursive"]),
+                                 ScanStatus(f"Scanning {f['name']} …"))
             if c3.button("Remove", key=f"remove-{i}", help="Forget this folder and its files (notes are kept)"):
                 for lib in cat.libraries():
                     if lib["from_folder"] == f["name"]:
@@ -52,9 +57,8 @@ def folders_page(cat: Catalogue) -> None:
                          help="Tip: in File Explorer, Shift + right-click the folder → Copy as path.").strip().strip('"')
     found = None
     if path and Path(path).is_dir():
-        from pdcat.folderroles import analyse, as_mode
-        found = folder_preview(path, analyse(path))
-        found = as_mode(found, path, st.session_state.get(f"add-folder-mode-{path}", found["mode"]))
+        found = folder_preview(path, _analyse(path))
+        found = _as_mode(found, path, st.session_state.get(f"add-folder-mode-{path}", found["mode"]))
     elif path:
         st.error(f"Can't find a folder at {path}")
     with st.form("add-folder"):
@@ -78,9 +82,34 @@ def folders_page(cat: Catalogue) -> None:
             cat.add_folder(name, path, recursive)
             from pdcat.folderroles import save
             save(cat, path, found["roles"], confirmed=False, mode=found["mode"])
+            status = ScanStatus(f"Adding {name} …")
             if with_code:
-                add_code_projects(cat, name, path, found)
-            _run_folder_scan(cat, scan_folder, name, path, recursive)
+                add_code_projects(cat, name, path, found, status)
+            _run_folder_scan(cat, scan_folder, name, path, recursive, status)
+
+
+@st.cache_data(ttl=300, show_spinner="Looking at the folder …")
+def _analyse(path: str) -> dict:
+    """Kept for a few minutes: the page redraws on every click, and a big network folder is slow to look at."""
+    from pdcat.folderroles import analyse
+    return analyse(path)
+
+
+@st.cache_data(ttl=300, show_spinner="Adding up the files …")
+def _size_up(path: str) -> dict:
+    from pdcat.profiling import DATA_SUFFIXES
+    from pdcat.scan_access import SUFFIXES as ACCESS_SUFFIXES
+    from pdcat.scan_excel import WORKBOOK_SUFFIXES
+    from pdcat.scan_powerbi import REPORT_SUFFIXES
+    found, _ = find_files(Path(path), (*DATA_SUFFIXES, *REPORT_SUFFIXES, ".pbip", *WORKBOOK_SUFFIXES,
+                                       *ACCESS_SUFFIXES))
+    return size_up(p for paths in found.values() for p in paths)
+
+
+@st.cache_data(ttl=300, show_spinner="Looking for project folders …")
+def _as_mode(found: dict, path: str, mode: str) -> dict:
+    from pdcat.folderroles import as_mode
+    return as_mode(found, path, mode)
 
 
 MODES = {"master": "A master folder: each project folder in it is its own project",
@@ -107,6 +136,13 @@ def folder_preview(path: str, found: dict) -> dict:
                         "pyproject.toml, setup.py, src/, or its own .git).")
         st.radio("Treat it as", list(MODES), index=list(MODES).index(found["mode"]), format_func=MODES.get,
                  key=f"add-folder-mode-{path}")
+        size = _size_up(path)
+        warning = size_warning(size)
+        st.caption(f"{size['files']:,} data, Power BI, Excel and Access file(s), {gb(size['bytes'])} in all.")
+        if warning:
+            st.warning(f"This scan may take a while: {warning}. Files are read one by one with a progress bar, "
+                       "and only changed files are read again on a rescan. A large CSV is sampled (the first "
+                       "200,000 rows); a large Power BI model gets three minutes before it is skipped.", icon="⏳")
         roles = {k: v for k, v in found["roles"].items() if v != "project"}
         if roles:
             st.caption("Suggested roles for subfolders (you can change them after adding): " + ", ".join(
@@ -114,22 +150,25 @@ def folder_preview(path: str, found: dict) -> dict:
     return found
 
 
-def add_code_projects(cat: Catalogue, name: str, path: str, found: dict) -> None:
+def add_code_projects(cat: Catalogue, name: str, path: str, found: dict, status: ScanStatus) -> None:
     """Catalogue the Python code in a data folder: one project per project folder in a master folder."""
     from pdcat.config import PythonSource
     from pdcat.scan_python import scan_project
     root = Path(path)
-    if not any(root.rglob("*.py")) and not any(root.rglob("*.ipynb")):
+    status.phase(f"Looking for Python code in {path} …")
+    code, _ = find_files(root, (".py", ".ipynb"), report=status)
+    if not any(code.values()):
         return
     targets = [(f"{name}-{sub}", root / sub) for sub in found["projects"]] if found["mode"] == "master" \
         else [(f"{name}-code", root)]
-    with st.spinner("Reading the code …"):
-        for lib_name, lib_path in targets:
-            cat.add_library(lib_name, str(lib_path), role="project", from_folder=name)
-            try:
-                scan_project(cat, PythonSource(name=lib_name, path=lib_path, role="project", data_files=False))
-            except Exception as e:  # one unreadable project must not stop the folder
-                st.warning(f"Couldn't read the code in {lib_path}: {type(e).__name__}: {e}")
+    for i, (lib_name, lib_path) in enumerate(targets):
+        status.phase(f"Reading the code in {lib_name}" + (f" ({i + 1} of {len(targets)})" if len(targets) > 1 else "")
+                     + " …")
+        cat.add_library(lib_name, str(lib_path), role="project", from_folder=name)
+        try:
+            scan_project(cat, PythonSource(name=lib_name, path=lib_path, role="project", data_files=False), status)
+        except Exception as e:  # one unreadable project must not stop the folder
+            status.note(f"Couldn't read the code in {lib_path}: {type(e).__name__}: {e}")
 
 
 def roles_editor(cat: Catalogue, path: str, source: str) -> None:
@@ -174,20 +213,23 @@ def roles_editor(cat: Catalogue, path: str, source: str) -> None:
             st.rerun()
 
 
-def _run_folder_scan(cat: Catalogue, scan_folder, name: str, path: str, recursive: bool) -> None:
-    with st.spinner(f"Scanning {path} …"):
-        try:
-            counts = scan_folder(cat, name, path, recursive)
-        except Exception as e:
-            st.error(f"Scan failed: {type(e).__name__}: {e}")
-            return
+def _run_folder_scan(cat: Catalogue, scan_folder, name: str, path: str, recursive: bool,
+                     status: ScanStatus) -> None:
+    status.phase(f"Scanning {path} …")
+    try:
+        counts = scan_folder(cat, name, path, recursive, report=status)
+    except Exception as e:
+        status.done("Scan failed", ok=False)
+        st.error(f"Scan failed: {type(e).__name__}: {e}")
+        return
     msg = f"Scanned {counts['files']} file(s)" + (f" ({counts['series']} dated series)" if counts.get("series") else "") \
         + (f", {counts['reports']} Power BI report(s)" if counts.get("reports") else "") \
         + (f", {counts['workbooks']} Excel workbook(s)" if counts.get("workbooks") else "") \
         + (f", {counts['access']} Access database(s)" if counts.get("access") else "") \
         + (f", {counts['errors']} couldn't be read" if counts["errors"] else "")
-    from pdcat.postscan import after_scan
-    after_scan(cat)
+    after_scan_with_status(cat, status)
+    status.done(msg)
+    st.session_state["last-folder-scan"] = f"{name}: {msg} in {status.took()}."
     st.toast(msg)
     st.rerun()
 
@@ -245,9 +287,9 @@ def add_library(cat: Catalogue, name: str, path: str) -> None:
         st.warning(f"The name '{name}' is already used by another source.")
         return
     cat.add_library(name, path)
-    with st.spinner(f"Scanning {path} …"):
-        counts = scan_project(cat, PythonSource(name=name, path=Path(path), role="library", data_files=False))
-    from pdcat.postscan import after_scan
-    after_scan(cat)
+    status = ScanStatus(f"Scanning {path} …")
+    counts = scan_project(cat, PythonSource(name=name, path=Path(path), role="library", data_files=False), status)
+    after_scan_with_status(cat, status)
+    status.done(f"Scanned {counts['files']} file(s) in {name}")
     st.toast(f"Scanned {counts['files']} file(s) in {name}")
     st.rerun()

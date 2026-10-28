@@ -67,6 +67,47 @@ def report_section(cat: Catalogue, key: str, asset: dict) -> None:
                                         else "inactive"} for r in a["relationships"]]), hide_index=True,
                          width="stretch")
     queries_block(a, key)
+    over_time(cat, key, "report")
+
+
+def over_time(cat: Catalogue, key: str, kind: str) -> None:
+    """How the report changed: across its versions (older copies first), then across rescans of this file."""
+    from pdcat.reportversions import FACET_LABELS, timeline
+    steps = timeline(cat, key)
+    asset = cat.get_asset(key)
+    revisions = (asset["attrs"].get("revisions") or []) if asset else []
+    if not steps and len(revisions) < 2:
+        return
+    st.subheader("Over time")
+    if len(steps) > 1:
+        st.caption("Each version compared with the one before it, oldest first. ⭐ marks this one.")
+        st.dataframe(pd.DataFrame([{"version": ("⭐ " if t["current"] else "") + t["name"], "label": t["label"],
+                                    "modified": t["modified"],
+                                    **{FACET_LABELS.get(f, f) + "s": n for f, n in t["counts"].items()
+                                       if f != "visuals"},
+                                    "what changed": t["summary"]} for t in steps]),
+                     hide_index=True, width="stretch")
+        for t in steps:
+            if t["changes"]:
+                with st.expander(f"{t['name']}: {t['summary']}"):
+                    _changes_md(t["changes"])
+    if len(revisions) > 1:
+        st.caption(f"Changes seen in this file by rescans ({len(revisions)} reads).")
+        st.dataframe(pd.DataFrame([{"seen": r["at"][:10], "file modified": (r.get("modified") or "")[:10],
+                                    **{FACET_LABELS.get(f, f) + "s": n for f, n in (r.get("counts") or {}).items()
+                                       if f != "visuals"},
+                                    "what changed": r.get("summary") if "summary" in r else "first read"}
+                                   for r in revisions]), hide_index=True, width="stretch")
+
+
+def _changes_md(changes: dict) -> None:
+    from pdcat.reportversions import FACET_LABELS
+    for facet, d in changes.items():
+        label = FACET_LABELS.get(facet, facet)
+        for which, sign in (("added", "➕"), ("removed", "➖"), ("changed", "✏️")):
+            if d[which]:
+                st.markdown(f"{sign} **{label}s {which}:** " + ", ".join(f"`{n}`" for n in d[which][:30])
+                            + (" …" if len(d[which]) > 30 else ""))
 
 
 def pages_section(cat: Catalogue, key: str, a: dict) -> None:
@@ -223,3 +264,4 @@ def workbook_section(cat: Catalogue, key: str, asset: dict) -> None:
             st.code(v["sql"], language="sql")
     elif a.get("macros"):
         st.caption("Macros: " + ", ".join(a["macros"]) + " (no SQL found in them)")
+    over_time(cat, key, "workbook")

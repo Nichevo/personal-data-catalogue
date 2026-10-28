@@ -16,7 +16,7 @@ from typing import Any
 from .store import Catalogue, now
 
 KIND_LABELS = {
-    "versions": "Script versions", "family": "File families", "backup": "Main and backup tables",
+    "versions": "Versions", "family": "File families", "backup": "Main and backup tables",
     "sap": "SAP meanings", "metric": "Metrics found in code", "naming": "Naming rules",
     "description": "Descriptions", "owner": "Owners", "rename": "Renamed columns", "label": "Report labels",
     "schedule": "Schedule matches", "series": "Files a script writes", "folder_role": "Folder roles",
@@ -25,8 +25,9 @@ KIND_LABELS = {
 
 # For each kind: what the suggestion is, and what Accept changes. Shown above each list and on each card.
 KIND_HELP = {
-    "versions": ("Scripts that look like copies of one script (train.py, train_v2.py, train_old.py).",
-                 "groups them as versions of one script and marks the newest-looking one as the current one, so "
+    "versions": ("Scripts, Power BI reports or workbooks that look like copies of one thing (train.py, train_v2.py, "
+                 "train_old.py; Sales.pbix next to Sales - Copy.pbix, or the same report under another name).",
+                 "groups them as versions of one item and marks the newest-looking one as the current one, so "
                  "searches and diagrams show that one first. No file is changed."),
     "family": ("Data files that hold the same data at different levels (daily, weekly, by store, by region).",
                "groups them as one family, so each file's page lists the others."),

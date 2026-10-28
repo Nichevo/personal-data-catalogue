@@ -30,6 +30,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     from .scan_files import scan_folder
     from .scan_python import scan_project
     from .scan_sqlserver import scan_server
+    from .scanprogress import printer
 
     cfg = load_config(find_config(args.config))
     wanted = set(args.source or [])
@@ -52,9 +53,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
                          for r in cat.libraries() if r["name"] not in cfg.source_names()]
         # SQL Server first, so table names in code can be matched straight away.
         jobs = [(s.name, lambda s=s: scan_server(cat, s, args.database)) for s in cfg.sqlserver]
-        jobs += [(f.name, lambda f=f: scan_folder(cat, f.name, f.path, f.recursive, f.max_rows)) for f in cfg.folders]
-        jobs += [(r["name"], lambda r=r: scan_folder(cat, r["name"], r["path"], bool(r["recursive"]))) for r in app_folders]
-        jobs += [(p.name, lambda p=p: scan_project(cat, p)) for p in [*app_libraries, *cfg.python]]  # last, so file links can match
+        report = printer()
+        jobs += [(f.name, lambda f=f: scan_folder(cat, f.name, f.path, f.recursive, f.max_rows, report))
+                 for f in cfg.folders]
+        jobs += [(r["name"], lambda r=r: scan_folder(cat, r["name"], r["path"], bool(r["recursive"]), report=report))
+                 for r in app_folders]
+        jobs += [(p.name, lambda p=p: scan_project(cat, p, report)) for p in [*app_libraries, *cfg.python]]  # last, so file links can match
         for name, run in jobs:
             if wanted and name not in wanted:
                 continue
@@ -69,7 +73,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
         from .postscan import after_scan
 
-        done = after_scan(cat, progress=print)
+        print("Working out suggestions and the review list ...", flush=True)
+        done = after_scan(cat, progress=print, report=printer())
         review = {k.removeprefix("review "): v for k, v in done.items() if k.startswith("review ")}
         print(f"Review list: {review['open']} open ({review['new']} new, {review['closed']} closed automatically). "
               "See 'To review' in the app or run `pdcat review`.")

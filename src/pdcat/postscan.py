@@ -2,6 +2,7 @@
 relationship suggestions, company-wide key suggestions, dated file series, duplicates and the review list."""
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 
 from . import (
@@ -28,19 +29,42 @@ from . import (
 from .duplicates import find_duplicates
 from .keys import suggest_keys
 from .mlfeatures import suggest_features
-from .store import Catalogue
+from .scanprogress import Report, quiet
+from .store import Catalogue, now
+
+SLOW_STEP = 10  # seconds; slower steps are mentioned, to find what holds a scan up
+KEEP_RUNS = 50  # after-scan runs kept for the scan log
 
 
-def after_scan(cat: Catalogue, progress=lambda *_: None) -> dict[str, int]:
+def after_scan(cat: Catalogue, progress=lambda *_: None, report: Report = quiet) -> dict[str, int]:
+    """`progress(text)` hears about failed steps; `report(text, done, total)` hears each step as it starts,
+    and any step that took a long time."""
     from .relationships import find_suggestions
     from .review import refresh_tasks
-    out = {"relationships": find_suggestions(cat)}
-    for name, step in _extra_steps():
+    steps = [("relationship suggestions", find_suggestions), *_extra_steps(), ("review list", refresh_tasks)]
+    out: dict[str, int] = {}
+    begun = time.monotonic()
+    timings: list[tuple[str, float]] = []
+    failed: list[str] = []
+    for i, (name, step) in enumerate(steps):
+        report(f"After the scan: {name} ({i + 1} of {len(steps)})", i, len(steps))
+        started = time.monotonic()
         try:
             out[name] = step(cat)
         except Exception as e:  # one failing step must not hide the scan's results
             progress(f"  {name} failed: {type(e).__name__}: {e}")
-    out.update({f"review {k}": v for k, v in refresh_tasks(cat).items()})
+            failed.append(name)
+        took = time.monotonic() - started
+        timings.append((name, round(took, 1)))
+        if took >= SLOW_STEP:
+            report(f"  {name} took {took:.0f}s", i + 1, len(steps))
+    runs = cat.setting("after_scan_runs", [])
+    runs.append({"at": now(), "seconds": round(time.monotonic() - begun, 1), "failed": failed,
+                 "slowest": sorted(timings, key=lambda t: -t[1])[:5]})
+    cat.set_setting("after_scan_runs", runs[-KEEP_RUNS:], quiet=True)
+    review = out.pop("review list", None) or {"open": 0, "new": 0, "closed": 0}
+    out["relationships"] = out.pop("relationship suggestions", 0)
+    out.update({f"review {k}": v for k, v in review.items()})
     cat.set_setting("tasks_revision", cat.revision(), quiet=True)
     return out
 

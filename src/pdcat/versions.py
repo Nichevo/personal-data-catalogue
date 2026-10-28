@@ -1,6 +1,7 @@
 """Script versions: scripts in the same folder whose names differ only by a version or a date at the
 end (forecast_v2.py, forecast_v3.py, forecast_20261001.py, forecast_old.py, "forecast - Copy.py")
-are suggested as versions of one script.
+are suggested as versions of one script. Power BI reports and Excel workbooks get the same treatment,
+plus a match on their content when the names don't say (reportversions.py).
 
 The current one is the one other code imports or runs, or the one a schedule runs, or else the
 newest. When that isn't clear the suggestion leaves it for you to tick. Once accepted, only the
@@ -81,6 +82,8 @@ def find_versions(cat: Catalogue) -> int:
             "detail": detail, "score": len(members) + (2 if main else 0),
             "payload": {"type": "versions", "name": name, "main_key": main,
                         "members": {m["key"]: m["label"] for m in members}}})
+    from .reportversions import find_report_versions
+    found += find_report_versions(cat, in_group, excluded)
     return suggestions.sync(cat, "versions", found)
 
 

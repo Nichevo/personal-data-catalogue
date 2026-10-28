@@ -15,7 +15,7 @@ import re
 import zipfile
 from xml.etree import ElementTree as ET
 
-from .scan_excel import NS, _rels, _shared_strings
+from .scan_excel import NS, SharedStrings, _rels
 from .store import Catalogue
 
 ROW_TYPES = {
@@ -78,7 +78,7 @@ def read_sheet(data: bytes, sheet: str, file_name: str = "") -> list[list[str]]:
                 part = wb_rels.get(s.get(f"{{{NS['r']}}}id"))
         if not part or part not in z.namelist():
             raise KeyError(sheet)
-        strings = _shared_strings(z)
+        strings = SharedStrings(z)
         rows: list[list[str]] = []
         with z.open(part) as f:
             for _, el in ET.iterparse(f, events=("end",)):
@@ -92,8 +92,7 @@ def read_sheet(data: bytes, sheet: str, file_name: str = "") -> list[list[str]]:
                     v = c.find("m:v", NS)
                     t = c.get("t")
                     if t == "s" and v is not None and (v.text or "").isdigit():
-                        idx = int(v.text)
-                        row.append(strings[idx] if idx < len(strings) else "")
+                        row.append(strings.get(int(v.text)))
                     elif t == "inlineStr":
                         row.append("".join(x.text or "" for x in c.iter(f"{{{NS['m']}}}t")))
                     elif t == "b" and v is not None:

@@ -153,6 +153,60 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.12
+
+Folder scans no longer look stuck, and big folders scan faster.
+
+- **A progress box while scanning.** Adding or re-scanning a data folder (and scanning code)
+  shows which file is being read, how many are left, how long it has taken, and any file
+  that took longer than 20 seconds. The suggestions and review list worked out after a scan
+  show step by step too; before, they ran with nothing on screen. A **Stop** button ends a
+  scan, leaving the folder as it was before. When the scan finishes, the Data folders page
+  says what was found and how long it took.
+- **The terminal says what's happening.** The window the app was started from (and
+  `pdcat scan`, including the weekly scheduled scan) prints an update every 30 seconds and
+  names anything slow, so you can tell a long scan from a stuck one.
+- **One pass over the folder.** The folder is walked once instead of four times, and the
+  walk steps around folders that never hold your data: `.git`, `__pycache__`,
+  `node_modules`, Python and conda environments, the recycle bin, and folders marked
+  *ignore* in Folder roles. This matters most on network drives.
+- **No more waiting on one big Power BI file.** With pbixray installed, a `.pbix` model is
+  read in a separate process and given three minutes. If it takes longer it is stopped,
+  the report page says so, and the scan carries on.
+- **Big Excel workbooks read faster.** Only the start of a workbook's shared text is read to
+  get the header rows, instead of all of it.
+- **Adding a folder is quicker.** The app no longer re-examines the folder on every click
+  while you fill in the form.
+- **Far fewer "database is locked" errors.** A folder scan now reads all its files first and
+  only then saves them, so the catalogue is locked for seconds rather than for the whole
+  scan. Opening the catalogue no longer needs the lock at all, and anything that does have
+  to wait for it waits up to a minute instead of failing after five seconds. This helps
+  when the app and the weekly scan run at the same time, or when you have two windows open.
+- **No more SyntaxWarnings from your scripts.** Older scripts often have things like `"\d"`
+  in ordinary strings. Python printed a warning about each one while the catalogue read
+  the code. They were about your scripts, not the catalogue, and are no longer printed.
+- **Old versions of Power BI reports and workbooks.** Copies of one report (Sales.pbix,
+  Sales_v2.pbix, "Sales - Copy.pbix", archive/Sales.pbix) are suggested as versions of one
+  report, the same way script versions are. When the names don't say, two reports that share
+  most of their pages, measures, tables and sources are matched by content instead. The
+  newest file that isn't in an archive folder or named as old is suggested as the current
+  one; only that one shows in search and diagrams once you accept. The suggestion says what
+  it was matched by. Workbooks are matched by sheets and queries.
+- **How a report changed over time.** A report's page gets an **Over time** section: its
+  versions oldest first, each compared with the one before (pages, visuals, measures and
+  their DAX, tables, sources added, removed or changed), and the changes each rescan saw in
+  the file itself. Measure and page changes also go into the item's history, so they show
+  under What's new › Recent changes. The group page compares any two versions.
+- **A warning before a long scan.** The Add a folder form adds up the files first and warns
+  when a folder holds thousands of files, gigabytes to read, or any file over 200 MB, and
+  says what the scan does about it (one file at a time, changed files only on a rescan,
+  large CSVs sampled, a large Power BI model given three minutes). The progress box shows
+  a rough time left once a few files are in.
+- **Scan log** (Add › Sources › Scan log): every scan with how long it took, how long was
+  spent reading files, how much was read, the slow files and any errors; and the after-scan
+  steps that took longest. A scan that took much longer than the one before is flagged at
+  the top, so you can see the weekly scan getting slower before it becomes a problem.
+
 ## New in version 2.11
 
 A tidy-up release after a code review. Nothing new to learn; the app looks and works the

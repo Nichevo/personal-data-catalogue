@@ -194,8 +194,9 @@ def parse_setup_cfg(text: str, file: str) -> list[dict]:
 
 
 def parse_setup_py(text: str, file: str) -> list[dict]:
+    from .scan_python import parse_code
     try:
-        tree = ast.parse(text)
+        tree = parse_code(text)
     except SyntaxError:
         return []
     for node in ast.walk(tree):

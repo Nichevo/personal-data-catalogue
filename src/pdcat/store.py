@@ -583,6 +583,7 @@ CREATE TABLE IF NOT EXISTS document_versions (
 """
 
 SCHEMA_VERSION = 3  # 3 = version 2.1
+LOCK_WAIT = 60  # seconds
 
 # Columns added to v1 tables. Added in place by the upgrade; nothing is dropped.
 ADDED_COLUMNS = {
@@ -620,9 +621,12 @@ class Catalogue:
         existed = not memory and self.path.exists() and self.path.stat().st_size > 0
         if not memory:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(path))
+        # Wait up to a minute for another writer (a scan in the app, the weekly scan) instead of failing
+        # with "database is locked" after the default five seconds.
+        self.conn = sqlite3.connect(str(path), timeout=LOCK_WAIT)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
+        if self.conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+            self.conn.execute("PRAGMA journal_mode=WAL")
         self.upgrade_backup: Path | None = None
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         has_data = self.conn.execute(
@@ -676,10 +680,15 @@ class Catalogue:
             if "status" not in note_cols:
                 self.conn.execute("ALTER TABLE notes ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
             # Every note gets an id that is the same on every machine, so notes can be shared and merged.
-            self.conn.execute("UPDATE notes SET uid = lower(hex(randomblob(16))) WHERE uid IS NULL")
-            self.conn.execute("UPDATE notes SET author = ? WHERE author IS NULL", (self.author(),))
+            # Each write is only made when needed: opening the catalogue must not take the write lock, or the
+            # app couldn't even open while a scan is writing.
+            if self.conn.execute("SELECT 1 FROM notes WHERE uid IS NULL LIMIT 1").fetchone():
+                self.conn.execute("UPDATE notes SET uid = lower(hex(randomblob(16))) WHERE uid IS NULL")
+            if self.conn.execute("SELECT 1 FROM notes WHERE author IS NULL LIMIT 1").fetchone():
+                self.conn.execute("UPDATE notes SET author = ? WHERE author IS NULL", (self.author(),))
             self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_notes_uid ON notes(uid)")
-            self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            if self.conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+                self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     # ---- settings -------------------------------------------------------
 
@@ -773,6 +782,25 @@ class Catalogue:
         from .links import apply_manual_links
         apply_manual_links(self)
         self.rebuild_search()
+
+    def annotate_scan(self, source: str, extra: dict[str, Any]) -> None:
+        """Add timing and size details to the latest scan of a source (for the scan log)."""
+        row = self.conn.execute("SELECT id, summary FROM scans WHERE source = ? ORDER BY id DESC LIMIT 1",
+                                (source,)).fetchone()
+        if row is None:
+            return
+        summary = {**(json.loads(row["summary"]) if row["summary"] else {}), **extra}
+        with self.conn:
+            self.conn.execute("UPDATE scans SET summary = ? WHERE id = ?", (json.dumps(summary, default=str), row["id"]))
+
+    def scan_log(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Every scan, newest first, with its summary (counts by kind plus the details annotate_scan added)."""
+        out = []
+        for r in self.conn.execute("SELECT id, source, started_at, finished_at, summary FROM scans "
+                                   "ORDER BY id DESC LIMIT ?", (limit,)):
+            out.append({"id": r["id"], "source": r["source"], "started_at": r["started_at"],
+                        "finished_at": r["finished_at"], "summary": json.loads(r["summary"]) if r["summary"] else {}})
+        return out
 
     def upsert_asset(self, key: str, kind: str, name: str, source: str, *, parent: str | None = None,
                      description: str | None = None, attrs: dict[str, Any] | None = None) -> None:

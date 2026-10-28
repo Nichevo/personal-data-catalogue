@@ -44,6 +44,7 @@ def sections() -> dict[str, dict[str, Page]]:
         lists,
         menu_guide,
         ml_pages,
+        scan_log,
         scanning,
         setup_page,
         sources_extra,
@@ -76,7 +77,7 @@ def sections() -> dict[str, dict[str, Page]]:
             "Sources": combined("Sources", "Where the catalogue reads from: SQL you paste, folders of data and code, "
                                            "and SQL Server databases.", {
                 "Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
-                "SQL scanning": scanning.scanning_page}),
+                "SQL scanning": scanning.scanning_page, "Scan log": scan_log.scan_log_page}),
             "Schedules": sources_extra.schedules_page, "Conda environments": sources_extra.envs_page,
             "Import from Excel": sources_extra.excel_import_page},
         "📤 Share": {"Share with colleagues": share.sharing_page, "Copilot pack": share.copilot_page,
@@ -95,6 +96,7 @@ ALIASES = {
     "Recent changes": ("What's new", "Recent changes"), "Describe columns": ("Bulk edit", "Describe columns"),
     "Edit many items": ("Bulk edit", "Edit many items"), "Add SQL": ("Sources", "Add SQL"),
     "Data folders": ("Sources", "Data folders"), "SQL scanning": ("Sources", "SQL scanning"),
+    "Scan log": ("Sources", "Scan log"),
     "Feature dictionary": ("ML model features", None),
 }
 
