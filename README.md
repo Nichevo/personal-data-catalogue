@@ -268,7 +268,11 @@ one at a time, and every query is logged:
 - **Search results as a table**: a sortable table with kind, name, where it lives,
   description, what it matched on, rows, last changed or scanned, notes, status and
   trust, and how many scripts use it. Filter by kind or source in the table, click a row
-  to open it, and switch back to the card view if you prefer.
+  to open it, and switch back to the card view if you prefer. File families show as
+  one row ("SOH: daily, weekly, monthly") that opens to its members. Quick filter
+  buttons above the results (Tables, Files, Code, Reports and measures, Metrics,
+  Knowledge) replace hunting through the Kind list, and a metric found in search shows
+  the Power BI measures and SQL that calculate it, and the reverse.
 - **Recently viewed** items in the sidebar.
 - **Edit history** on notes and descriptions: who changed what and when, with undo.
 - **Schedule scans from the app**: a Settings button that creates (or removes) the
