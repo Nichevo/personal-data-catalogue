@@ -1,6 +1,5 @@
 """Business projects, coverage, the feature dictionary, and the knowledge pages."""
 import textwrap
-from pathlib import Path
 
 import pytest
 

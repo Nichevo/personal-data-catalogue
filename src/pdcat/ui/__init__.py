@@ -1,7 +1,7 @@
 """The Streamlit app, one module per group of pages. `pdcat ui` starts it through app.py."""
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 
 def pages_for_key(key: str) -> Callable | None:

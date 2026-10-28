@@ -1,14 +1,17 @@
 """Page layout: a section picker and a page list in the sidebar, an item page when one is open."""
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import streamlit as st
 
-from pdcat.store import Catalogue
+from pdcat import __version__
+from pdcat.store import Catalogue, now
 
 from . import code, review_pages, search, settings_page, share, sources
-from .common import go, icon, kind_label, open_catalogue, timed
+from .arrowsafe import install as install_arrow_fallback
+from .arrowsafe import sidebar_note
+from .common import go, go_page, icon, kind_label, open_catalogue, timed
 from .detail import detail
 
 Page = Callable[[Catalogue], None]
@@ -30,8 +33,22 @@ def combined(title: str, caption: str, views: dict[str, Page]) -> Page:
 
 
 def sections() -> dict[str, dict[str, Page]]:
-    from . import (bproject_pages, curation_pages, erd_page, groups_page, home_page, keys_pages, knowledge_pages,
-                   lists, menu_guide, ml_pages, scanning, setup_page, sources_extra, sql_pages)
+    from . import (
+        bproject_pages,
+        curation_pages,
+        erd_page,
+        groups_page,
+        home_page,
+        keys_pages,
+        knowledge_pages,
+        lists,
+        menu_guide,
+        ml_pages,
+        scanning,
+        setup_page,
+        sources_extra,
+        sql_pages,
+    )
     return {
         "🏠 Home": {"Home": home_page.home_page, "Menu guide": menu_guide.menu_guide_page},
         "🔎 Find": {"Search": search.search_page, "SQL queries": sql_pages.queries_page},
@@ -100,7 +117,6 @@ def pick_from_item(section: str) -> None:
 def search_from_sidebar() -> None:
     """The sidebar search box opens the Search page with those words. The box empties after each search, so the
     same words can be searched again from any page."""
-    from .common import go_page
     text = st.session_state.get("sidebar-search", "")
     st.session_state["sidebar-search"] = ""
     if text.strip():
@@ -141,9 +157,7 @@ def sidebar(cat: Catalogue) -> tuple[str, Page]:
             page = st.radio("Page", list(pages), key=f"nav-{section}", label_visibility="collapsed",
                             on_change=leave_item)
         recently_viewed(cat)
-        from .arrowsafe import sidebar_note
         sidebar_note()
-        from .common import go_page
         st.button("📖 Menu guide", key="menu-guide-link", on_click=go_page, args=("Menu guide",), type="tertiary",
                   help="What every page in the menu is for")
         st.divider()
@@ -165,7 +179,6 @@ def session_start(cat: Catalogue) -> None:
     if st.session_state.get("_session_started"):
         return
     st.session_state["_session_started"] = True
-    from pdcat.store import now
     st.session_state["_last_visit"] = cat.setting("last_visit")
     cat.set_setting("last_visit", now(), quiet=True)
     from pdcat.backup import maybe_backup
@@ -179,15 +192,14 @@ def session_start(cat: Catalogue) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Data catalogue", page_icon="🗃️", layout="wide")
-    from .arrowsafe import install
-    install()  # tables fall back to plain HTML when pyarrow's DLLs won't load
+    install_arrow_fallback()  # tables fall back to plain HTML when pyarrow's DLLs won't load
     st.session_state["_timings"] = []
     cat = open_catalogue()
     try:
         session_start(cat)
         if st.session_state.get("_upgraded"):
-            st.success("Upgraded your catalogue to version 2.1. Every note was kept, and an untouched copy of the "
-                       f"old file is at `{st.session_state['_upgraded']}`.", icon="✅")
+            st.success(f"Upgraded your catalogue to version {__version__}. Every note was kept, and an untouched "
+                       f"copy of the old file is at `{st.session_state['_upgraded']}`.", icon="✅")
             st.button("OK", on_click=lambda: st.session_state.pop("_upgraded", None))
         if st.session_state.get("_backup_error"):
             st.warning(f"Couldn't make the scheduled backup: {st.session_state.pop('_backup_error')}")

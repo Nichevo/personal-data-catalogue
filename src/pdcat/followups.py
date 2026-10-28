@@ -56,6 +56,7 @@ _NAME = """COALESCE(a.name,
     (SELECT name FROM bprojects WHERE 'bp://' || uid = f.item),
     (SELECT name FROM item_groups WHERE 'group://' || uid = f.item),
     (SELECT name FROM sql_queries WHERE 'query://' || uid = f.item),
+    (SELECT title FROM documents WHERE 'doc://' || uid = f.item),
     f.item)"""
 
 
@@ -64,7 +65,7 @@ def kind_of(key: str, kind: str | None) -> str:
         return kind
     for prefix, k in (("kb://", "knowledge"), ("q://", "question"), ("metric://", "metric"), ("feature://", "feature"),
                       ("bp://", "bproject"), ("key://", "key"), ("pkg://", "package"), ("group://", "group"),
-                      ("query://", "query"), ("env://", "environment")):
+                      ("query://", "query"), ("env://", "environment"), ("doc://", "document")):
         if key.startswith(prefix):
             return k
     return "note"

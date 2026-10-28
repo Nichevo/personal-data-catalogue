@@ -36,7 +36,7 @@ def arrow_error() -> str | None:
         return "turned off with PDCAT_NO_ARROW"
     try:
         import pyarrow
-        import pyarrow.lib  # noqa: F401
+        import pyarrow.lib
     except (ImportError, OSError, AttributeError) as e:
         return f"{type(e).__name__}: {e}"
     # A half-removed install leaves an empty pyarrow folder that still imports, but holds nothing.

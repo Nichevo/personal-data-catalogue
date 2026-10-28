@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .envinfo import TOOLING, _STDLIB, normalise, package_for, project_environment
+from .envinfo import _STDLIB, TOOLING, normalise, package_for, project_environment
 from .store import Catalogue, now
 
 

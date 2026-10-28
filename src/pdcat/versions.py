@@ -12,7 +12,6 @@ import json
 import re
 from collections import defaultdict
 from datetime import datetime
-from typing import Any
 
 from . import groups, suggestions
 from .store import Catalogue
@@ -119,8 +118,3 @@ def _pick_main(members: list[dict], used: set[str], scheduled: set[str]) -> tupl
     return None, ""
 
 
-def versions_of(cat: Catalogue, key: str) -> dict[str, Any] | None:
-    for g in groups.for_item(cat, key):
-        if g and g["type"] == "versions":
-            return g
-    return None

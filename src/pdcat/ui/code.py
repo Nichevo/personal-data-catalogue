@@ -358,9 +358,10 @@ def packages_page(cat: Catalogue) -> None:
 
 
 def package_page(cat: Catalogue, key: str) -> None:
-    from pdcat.libclass import package_detail
-    from .detail import about_form, notes_section
     from pdcat import curation
+    from pdcat.libclass import package_detail
+
+    from .detail import about_form, notes_section
     d = package_detail(cat, key)
     st.title(f"📦 {d['package']}")
     st.caption(" · ".join(b for b in ("third-party package", d["purpose"], f"imported by {len(d['files'])} file(s)") if b)

@@ -22,6 +22,7 @@ def profile_request_button(cat: Catalogue, key: str) -> None:
 
 def _sources(cat: Catalogue):
     from pdcat.config import find_config, load_config
+
     from .common import config_path
     try:
         return load_config(find_config(config_path())).sqlserver

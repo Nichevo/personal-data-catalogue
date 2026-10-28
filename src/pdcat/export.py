@@ -21,6 +21,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from .series import series_files
 from .store import Catalogue
 
 TABLES = {
@@ -48,6 +49,7 @@ TABLES = {
     "relationships": "SELECT * FROM relationships WHERE state != 'rejected' ORDER BY src_key, dst_key",
     "change_history": "SELECT asset_key, at, change, detail FROM schema_history ORDER BY at, id",
 }
+BOM = "\ufeff"  # Excel reads a UTF-8 CSV correctly only when it starts with this
 JSON_COLUMNS = {"top_values", "histogram", "percentiles", "hints", "pinned", "excluded", "tables", "sources",
                 "models", "importance", "aliases"}
 
@@ -83,11 +85,7 @@ def export_data(cat: Catalogue) -> dict[str, list[dict[str, Any]]]:
         data[name] = rows
     data["functions"] = _functions(data["assets"])
     data["packages"] = _packages(cat)
-    try:
-        from .series import series_files
-        data["series_files"] = series_files(cat)
-    except ImportError:
-        pass
+    data["series_files"] = series_files(cat)
     return data
 
 
@@ -135,19 +133,19 @@ def to_csv_zip(cat: Catalogue, *, screenshots: bool = False) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, rows in export_data(cat).items():
-            z.writestr(f"{name}.csv", "\ufeff" + _csv_text(rows))
+            z.writestr(f"{name}.csv", BOM + _csv_text(rows))
         if screenshots:
             from . import screenshots as S
             rows = S.index_rows(cat)
             if rows:
-                z.writestr("screenshots.csv", "\ufeff" + _csv_text(rows))
+                z.writestr("screenshots.csv", BOM + _csv_text(rows))
                 for r in rows:
                     z.write(S.folder(cat) / r["file"], f"screenshots/{r['file']}")
     return buf.getvalue()
 
 
 def rows_to_csv(rows: list[dict[str, Any]]) -> bytes:
-    return ("﻿" + _csv_text(rows)).encode("utf-8")
+    return (BOM + _csv_text(rows)).encode("utf-8")
 
 
 def write_export(cat: Catalogue, out: Path, fmt: str) -> list[Path]:
@@ -159,6 +157,6 @@ def write_export(cat: Catalogue, out: Path, fmt: str) -> list[Path]:
     paths = []
     for name, rows in export_data(cat).items():
         path = out / f"{name}.csv"
-        path.write_text("﻿" + _csv_text(rows), encoding="utf-8", newline="")
+        path.write_text(BOM + _csv_text(rows), encoding="utf-8", newline="")
         paths.append(path)
     return paths

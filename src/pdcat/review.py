@@ -13,13 +13,16 @@ from __future__ import annotations
 import json
 import math
 import re
+import warnings
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
 
+from . import freshness, naming, rulechecks, sqlchecks, unknownfiles
 from .store import Catalogue, now
 
 # rule: (label, category, base priority)
@@ -147,10 +150,6 @@ def ensure_fresh(cat: Catalogue) -> None:
     if cat.setting("tasks_revision") != rev:
         refresh_tasks(cat)
         cat.set_setting("tasks_revision", rev, quiet=True)
-
-
-def task_counts(cat: Catalogue) -> dict[str, int]:
-    return dict(Counter(t["category"] for t in open_tasks(cat, limit=100_000)))
 
 
 # ---- hotspots ----------------------------------------------------------------
@@ -301,40 +300,35 @@ def _candidates(cat: Catalogue) -> list[Task]:
             if stale:
                 tasks.append(task("stale", key, f"{name} may be out of date", stale))
 
-    tasks += _v2_candidates(cat, assets, profiles, used_by, task)
+    tasks += _profile_candidates(cat, assets, profiles, used_by, task)
 
     for r in cat.unresolved_refs():
         ref = r["dst_ref"]
         tasks.append(Task(f"unmatched:{ref}", "unmatched", ref, f"Table {ref[6:]} (used in code) not found",
                           f"Used by {r['used_by']} file(s), e.g. {r['example']}. A server you haven't added, "
                           "a typo, or a false match?", RULES["unmatched"][2] + 5 * min(r["used_by"], 5)))
-    tasks += _v21_candidates(cat, task)
+    tasks += _feature_candidates(cat, task)
     from .curation import hidden_keys
     hidden = hidden_keys(cat)  # marked not relevant
     return [t for t in tasks if t.asset_key not in hidden]
 
 
-# Version 2.1 checks live next to the features they belong to: (module, function(cat, task) -> [Task]).
-V21_STEPS = [("unknownfiles", "review_tasks"), ("freshness", "review_tasks"), ("naming", "review_tasks"),
-             ("sqlchecks", "review_tasks"), ("rulechecks", "review_tasks")]
+# Checks that live next to the feature they belong to: each is function(cat, task) -> [Task].
+FEATURE_CHECKS: list[Callable[..., list[Task]]] = [unknownfiles.review_tasks, freshness.review_tasks,
+                                                   naming.review_tasks, sqlchecks.review_tasks, rulechecks.review_tasks]
 
 
-def _v21_candidates(cat: Catalogue, task) -> list[Task]:
-    import importlib
+def _feature_candidates(cat: Catalogue, task) -> list[Task]:
     out: list[Task] = []
-    for mod, fn in V21_STEPS:
-        try:
-            step = getattr(importlib.import_module(f"pdcat.{mod}"), fn)
-        except (ImportError, AttributeError):
-            continue
+    for step in FEATURE_CHECKS:
         try:
             out += step(cat, task)
-        except Exception:  # one broken check must not empty the review list
-            continue
+        except Exception as e:  # one broken check must not empty the review list, but it should not be silent
+            warnings.warn(f"review check {step.__module__} failed: {type(e).__name__}: {e}", stacklevel=2)
     return out
 
 
-def _v2_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: Counter, task) -> list[Task]:
+def _profile_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: Counter, task) -> list[Task]:
     from .curation import sensitive_suggestions
     from .history import freshness
     from .staleness import all_stale

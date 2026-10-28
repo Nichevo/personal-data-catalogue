@@ -1,12 +1,10 @@
 """Version 2: search details, library sorting, sensitive columns, review bulk actions, history, type checks."""
 import json
-from datetime import datetime
 
 import pandas as pd
 import pytest
 
 from pdcat import curation
-from pdcat.store import Catalogue
 
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 STORE = "sql://warehouse/forecastdb/dbo.store"
@@ -117,6 +115,7 @@ def test_review_counts_and_bulk_actions(catalogue):
 
 def test_rescan_records_column_and_row_changes(catalogue):
     from conftest import FAKE_DB, SRC
+
     from pdcat.history import history
     from pdcat.scan_sqlserver import ingest
 
@@ -138,6 +137,7 @@ def test_rescan_records_column_and_row_changes(catalogue):
 
 def test_note_flagged_when_its_column_changes(catalogue):
     from conftest import FAKE_DB, SRC
+
     from pdcat.scan_sqlserver import ingest
     from pdcat.staleness import stale_reasons
 
@@ -154,6 +154,7 @@ def test_note_flagged_when_its_column_changes(catalogue):
 
 def test_scanning_one_database_leaves_the_others_alone(catalogue):
     from conftest import FAKE_DB, SRC
+
     from pdcat.scan_sqlserver import ingest
     with catalogue.scan(SRC.name, prefix="sql://warehouse/otherdb"):
         ingest(catalogue, SRC, "OtherDB", FAKE_DB)

@@ -6,17 +6,18 @@ disappears for a while.
 """
 from __future__ import annotations
 
-import json
-import re
 import fnmatch
 import getpass
+import json
+import re
 import sqlite3
 import uuid
 from collections import defaultdict
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS assets (
@@ -645,6 +646,12 @@ class Catalogue:
     def close(self) -> None:
         self.conn.close()
 
+    def __enter__(self) -> Catalogue:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
     def _safety_copy(self, version: int) -> Path:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         target = self.path.with_name(f"{self.path.stem}.before-v{SCHEMA_VERSION}-{stamp}{self.path.suffix or '.db'}")
@@ -727,7 +734,7 @@ class Catalogue:
     # ---- scanning -------------------------------------------------------
 
     @contextmanager
-    def scan(self, source: str, prefix: str | None = None) -> Iterator["Catalogue"]:
+    def scan(self, source: str, prefix: str | None = None) -> Iterator[Catalogue]:
         """Wrap one source's scan in a transaction.
 
         Everything the source found last time is marked 'missing' up front and
@@ -1480,6 +1487,7 @@ _KNOWLEDGE_NAME = """CASE s.kind
     WHEN 'feature' THEN (SELECT name FROM features WHERE 'feature://' || uid = s.key)
     WHEN 'key' THEN (SELECT name FROM keys WHERE 'key://' || name = s.key)
     WHEN 'bproject' THEN (SELECT name FROM bprojects WHERE 'bp://' || uid = s.key)
+    WHEN 'document' THEN (SELECT title FROM documents WHERE 'doc://' || uid = s.key)
     END"""
 
 

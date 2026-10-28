@@ -22,6 +22,10 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _open(args: argparse.Namespace) -> Catalogue:
+    return Catalogue(load_config(find_config(args.config)).db_path)
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     from .scan_files import scan_folder
     from .scan_python import scan_project
@@ -29,62 +33,58 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     cfg = load_config(find_config(args.config))
     wanted = set(args.source or [])
-    _cat = Catalogue(cfg.db_path)
-    unknown = wanted - set(cfg.source_names()) - {r["name"] for r in _cat.folders()} - {r["name"] for r in _cat.libraries()}
-    _cat.close()
-    if unknown:
-        print(f"Unknown source(s): {', '.join(sorted(unknown))}. Known: {', '.join(cfg.source_names())}")
-        return 2
+    with Catalogue(cfg.db_path) as cat:
+        unknown = wanted - set(cfg.source_names()) - {r["name"] for r in cat.folders()} - {r["name"] for r in cat.libraries()}
+        if unknown:
+            print(f"Unknown source(s): {', '.join(sorted(unknown))}. Known: {', '.join(cfg.source_names())}")
+            return 2
 
-    cat = Catalogue(cfg.db_path)
-    if args.plan:
-        from .scan_sqlserver import plan_scan
-        plan = [p for s in cfg.sqlserver if not wanted or s.name in wanted for p in plan_scan(cat, s, args.database)]
-        for p in plan:
-            print(f"-- {p['source']} / {p['database']}: {p['purpose']}\n{p['query']};\n")
-        print(f"{len(plan)} queries, sent one at a time with a pause between. Nothing was sent.")
-        cat.close()
-        return 0
-    failures = 0
-    app_folders = [r for r in cat.folders() if r["name"] not in cfg.source_names()]
-    app_libraries = [PythonSource(name=r["name"], path=Path(r["path"]), role=r["role"] or "library", data_files=False)
-                     for r in cat.libraries() if r["name"] not in cfg.source_names()]
-    # SQL Server first, so table names in code can be matched straight away.
-    jobs = [(s.name, lambda s=s: scan_server(cat, s, args.database)) for s in cfg.sqlserver]
-    jobs += [(f.name, lambda f=f: scan_folder(cat, f.name, f.path, f.recursive, f.max_rows)) for f in cfg.folders]
-    jobs += [(r["name"], lambda r=r: scan_folder(cat, r["name"], r["path"], bool(r["recursive"]))) for r in app_folders]
-    jobs += [(p.name, lambda p=p: scan_project(cat, p)) for p in [*app_libraries, *cfg.python]]  # last, so file links can match
-    for name, run in jobs:
-        if wanted and name not in wanted:
-            continue
-        print(f"Scanning {name} ...", flush=True)
-        try:
-            counts = run()
-        except Exception as e:  # keep going so one unreachable server doesn't block the rest
-            failures += 1
-            print(f"  failed: {type(e).__name__}: {e}")
-            continue
-        print("  " + ", ".join(f"{v} {k}" for k, v in counts.items()))
+        if args.plan:
+            from .scan_sqlserver import plan_scan
+            plan = [p for s in cfg.sqlserver if not wanted or s.name in wanted for p in plan_scan(cat, s, args.database)]
+            for p in plan:
+                print(f"-- {p['source']} / {p['database']}: {p['purpose']}\n{p['query']};\n")
+            print(f"{len(plan)} queries, sent one at a time with a pause between. Nothing was sent.")
+            return 0
+        failures = 0
+        app_folders = [r for r in cat.folders() if r["name"] not in cfg.source_names()]
+        app_libraries = [PythonSource(name=r["name"], path=Path(r["path"]), role=r["role"] or "library", data_files=False)
+                         for r in cat.libraries() if r["name"] not in cfg.source_names()]
+        # SQL Server first, so table names in code can be matched straight away.
+        jobs = [(s.name, lambda s=s: scan_server(cat, s, args.database)) for s in cfg.sqlserver]
+        jobs += [(f.name, lambda f=f: scan_folder(cat, f.name, f.path, f.recursive, f.max_rows)) for f in cfg.folders]
+        jobs += [(r["name"], lambda r=r: scan_folder(cat, r["name"], r["path"], bool(r["recursive"]))) for r in app_folders]
+        jobs += [(p.name, lambda p=p: scan_project(cat, p)) for p in [*app_libraries, *cfg.python]]  # last, so file links can match
+        for name, run in jobs:
+            if wanted and name not in wanted:
+                continue
+            print(f"Scanning {name} ...", flush=True)
+            try:
+                counts = run()
+            except Exception as e:  # keep going so one unreachable server doesn't block the rest
+                failures += 1
+                print(f"  failed: {type(e).__name__}: {e}")
+                continue
+            print("  " + ", ".join(f"{v} {k}" for k, v in counts.items()))
 
-    from .postscan import after_scan
+        from .postscan import after_scan
 
-    done = after_scan(cat, progress=print)
-    review = {k.removeprefix("review "): v for k, v in done.items() if k.startswith("review ")}
-    print(f"Review list: {review['open']} open ({review['new']} new, {review['closed']} closed automatically). "
-          "See 'To review' in the app or run `pdcat review`.")
-    from .codemap import uncatalogued_libraries
+        done = after_scan(cat, progress=print)
+        review = {k.removeprefix("review "): v for k, v in done.items() if k.startswith("review ")}
+        print(f"Review list: {review['open']} open ({review['new']} new, {review['closed']} closed automatically). "
+              "See 'To review' in the app or run `pdcat review`.")
+        from .codemap import uncatalogued_libraries
 
-    for lib in uncatalogued_libraries(cat):
-        if lib["path"]:
-            print(f"Home-built library '{lib['name']}' (used by {lib['used_by']} file(s)) isn't catalogued. "
-                  f"It looks like it lives in {lib['path']} ({lib['how']}). Add it on the Code map page "
-                  "or as a [[python]] block with role = \"library\".")
-    unresolved = cat.unresolved_refs()
-    if unresolved:
-        print(f"{len(unresolved)} table name(s) in code did not match a scanned table "
-              "(see 'Unmatched tables' in the UI).")
-    print(f"Catalogue: {cfg.db_path}")
-    cat.close()
+        for lib in uncatalogued_libraries(cat):
+            if lib["path"]:
+                print(f"Home-built library '{lib['name']}' (used by {lib['used_by']} file(s)) isn't catalogued. "
+                      f"It looks like it lives in {lib['path']} ({lib['how']}). Add it on the Code map page "
+                      "or as a [[python]] block with role = \"library\".")
+        unresolved = cat.unresolved_refs()
+        if unresolved:
+            print(f"{len(unresolved)} table name(s) in code did not match a scanned table "
+                  "(see 'Unmatched tables' in the UI).")
+        print(f"Catalogue: {cfg.db_path}")
     return 1 if failures else 0
 
 
@@ -95,152 +95,137 @@ def cmd_profile(args: argparse.Namespace) -> int:
     from .scan_sqlserver import run_queue
 
     cfg = load_config(find_config(args.config))
-    cat = Catalogue(cfg.db_path)
-    keys: list[str] = []
-    for name in args.tables:
-        matches = [r["key"] for r in cat.conn.execute(
-            "SELECT key FROM assets WHERE kind IN ('table', 'view') AND (lower(name) = lower(?) OR key = lower(?))",
-            (name, name))]
-        if not matches:
-            print(f"No scanned table called {name}")
-        keys += matches
-    if args.used:
-        keys += used_tables(cat)
-    if args.source:
-        keys = [k for k in keys if any(k.startswith(f"sql://{s.lower()}/") for s in args.source)]
-    keys = list(dict.fromkeys(keys))
-    if args.plan:
-        plan = plan_profile(cat, keys or [q["asset_key"] for q in queue(cat, ("approved",))])
-        for p in plan:
-            print(f"-- {p['table']}: {p['purpose']}\n{p['query']};\n")
-        print(f"{len(plan)} queries, sent one at a time. Nothing was sent.")
-        cat.close()
-        return 0
-    if keys:
-        request_profiles(cat, keys, approve=True)  # naming them here is the approval
-    elif not args.queue:
-        print("Nothing to profile. Name tables (e.g. dbo.SalesDaily), use --used, or --queue for the app's queue.")
-        cat.close()
-        return 2
-    result = run_queue(cat, cfg.sqlserver)
+    with Catalogue(cfg.db_path) as cat:
+        keys: list[str] = []
+        for name in args.tables:
+            matches = [r["key"] for r in cat.conn.execute(
+                "SELECT key FROM assets WHERE kind IN ('table', 'view') AND (lower(name) = lower(?) OR key = lower(?))",
+                (name, name))]
+            if not matches:
+                print(f"No scanned table called {name}")
+            keys += matches
+        if args.used:
+            keys += used_tables(cat)
+        if args.source:
+            keys = [k for k in keys if any(k.startswith(f"sql://{s.lower()}/") for s in args.source)]
+        keys = list(dict.fromkeys(keys))
+        if args.plan:
+            plan = plan_profile(cat, keys or [q["asset_key"] for q in queue(cat, ("approved",))])
+            for p in plan:
+                print(f"-- {p['table']}: {p['purpose']}\n{p['query']};\n")
+            print(f"{len(plan)} queries, sent one at a time. Nothing was sent.")
+            return 0
+        if keys:
+            request_profiles(cat, keys, approve=True)  # naming them here is the approval
+        elif not args.queue:
+            print("Nothing to profile. Name tables (e.g. dbo.SalesDaily), use --used, or --queue for the app's queue.")
+            return 2
+        result = run_queue(cat, cfg.sqlserver)
     print(f"Profiled {result['done']} table(s), {result['failed']} failed, {result['left']} still waiting.")
     if result["stopped"]:
         print(f"Stopped early: {result['stopped']}")
-    cat.close()
     return 1 if result["failed"] else 0
 
 
 def cmd_review(args: argparse.Namespace) -> int:
     from .review import RULES, open_tasks, refresh_tasks
 
-    cfg = load_config(find_config(args.config))
-    cat = Catalogue(cfg.db_path)
-    refresh_tasks(cat)
-    tasks = open_tasks(cat, only_used=args.used, limit=args.limit)
+    with _open(args) as cat:
+        refresh_tasks(cat)
+        tasks = open_tasks(cat, only_used=args.used, limit=args.limit)
     for t in tasks:
         print(f"[{RULES[t['rule']][0]}] {t['title']}" + (f"\n    {t['detail']}" if t["detail"] else ""))
     if not tasks:
         print("Nothing to review.")
-    cat.close()
     return 0
 
 
 def cmd_diagram(args: argparse.Namespace) -> int:
     from .codemap import build_graph, to_dot, to_mermaid
 
-    cfg = load_config(find_config(args.config))
-    cat = Catalogue(cfg.db_path)
-    g = build_graph(cat, args.project, level=args.level, include_data=not args.no_data)
+    with _open(args) as cat:
+        g = build_graph(cat, args.project, level=args.level, include_data=not args.no_data)
     text = to_mermaid(g) if args.format == "mermaid" else to_dot(g)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
         print(f"Wrote {args.out} ({len(g.nodes)} nodes, {len(g.edges)} links)")
     else:
         print(text)
-    cat.close()
     return 0
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    cfg = load_config(find_config(args.config))
-    cat = Catalogue(cfg.db_path)
-    rows = cat.search(args.text, kind=args.kind, limit=args.limit)
+    with _open(args) as cat:
+        rows = cat.search(args.text, kind=args.kind, limit=args.limit)
     for r in rows:
         desc = (r["description"] or "").splitlines()[0][:80] if r["description"] else ""
         notes = f"  [{r['note_count']} note(s)]" if r["note_count"] else ""
         print(f"{r['kind']:<12} {r['name']}{notes}\n             {r['key']}" + (f"\n             {desc}" if desc else ""))
     if not rows:
         print("No matches.")
-    cat.close()
     return 0
 
 
 def cmd_export(args: argparse.Namespace) -> int:
     from .export import write_export
 
-    cfg = load_config(find_config(args.config))
-    cat = Catalogue(cfg.db_path)
-    for path in write_export(cat, Path(args.out), args.format):
-        print(f"Wrote {path}")
-    cat.close()
+    with _open(args) as cat:
+        for path in write_export(cat, Path(args.out), args.format):
+            print(f"Wrote {path}")
     return 0
 
 
 def cmd_share(args: argparse.Namespace) -> int:
     from .sharing import to_share_json
 
-    cat = Catalogue(load_config(find_config(args.config)).db_path)
-    Path(args.out).write_text(to_share_json(cat, args.scan or []), encoding="utf-8")
+    with _open(args) as cat:
+        Path(args.out).write_text(to_share_json(cat, args.scan or []), encoding="utf-8")
     print(f"Wrote {args.out}. Send it to a colleague to merge with `pdcat merge`.")
-    cat.close()
     return 0
 
 
 def cmd_merge(args: argparse.Namespace) -> int:
     from .sharing import merge, preview, read_share, suggest_mapping
 
-    cat = Catalogue(load_config(find_config(args.config)).db_path)
-    pack = read_share(Path(args.file).read_text(encoding="utf-8"))
-    mapping = suggest_mapping(cat, pack)
-    for m in args.map or []:
-        theirs, _, mine = m.partition("=")
-        mapping[theirs.strip()] = mine.strip()
-    p = preview(cat, pack, mapping)
-    print(f"From {pack.get('author') or 'someone'} ({pack.get('made_at', '')[:10]}). Their sources: "
-          + ", ".join(f"{k} -> {v}" for k, v in mapping.items()))
-    for table, c in p["sections"].items():
-        if any(c.values()):
-            print(f"  {table}: {c['new']} new, {c['fills']} fill gaps, {c['different']} different, {c['same']} same")
-    for source, s in p["scans"].items():
-        print(f"  scan of {source} into {s['into']}: {s['new']} of {s['items']} items new")
-    if args.preview:
-        print("Preview only: nothing was changed.")
-        return 0
-    result = merge(cat, pack, mapping, take_theirs=args.take_theirs, file_name=Path(args.file).name)
+    with _open(args) as cat:
+        pack = read_share(Path(args.file).read_text(encoding="utf-8"))
+        mapping = suggest_mapping(cat, pack)
+        for m in args.map or []:
+            theirs, _, mine = m.partition("=")
+            mapping[theirs.strip()] = mine.strip()
+        p = preview(cat, pack, mapping)
+        print(f"From {pack.get('author') or 'someone'} ({pack.get('made_at', '')[:10]}). Their sources: "
+              + ", ".join(f"{k} -> {v}" for k, v in mapping.items()))
+        for table, c in p["sections"].items():
+            if any(c.values()):
+                print(f"  {table}: {c['new']} new, {c['fills']} fill gaps, {c['different']} different, {c['same']} same")
+        for source, s in p["scans"].items():
+            print(f"  scan of {source} into {s['into']}: {s['new']} of {s['items']} items new")
+        if args.preview:
+            print("Preview only: nothing was changed.")
+            return 0
+        result = merge(cat, pack, mapping, take_theirs=args.take_theirs, file_name=Path(args.file).name)
     print(f"Merged as batch {result['batch']}. Undo it on the app's Share page.")
-    cat.close()
     return 0
 
 
 def cmd_ai_export(args: argparse.Namespace) -> int:
     from .aipack import write
 
-    cat = Catalogue(load_config(find_config(args.config)).db_path)
-    files = write(cat, Path(args.out), hide_locations=args.hide_locations, include_values=args.values,
-                  fmt="docx" if args.docx else "md", include_documents=args.documents)
+    with _open(args) as cat:
+        files = write(cat, Path(args.out), hide_locations=args.hide_locations, include_values=args.values,
+                      fmt="docx" if args.docx else "md", include_documents=args.documents)
     print(f"Wrote {len(files)} files to {args.out}. Put the folder on OneDrive or SharePoint and add it to a "
           "Copilot agent as knowledge; agent-instructions has the text to paste.")
-    cat.close()
     return 0
 
 
 def cmd_openmetadata(args: argparse.Namespace) -> int:
     from .openmeta import to_zip
 
-    cat = Catalogue(load_config(find_config(args.config)).db_path)
-    Path(args.out).write_bytes(to_zip(cat))
+    with _open(args) as cat:
+        Path(args.out).write_bytes(to_zip(cat))
     print(f"Wrote {args.out}. Unzip it and run load_openmetadata.py against your OpenMetadata server.")
-    cat.close()
     return 0
 
 

@@ -87,7 +87,7 @@ def _with_sqlglot(sql: str) -> dict[str, Any]:
             return alias_to.get(col.table.lower())
         return single
 
-    def column_in(side) -> "exp.Column | None":
+    def column_in(side) -> exp.Column | None:
         """s.Material, or the one column inside LTRIM(s.Material) or CAST(s.Material AS int)."""
         if isinstance(side, exp.Column):
             return side

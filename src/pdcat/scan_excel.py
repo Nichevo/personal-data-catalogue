@@ -318,11 +318,6 @@ def read_workbook(path: Path) -> dict[str, Any]:
     return out
 
 
-def has_data_sources(info: dict[str, Any]) -> bool:
-    return bool(info["queries"] or info["connections"] or info["vba_sql"]
-                or any(p.get("source") for p in info["pivots"]))
-
-
 def find_workbooks(root: Path, recursive: bool = True, skip: set[str] | None = None) -> list[Path]:
     pattern = root.rglob("*") if recursive else root.glob("*")
     return sorted(p for p in pattern if p.suffix.lower() in WORKBOOK_SUFFIXES and p.is_file()

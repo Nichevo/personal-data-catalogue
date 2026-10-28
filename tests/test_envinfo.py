@@ -1,8 +1,17 @@
 import textwrap
 
 from pdcat import envinfo
-from pdcat.envinfo import (compare, libraries_overview, parse_conda, parse_pipfile, parse_pyproject,
-                           parse_requirements, parse_setup_py, project_environment, read_environment)
+from pdcat.envinfo import (
+    compare,
+    libraries_overview,
+    parse_conda,
+    parse_pipfile,
+    parse_pyproject,
+    parse_requirements,
+    parse_setup_py,
+    project_environment,
+    read_environment,
+)
 
 ENV_YML = """
 name: forecasting

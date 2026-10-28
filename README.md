@@ -153,6 +153,31 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.11
+
+A tidy-up release after a code review. Nothing new to learn; the app looks and works the
+same. What changed:
+
+- **Two small fixes.** Reference documents now show their title (not `doc://…`) in search
+  results and in the Home page's recently viewed list, and files under a folder marked
+  *ignore* in Folder roles are now skipped when a project's data files are catalogued, the
+  same as they already were for data folders.
+- **Less hidden plumbing.** The post-scan finders, review checks and suggestion handlers
+  are now plain imports in one list each (`postscan.py`, `review.py`, `suggestions.py`)
+  instead of module names looked up by string, so a typo or a broken module shows up as
+  an error instead of a feature quietly doing nothing. A review check that fails now warns
+  instead of being swallowed.
+- **Clearer names.** `backups.py` became `tablepairs.py` (main and backup tables; the
+  catalogue backups live in `backup.py`), `drafts2.py` became `commentdrafts.py`, and the
+  Copilot pack additions moved from `aipack21.py` into `aipack.py`.
+- **Lint and dead code.** The code is checked with `ruff` (`ruff check src tests scripts`),
+  unused imports and functions are gone, and the version number lives in one place
+  (`pdcat.__version__`). The CLI closes the catalogue on every path.
+- **Tests run on GitHub** for every push and pull request, on Linux and Windows.
+
+The review notes, and what they suggest for other projects, are in
+[docs/lessons-learned.md](docs/lessons-learned.md).
+
 ## New in version 2.1
 
 Version 2.1 adds the 46 items below. Some things to know first:
@@ -725,6 +750,7 @@ Keys look like `sql://warehouse/yourdatabase/dbo.sales`,
 ```powershell
 pip install -e ".[dev]"                 # or, in the conda env: pip install -e . --no-deps
 pytest
+ruff check src tests scripts            # lint (same rules as the GitHub check)
 python scripts/make_demo.py C:\temp\pdcat-demo     # sample catalogue to try the app with
 streamlit run src/pdcat/app.py -- --db C:\temp\pdcat-demo\catalogue.db
 ```

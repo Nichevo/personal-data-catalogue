@@ -9,12 +9,11 @@ in another catalogued project or library.
 """
 from __future__ import annotations
 
-import functools
 import json
 from collections import defaultdict
 from typing import Any
 
-from .envinfo import ALIASES, _STDLIB, normalise, package_for, project_environment
+from .envinfo import _STDLIB, ALIASES, normalise, package_for, project_environment
 from .store import Catalogue
 
 OWN, HOME, THIRD, STDLIB, UNKNOWN = "own", "home-built", "third-party", "standard library", "unknown"
@@ -93,6 +92,7 @@ class Classifier:
                     self.declared_names[normalise(d["name"])] = d["name"]
             for m in attrs.get("modules", []):
                 self.modules_by_source[r["source"]].add(m.split(".")[0])
+        self._classified: dict[tuple[str, str | None], str] = {}
 
     def package(self, top: str) -> str:
         if top in KNOWN:
@@ -101,8 +101,13 @@ class Classifier:
             return ALIASES[top]
         return package_for(top)
 
-    @functools.lru_cache(maxsize=4096)
     def classify(self, top: str, source: str | None = None) -> str:
+        key = (top, source)
+        if key not in self._classified:
+            self._classified[key] = self._classify(top, source)
+        return self._classified[key]
+
+    def _classify(self, top: str, source: str | None) -> str:
         top = top.split(".")[0]
         if not top:
             return OWN

@@ -114,3 +114,16 @@ def test_document_page(catalogue, monkeypatch):
     app.run()
     assert not app.exception
     assert any(b.label == "📄 Design" for b in app.button)
+
+
+def test_documents_show_their_title_in_search_and_recent(catalogue):
+    """A document used to appear as doc://<uid> in search results and the recently viewed list."""
+    from pdcat import followups
+    owner = f"bp://{B.save_project(catalogue, 'Demand forecasting')}"
+    uid = D.add_document(catalogue, owner, "Forecast design", "design.md", b"# Design\nHow the forecast is built.")
+    hit = next(r for r in catalogue.search("forecast") if r["key"] == f"doc://{uid}")
+    assert hit["name"] == "Forecast design"
+    followups.viewed(catalogue, f"doc://{uid}")
+    seen = next(r for r in followups.recent(catalogue) if r["item"] == f"doc://{uid}")
+    assert seen["name"] == "Forecast design"
+    assert followups.kind_of(f"doc://{uid}", None) == "document"

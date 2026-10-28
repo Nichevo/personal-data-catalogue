@@ -10,7 +10,6 @@ from pdcat.store import Catalogue
 
 from .common import asset_button, go
 
-
 # ---- schedules -------------------------------------------------------------------
 
 def schedules_page(cat: Catalogue) -> None:

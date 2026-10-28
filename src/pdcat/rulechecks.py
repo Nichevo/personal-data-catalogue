@@ -161,15 +161,6 @@ def _columns(cat: Catalogue, key: str) -> list[str]:
     return list(dict.fromkeys([c["name"] for c in cat.columns(key)] + [p["column_name"] for p in cat.profile(key)]))
 
 
-def update_check(cat: Catalogue, uid: str, text: str) -> None:
-    rules = _all(cat)
-    if uid in rules:
-        key = rules[uid]["key"]
-        columns = _columns(cat, key)
-        rules[uid].update(text=text.strip(), rule=parse_rule(text, columns))
-        cat.set_setting(SETTING, rules)
-
-
 def delete_check(cat: Catalogue, uid: str) -> None:
     rules = _all(cat)
     if rules.pop(uid, None) is not None:

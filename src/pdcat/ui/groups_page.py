@@ -189,12 +189,3 @@ def suggestion_picker(cat: Catalogue, kind: str, *, prefix: str = "sp") -> None:
         st.rerun()
 
 
-def groups_list_page(cat: Catalogue) -> None:
-    st.subheader("Groups")
-    rows = groups.all_groups(cat)
-    if not rows:
-        st.caption("No groups yet. Families, script versions and backup pairs appear here once you accept them.")
-        return
-    for r in rows:
-        st.button(f"{ICONS[r['type']]} {r['name']} ({r['members']} items)", key=f"gl-{r['uid']}", on_click=go,
-                  args=(f"group://{r['uid']}",), type="tertiary")

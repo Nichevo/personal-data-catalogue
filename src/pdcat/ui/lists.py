@@ -48,6 +48,7 @@ def duplicates_page(cat: Catalogue) -> None:
     import pandas as pd
 
     from pdcat.duplicates import add_drive_alias, drive_aliases, report
+
     from .common import asset_button, size_label
     page_title("Duplicates")
     st.caption("The same file in more than one place, folders that are copies of each other, sources that overlap, "

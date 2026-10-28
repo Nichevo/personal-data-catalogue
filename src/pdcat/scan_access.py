@@ -33,7 +33,7 @@ def engine_status() -> tuple[bool, str]:
     if sys.platform != "win32":
         return False, "Access databases can only be read on Windows."
     try:
-        import win32com.client  # noqa: F401
+        import win32com.client
     except ImportError:
         return False, "Install pywin32 to read Access databases: pip install pywin32"
     for prog in ("DAO.DBEngine.120", "DAO.DBEngine.36"):

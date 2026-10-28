@@ -98,8 +98,8 @@ def usage_note(cat: Catalogue, table_key: str) -> str:
 
 def learn_joins(cat: Catalogue) -> int:
     """Suggest confirming joins that several queries use but nobody has confirmed."""
-    from .sqllibrary import all_with_places
     from .relationships import relationships
+    from .sqllibrary import all_with_places
     counts: Counter = Counter()
     for q in all_with_places(cat):
         keys = {t["name"]: t.get("key") for t in q["tables"]}

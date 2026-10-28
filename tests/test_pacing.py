@@ -2,11 +2,10 @@
 from datetime import datetime
 
 import pytest
+from conftest import FAKE_DB, SRC
 
 from pdcat import pacing
 from pdcat.scan_sqlserver import plan_scan, run_queue, scan_server
-
-from conftest import FAKE_DB, SRC
 
 SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 STORE = "sql://warehouse/forecastdb/dbo.store"

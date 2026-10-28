@@ -5,8 +5,16 @@ import pandas as pd
 import streamlit as st
 
 from pdcat.export import rows_to_csv
-from pdcat.review import (BY_DESIGN, CATEGORY_LABELS, RULES, ensure_fresh, hotspots, open_tasks, set_task_status,
-                          set_tasks_status)
+from pdcat.review import (
+    BY_DESIGN,
+    CATEGORY_LABELS,
+    RULES,
+    ensure_fresh,
+    hotspots,
+    open_tasks,
+    set_task_status,
+    set_tasks_status,
+)
 from pdcat.store import NOTE_TYPES, Catalogue
 
 from .common import asset_button, cached, go, page_title

@@ -372,7 +372,7 @@ def combine_sql_profile(columns: list[dict[str, Any]], agg: dict[str, Any], samp
             "name": c["name"], "ordinal": c.get("ordinal", i + 1), "data_type": c.get("data_type"),
             "rows": rows,
             "nulls": rows - int(non_null) if non_null is not None else s.get("nulls"),
-            "distinct": agg.get(f"d{i}") if agg.get(f"d{i}") is not None else None,
+            "distinct": agg.get(f"d{i}"),
             "min": agg.get(f"lo{i}"), "max": agg.get(f"hi{i}"),
             "mean": s.get("mean"), "top": s.get("top", []),
             "histogram": s.get("histogram"), "percentiles": s.get("percentiles"), "hints": s.get("hints"),

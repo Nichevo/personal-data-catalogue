@@ -75,15 +75,6 @@ def for_item(cat: Catalogue, key: str) -> list[dict[str, Any]]:
         "SELECT group_uid FROM group_members WHERE asset_key = ?", (key,))]
 
 
-def membership(cat: Catalogue) -> dict[str, list[tuple[str, str, str]]]:
-    """asset key -> [(group uid, type, group name)], for lists that show groups as one row."""
-    out: dict[str, list[tuple[str, str, str]]] = {}
-    for r in cat.conn.execute("SELECT m.asset_key, g.uid, g.type, g.name FROM group_members m "
-                              "JOIN item_groups g ON g.uid = m.group_uid"):
-        out.setdefault(r[0], []).append((r[1], r[2], r[3]))
-    return out
-
-
 def set_main(cat: Catalogue, uid: str, key: str) -> None:
     with cat.conn:
         cat.conn.execute("UPDATE item_groups SET main_key = ? WHERE uid = ?", (key, uid))
