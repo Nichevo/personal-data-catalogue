@@ -302,6 +302,20 @@ one at a time, and every query is logged:
   never runs a query. On Windows it uses the Access Database Engine through DAO (from
   pywin32), so the engine's 32/64-bit version must match Python's; the setup page checks
   this and says what to install if it's missing.
+- **SQL checks**: every saved query, view and procedure is checked (without running it)
+  for common problems, each with a short reason and a suggested fix:
+  - *Likely wrong results*: a join with no join condition, `NOT IN` on a column that can
+    be empty, joining on a column that isn't unique (rows multiply; checked against
+    profiles), comparing columns of different types, `BETWEEN` on date-times, dividing
+    without guarding against zero, tables or columns that no longer exist or are marked
+    deprecated.
+  - *Slow*: `SELECT *`, functions wrapped around filtered columns (`YEAR(SaleDate) = 2025`),
+    `LIKE '%...'`, `DISTINCT` covering duplicates, `UNION` where `UNION ALL` would do,
+    cursors and loops in procedures.
+  - *Risky*: `NOLOCK` on data that must be exact, hard-coded dates, missing schema names,
+    and SQL built by pasting variables into strings in scripts (an injection risk).
+  Findings show on the query's page and in a column on the SQL queries page, can be
+  marked "fine here", and the worst ones go on To review.
 - **Recently viewed** items in the sidebar.
 - **Edit history** on notes and descriptions: who changed what and when, with undo.
 - **Schedule scans from the app**: a Settings button that creates (or removes) the
