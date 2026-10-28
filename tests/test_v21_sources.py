@@ -206,3 +206,12 @@ def test_access_linked_tables_point_at_their_source():
     assert link_target(odbc)[0] == "table:salesdw.dbo.sales"
     other = {"name": "Prices", "source_table": "Prices", "odbc": False, "connect": ";DATABASE=C:\\data\\prices.accdb"}
     assert link_target(other)[0] == "file:C:\\data\\prices.accdb"
+
+
+def test_outputs_that_stop_refreshing_go_to_review(cat):
+    from pdcat import freshness
+    day = 86400
+    log = {"files://x/out.csv": [1000 * day, 1007 * day, 1014 * day]}
+    assert freshness.status(cat, "files://x/out.csv", log, now=1016 * day)["state"] == "refreshing"
+    stopped = freshness.status(cat, "files://x/out.csv", log, now=1060 * day)
+    assert stopped["state"] == "stopped" and stopped["every_days"] == 7

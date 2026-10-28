@@ -51,7 +51,14 @@ def detail(cat: Catalogue, key: str) -> None:
     if attrs.get("lines"):
         meta.append(f"{attrs['lines']} lines")
     meta += badges(info)
-    st.caption(" · ".join(str(m) for m in meta) + f"  \n`{key}`")
+    if asset["kind"] in ("data_file", "file_series", "workbook", "report", "model"):
+        from pdcat.freshness import badge as fresh_badge
+        meta.append(fresh_badge(cat, key))
+    from pdcat.folderroles import role_of, stored
+    role = role_of(attrs.get("full_path") or attrs.get("path"), stored(cat))
+    if role:
+        meta.append(f"📂 in a {role} folder")
+    st.caption(" · ".join(str(m) for m in meta if m) + f"  \n`{key}`")
     from .item_boxes import groups_box, item_actions, suggestions_box
     item_actions(cat, key, info)
     groups_box(cat, key)
