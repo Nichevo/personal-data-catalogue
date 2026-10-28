@@ -294,6 +294,14 @@ one at a time, and every query is logged:
   columns the query uses highlighted, and lines between the exact fields it joins on
   (from its ON clauses, plus the database's keys). Database diagrams get the same "show
   fields" view for any group of tables.
+- **Access databases**: .accdb and .mdb files found in data folders are read for their
+  saved queries (name and SQL, which go in the SQL query library), linked tables (what
+  each points to, for example a SQL Server table, another Access file or a spreadsheet,
+  with the connection's password removed, and linked to that item in the catalogue),
+  and local tables with their columns and row counts. It opens the file read-only and
+  never runs a query. On Windows it uses the Access Database Engine through DAO (from
+  pywin32), so the engine's 32/64-bit version must match Python's; the setup page checks
+  this and says what to install if it's missing.
 - **Recently viewed** items in the sidebar.
 - **Edit history** on notes and descriptions: who changed what and when, with undo.
 - **Schedule scans from the app**: a Settings button that creates (or removes) the
