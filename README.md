@@ -162,6 +162,13 @@ one at a time, and every query is logged:
   possible wrong folder (today the folders must match). When the same file name turns up
   in several folders, say so on the link and on the script and file pages (today the
   newest is picked without a word).
+- **Folder roles**: when you add a folder, the app suggests what it is. A *master
+  folder* whose subfolders each look like their own project (their own `.git`, README,
+  `environment.yml` or requirements, `src/`) becomes one project per subfolder. A
+  *single project* keeps its subfolders together, each with a role suggested from its
+  name and contents: code (`src/`, `notebooks/`, `sql/`), data, outputs, docs, old, or
+  ignore. You confirm or change each one, the choices survive rescans, and new
+  subfolders that appear later are suggested the same way.
 - **Business projects**: add a whole folder (a project, a sub-folder like
   `forecasting/src`, or a data folder) in one go, with an option to keep adding new files
   that appear there. Start a new business project straight from a table or script page,
