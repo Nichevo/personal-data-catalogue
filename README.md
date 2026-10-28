@@ -292,8 +292,12 @@ one at a time, and every query is logged:
 - **Power BI measures as a table**: a report's measures (some have hundreds) show as a
   sortable, filterable table: name, home table, display folder, format, what it uses
   (columns and other measures), which pages and visuals show it, and whether it's in
-  the glossary. Group by home table or display folder, filter to "not used on any
-  page" or "uses another measure", and click a row to open it.
+  the glossary. Group by home table or display folder, filter to "uses another
+  measure", and click a row to open it. Each measure is marked used or unused: used
+  means a visual shows it, or a used measure builds on it (followed through every
+  step). Unused ones are hidden by default, with a count and a switch to show them.
+  Because other reports connected to a published dataset can use measures this file
+  can't see, it says "not used in this file" rather than "unused".
 - **A tidier menu**: To review takes in Data issues, Needs notes, Unmatched tables,
   Unlinked data and Duplicates as filter tabs; Coverage and Issue hotspots become one
   Health page; Recent notes and Recent changes become one What's new page; Describe
