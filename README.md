@@ -364,6 +364,11 @@ one at a time, and every query is logged:
     `LGORT`, `MEINS`), plus APO (planning books, key figures, DP and SNP), EWM
     (warehouse tasks, storage bins, handling units) and IBP (key figures, planning
     levels, attributes such as `PRDID` and `LOCID`).
+  - *SQL Server good practice*: a general reference for writing and reviewing T-SQL:
+    joins and NULLs, sargable filters and indexes, date handling, `NOLOCK` and isolation
+    levels, temp tables vs table variables vs CTEs, window functions, set-based work
+    instead of cursors, safe dynamic SQL, naming and formatting. Each SQL check links to
+    the article that explains it, and the articles go in the Copilot pack.
   - *APO to IBP*: what changed in the move, as a side-by-side guide: APO DP becomes IBP
     for demand, SNP becomes IBP for supply (and response); planning books and data views
     become planning views (mostly in the Excel add-in); characteristics and CVCs become
