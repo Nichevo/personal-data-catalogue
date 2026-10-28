@@ -178,6 +178,10 @@ def detail(cat: Catalogue, key: str) -> None:
     if asset["kind"] == "access_db":
         from .sources_extra import access_section
         access_section(cat, key, asset)
+    if asset["kind"] in ("script", "notebook", "sql_script"):
+        with st.expander("Data flow: where this script's data comes from and where it goes", expanded=True):
+            from .dataflow_page import flow_block
+            flow_block(cat, None, f"scriptflow-{key}", focus=key)
     if asset["kind"] in ("script", "notebook") and attrs.get("function_info"):
         from .code import functions_section
         functions_section(cat, key, asset)

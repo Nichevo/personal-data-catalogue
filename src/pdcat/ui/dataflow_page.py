@@ -30,31 +30,36 @@ def data_flow_page(cat: Catalogue) -> None:
     flow_block(cat, None if choice == "Everything" else choice, "flow")
 
 
-def flow_block(cat: Catalogue, project: str | None, key: str) -> None:
+def flow_block(cat: Catalogue, project: str | None, key: str, focus: str | None = None) -> None:
+    """The diagram for everything, one project or folder, or (focus) one script or report, with its downloads
+    and the table of outside sources."""
     from pdcat.codemap import to_dot, to_mermaid
     from pdcat.dataflow import flow_elements, flow_graph, source_rows, summary
 
     from .graphview import graph_view
     c1, c2 = st.columns([2, 1])
-    level = c1.radio("Detail", ["files", "projects"], horizontal=True, key=f"{key}-level",
-                     format_func={"files": "Every script", "projects": "One box per project"}.get)
+    level = "files" if focus else c1.radio(
+        "Detail", ["files", "projects"], horizontal=True, key=f"{key}-level",
+        format_func={"files": "Every script", "projects": "One box per project"}.get)
     show_old = c2.checkbox("Show old items", value=False, key=f"{key}-old",
                            help="Items marked old are hidden unless this is ticked.")
-    g = flow_graph(cat, project, level=level, show_old=show_old)
+    g = flow_graph(cat, project, level=level, show_old=show_old, focus=focus)
     if not g.nodes:
-        st.caption("No data found flowing in or out yet.")
+        st.caption("This doesn't read or write any data the catalogue knows about." if focus
+                   else "No data found flowing in or out yet.")
         return
     counts = summary(g)
     if counts:
         st.markdown("**Starts from** " + " · ".join(f"{n} {SUMMARY_NAMES.get(k, k)}{'' if n == 1 else 's'}" for k, n in
                                                     sorted(counts.items(), key=lambda kv: -kv[1])))
-    graph_view(cat, flow_elements(g), key=f"{key}-{project or 'all'}-{level}", name=f"dataflow-{project or 'all'}")
+    name = (focus or "").rsplit("/", 1)[-1].rsplit(".", 1)[0] or project or "all"
+    graph_view(cat, flow_elements(g), key=f"{key}-{project or 'all'}-{level}", name=f"dataflow-{name}",
+               height=420 if focus else 620)
     st.caption("Data flows left to right. On the left are where it starts: 🌐 APIs, 🕸️ scraped web sites, "
                "🛢️ database connections and tables, ⬇️ web downloads, ☁️ cloud storage, 📎 SharePoint, 🏭 SAP and "
                "input files. Then the code and reports that use it (blue boxes, orange for reports), and the tables "
                "and files they write. Dashed arrows read, red arrows write. Click a box to open it.")
     dot, mermaid = to_dot(g), to_mermaid(g)
-    name = project or "all"
     d1, d2, d3 = st.columns(3)
     d1.download_button("⬇️ Mermaid (.mmd)", mermaid, f"dataflow-{name}.mmd", "text/plain", key=f"{key}-mmd",
                        help="Paste into GitHub, Azure DevOps, Confluence or mermaid.live")
@@ -62,7 +67,7 @@ def flow_block(cat: Catalogue, project: str | None, key: str) -> None:
     with d3.popover("Copy Mermaid"):
         st.code(mermaid, language=None)
 
-    rows = source_rows(cat, project)
+    rows = source_rows(cat, project, used_by=focus)
     st.subheader("Where data comes from")
     if not rows:
         st.caption("No APIs, web scraping, database connections, cloud storage or SAP connections found in the code "
