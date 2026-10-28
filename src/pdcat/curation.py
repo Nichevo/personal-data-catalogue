@@ -16,10 +16,13 @@ from typing import Any
 from .store import Catalogue, now
 
 INFO_FIELDS = ("purpose", "grain", "refresh", "lifecycle", "replaced_by", "trust", "owner", "sensitive",
-               "freshness_column", "copy_of")
+               "freshness_column", "copy_of", "relevance", "sap_name")
 REFRESH = ["", "daily", "weekly", "monthly", "quarterly", "ad hoc", "one-off"]
 LIFECYCLE = ["", "in use", "experimental", "deprecated", "retired"]
 TRUST = ["", "trusted", "caution", "do not use"]
+# "not relevant": hidden from search, review, coverage, diagrams and exports (dbo.sysdiagrams, say).
+# "old": kept, but hidden from the code map and diagrams unless you ask to see old items.
+RELEVANCE = ["", "not relevant", "old"]
 
 SENSITIVE_NAME = re.compile(
     r"(e-?mail|phone|mobile|telephone|address|post_?code|zip_?code|\bdob\b|birth|salary|wage|\bpay\b|ssn|"
@@ -46,7 +49,12 @@ def set_item_info(cat: Catalogue, key: str, **fields: Any) -> None:
     for f, v in fields.items():
         merged[f] = (v.strip() or None) if isinstance(v, str) else v
     merged["sensitive"] = int(bool(merged.get("sensitive")))
+    from .edits import record
     with cat.conn:
+        for f in fields:
+            if f != "sensitive" or bool(current.get(f)) != bool(merged[f]):
+                record(cat, key, f"item_info.{f}", current.get(f), merged[f],
+                       {"type": "item_info", "key": key, "field": f, "old": current.get(f)})
         cat.conn.execute(
             f"INSERT INTO item_info (asset_key, {', '.join(INFO_FIELDS)}, updated_at, author) "
             f"VALUES (?, {', '.join('?' * len(INFO_FIELDS))}, ?, ?) "
@@ -69,7 +77,10 @@ def set_column_info(cat: Catalogue, key: str, column: str, *, description: str |
                            (key, column)).fetchone()
     desc = (description.strip() or None) if description is not None else (old["description"] if old else None)
     sens = int(sensitive) if sensitive is not None else (old["sensitive"] if old else 0)
+    from .edits import record
     with cat.conn:
+        record(cat, f"{key}#{column}", "description", old["description"] if old else None, desc,
+               {"type": "column_info", "key": key, "column": column, "old": old["description"] if old else None})
         cat.conn.execute(
             "INSERT INTO column_info (asset_key, column_name, description, sensitive, updated_at, author) "
             "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(asset_key, column_name) DO UPDATE SET "
@@ -80,6 +91,21 @@ def set_column_info(cat: Catalogue, key: str, column: str, *, description: str |
         purge_values(cat, key, column)
     if rebuild:
         cat.reindex_search(key)
+
+
+def set_relevance(cat: Catalogue, keys: list[str] | str, relevance: str) -> None:
+    """Mark items not relevant or old (or "" to bring them back)."""
+    if relevance not in RELEVANCE:
+        raise ValueError(f"relevance must be one of {RELEVANCE}")
+    for key in [keys] if isinstance(keys, str) else keys:
+        set_item_info(cat, key, relevance=relevance)
+
+
+def hidden_keys(cat: Catalogue, *, old: bool = False) -> set[str]:
+    """Items marked not relevant (and old ones too when `old`), to leave out of lists and diagrams."""
+    states = ("not relevant", "old") if old else ("not relevant",)
+    marks = ", ".join("?" * len(states))
+    return {r[0] for r in cat.conn.execute(f"SELECT asset_key FROM item_info WHERE relevance IN ({marks})", states)}
 
 
 def column_description(cat: Catalogue, key: str, column: str) -> str:

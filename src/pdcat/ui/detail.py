@@ -18,10 +18,14 @@ TABLE_LIKE = ("table", "view", "data_file", "file_series")
 
 def detail(cat: Catalogue, key: str) -> None:
     st.button("← Back", on_click=go, args=(None,))
+    from pdcat.followups import viewed
+    viewed(cat, key)
     from . import pages_for_key
     special = pages_for_key(key)
     if special:
         special(cat, key)
+        from .item_boxes import history_box
+        history_box(cat, key)
         return
     asset = cat.get_asset(key)
     if asset is None:
@@ -48,6 +52,9 @@ def detail(cat: Catalogue, key: str) -> None:
         meta.append(f"{attrs['lines']} lines")
     meta += badges(info)
     st.caption(" · ".join(str(m) for m in meta) + f"  \n`{key}`")
+    from .item_boxes import groups_box, item_actions, suggestions_box
+    item_actions(cat, key, info)
+    groups_box(cat, key)
     if info.get("lifecycle") in ("deprecated", "retired"):
         msg = f"This is marked **{info['lifecycle']}**."
         if info.get("replaced_by"):
@@ -83,6 +90,7 @@ def detail(cat: Catalogue, key: str) -> None:
         from .office_pages import office_section
         office_section(cat, key, asset)
 
+    suggestions_box(cat, key)
     mine = open_tasks(cat, asset_key=key, limit=1000)
     if mine:
         from .review_pages import task_card
@@ -129,6 +137,8 @@ def detail(cat: Catalogue, key: str) -> None:
         st.subheader("Contains")
         result_list([{**dict(c), "source": "", "note_count": 0} for c in children], "child")
 
+    from .item_boxes import history_box
+    history_box(cat, key)
     with st.expander("Details"):
         if attrs.get("definition"):
             st.code(attrs["definition"], language="sql")
@@ -359,11 +369,12 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
                 continue
             seen.add(ident)
             rel = RELATION_LABELS.get(l["relation"], l["relation"])
-            c1, c2, c3 = st.columns([1, 4, 2])
+            c1, c2, c3, c4 = st.columns([1, 4, 2, 0.4])
             c1.caption(rel)
             with c2:
                 if l["dst_key"]:
-                    asset_button(l["dst_key"], l["dst_name"] or l["dst_key"], l["dst_kind"] or "table", f"uses-{i}")
+                    link_button(l["dst_key"], l["dst_name"] or l["dst_key"], l["dst_kind"] or "table", f"uses-{i}",
+                                l["unimportant"])
                     if l["relation"] == "imports" and l["evidence"]:
                         st.caption(f"uses {l['evidence']}")
                 else:
@@ -372,6 +383,8 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
                     st.button(f"{'📄' if kind == 'file' else '❔'} {name}", key=f"uses-{i}", type="tertiary",
                               on_click=go, args=(l["dst_ref"],), help=f"{what} · {l['evidence'] or ''}")
             c3.caption(_how(l))
+            with c4:
+                link_menu(cat, l, l["src_key"], l["relation"], l["dst_key"] or l["dst_ref"], f"uses-m-{i}")
     left, right = st.columns(2)
     with left:
         if made_by or asset["kind"] in TABLE_LIKE:
@@ -379,8 +392,13 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
             if not made_by:
                 st.caption("Nothing found.")
             for i, l in enumerate(made_by):
-                asset_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"madeby-{i}")
-                st.caption(_how(l))
+                a, b = st.columns([6, 1])
+                with a:
+                    link_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"madeby-{i}",
+                                l["unimportant"])
+                    st.caption(_how(l))
+                with b:
+                    link_menu(cat, l, l["src_key"], l["relation"], key, f"madeby-m-{i}")
             if asset["kind"] in TABLE_LIKE:
                 from .extras import manual_link_form
                 with st.popover("➕ Link a script"):
@@ -390,8 +408,41 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
             st.subheader("Read by" if asset["kind"] in TABLE_LIKE else "Used by")
             for i, l in enumerate(read_by):
                 rel = RELATION_LABELS.get(l["relation"], l["relation"]).lower()
-                asset_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"readby-{i}")
-                st.caption(f"{rel} {l['evidence']}" if l["relation"] == "imports" and l["evidence"] else _how(l))
+                a, b = st.columns([6, 1])
+                with a:
+                    link_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"readby-{i}",
+                                l["unimportant"])
+                    st.caption(f"{rel} {l['evidence']}" if l["relation"] == "imports" and l["evidence"] else _how(l))
+                with b:
+                    link_menu(cat, l, l["src_key"], l["relation"], key, f"readby-m-{i}")
+
+
+def link_button(key: str, label: str, kind: str, widget_key: str, unimportant: bool) -> None:
+    if unimportant:
+        st.button(f":gray[{icon(kind)} {label} · not important]", key=widget_key, on_click=go, args=(key,),
+                  type="tertiary", help="Marked not important: left out of diagrams, grouping and counts")
+    else:
+        asset_button(key, label, kind, widget_key)
+
+
+def link_menu(cat: Catalogue, l: dict, src: str, relation: str, dst: str, widget_key: str) -> None:
+    """Remove a link the scanner got wrong, or mark one that's right but noise as not important."""
+    from pdcat.links import hide_link, set_link_mark
+    if relation == "imports":
+        return
+    with st.popover("⋯", help="Remove this link, or mark it not important"):
+        if l.get("unimportant"):
+            if st.button("Important again", key=f"{widget_key}-imp"):
+                set_link_mark(cat, src, relation, dst, None)
+                st.rerun()
+        elif st.button("Not important", key=f"{widget_key}-unimp",
+                       help="Right but noise: stays listed, greyed out, and is left out of diagrams and counts"):
+            set_link_mark(cat, src, relation, dst, "unimportant")
+            st.rerun()
+        if st.button("Remove: this link is wrong", key=f"{widget_key}-rm",
+                     help="Kept out through rescans. Undo from the edit history or Settings → Removed links"):
+            hide_link(cat, src, relation, dst)
+            st.rerun()
 
 
 def _how(l) -> str:

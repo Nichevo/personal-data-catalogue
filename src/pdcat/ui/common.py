@@ -18,10 +18,12 @@ KIND_ICONS = {"table": "🗃️", "view": "👁️", "procedure": "⚙️", "dat
               "script": "🐍", "notebook": "📓", "sql_script": "📜", "sql_snippet": "✍️", "note": "📝",
               "data_file": "📄", "folder": "🗂️", "file_series": "🗓️", "package": "📦", "report": "📊",
               "workbook": "📗", "model": "🧠", "measure": "🧮", "bproject": "🧭", "knowledge": "💡",
-              "question": "❓", "metric": "📏", "feature": "🧬", "key": "🔑"}
+              "question": "❓", "metric": "📏", "feature": "🧬", "key": "🔑", "group": "👪", "query": "🔍",
+              "environment": "🐍", "access_db": "🗄️", "document": "📑"}
 KIND_LABELS = {"data_file": "data file", "sql_snippet": "pasted SQL", "sql_script": "SQL file",
                "file_series": "file series", "bproject": "business project", "workbook": "Excel workbook",
-               "report": "Power BI report", "model": "ML model"}
+               "report": "Power BI report", "model": "ML model", "access_db": "Access database",
+               "query": "SQL query", "environment": "conda environment"}
 NOTE_ICONS = {"note": "📝", "issue": "⚠️", "example": "🔢"}
 RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls", "imports": "Imports"}
 LIFECYCLE_BADGES = {"experimental": "🧪 experimental", "deprecated": "⛔ deprecated", "retired": "🪦 retired"}
@@ -121,6 +123,10 @@ def badges(info: dict | None) -> list[str]:
         out.append("🔒 sensitive")
     if info.get("copy_of"):
         out.append("📑 copy")
+    if info.get("relevance") == "not relevant":
+        out.append("🙈 not relevant")
+    elif info.get("relevance") == "old":
+        out.append("🗄️ old")
     return out
 
 

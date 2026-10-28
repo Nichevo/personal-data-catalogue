@@ -945,13 +945,19 @@ class Catalogue:
         self.changed()
 
     def search(self, text: str, *, kind: str | None = None, source: str | None = None,
-               limit: int = 100) -> list[sqlite3.Row]:
+               limit: int = 100, include_hidden: bool = False, kinds: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
         """Ranked matches. Each row has a "snippet" showing where the words matched (with **bold** hits).
-        Deprecated and retired items sink to the bottom."""
+        Deprecated and retired items sink to the bottom. Items marked not relevant and older versions of
+        scripts are left out unless `include_hidden`. `kinds` limits the results to several kinds."""
         tokens = re.findall(r"\w+", text or "")
         if not tokens:
-            return self.list_assets(kind=kind, source=source, limit=limit)
+            return self.list_assets(kind=kind, source=source, limit=limit, include_hidden=include_hidden, kinds=kinds)
         filters, params = [], []
+        if not include_hidden:
+            filters.append(f"s.key NOT IN ({HIDDEN_KEYS})")
+        if kinds:
+            filters.append(f"s.kind IN ({', '.join('?' * len(kinds))})")
+            params += list(kinds)
         if self.fts:
             filters.append("search_idx MATCH ?")
             params.append(" ".join(f'"{t}"*' for t in tokens))
@@ -1022,8 +1028,14 @@ class Catalogue:
     # ---- reading --------------------------------------------------------
 
     def list_assets(self, *, kind: str | None = None, source: str | None = None,
-                    limit: int = 100) -> list[sqlite3.Row]:
+                    limit: int = 100, include_hidden: bool = False,
+                    kinds: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
         filters, params = ["kind != 'series_file'"], []
+        if not include_hidden:
+            filters.append(f"key NOT IN ({HIDDEN_KEYS})")
+        if kinds:
+            filters.append(f"kind IN ({', '.join('?' * len(kinds))})")
+            params += list(kinds)
         if kind:
             filters.append("kind = ?")
             params.append(kind)
@@ -1231,11 +1243,19 @@ class Catalogue:
                 (asset_key, body.rstrip(), ", ".join(split_tags(tags)), ts, ts, note_type, uuid.uuid4().hex,
                  self.author()),
             )
+            from .edits import record
+            record(self, asset_key, "note added", None, body.rstrip(), {"type": "note_add", "id": cur.lastrowid})
         self.reindex_search(asset_key)
         return cur.lastrowid
 
     def update_note(self, note_id: int, body: str, tags: str = "", note_type: str | None = None) -> None:
+        before = self.conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
         with self.conn:
+            if before:
+                from .edits import record
+                record(self, before["asset_key"], "note changed", before["body"], body.rstrip(),
+                       {"type": "note_update", "id": note_id, "body": before["body"], "tags": before["tags"],
+                        "note_type": before["note_type"]})
             self.conn.execute(
                 "UPDATE notes SET body = ?, tags = ?, note_type = COALESCE(?, note_type), updated_at = ? WHERE id = ?",
                 (body.rstrip(), ", ".join(split_tags(tags)), note_type, now(), note_id),
@@ -1322,11 +1342,15 @@ class Catalogue:
         self._reindex_note(note_id)
 
     def delete_note(self, note_id: int) -> None:
-        row = self.conn.execute("SELECT asset_key FROM notes WHERE id = ?", (note_id,)).fetchone()
+        row = self.conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
         with self.conn:
+            if row:
+                from .edits import record
+                record(self, row["asset_key"], "note deleted", row["body"], None,
+                       {"type": "note_delete", "row": dict(row)})
             self.conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         if row:
-            self.reindex_search(row[0])
+            self.reindex_search(row["asset_key"])
 
     def _reindex_note(self, note_id: int) -> None:
         row = self.conn.execute("SELECT asset_key FROM notes WHERE id = ?", (note_id,)).fetchone()
@@ -1360,6 +1384,11 @@ def _norm_path(p: str) -> str:
     """Compare paths the Windows way: forward slashes, case-insensitive."""
     return p.replace("\\", "/").lower()
 
+
+# Items left out of search and lists: marked not relevant, or an older version of a script.
+HIDDEN_KEYS = """SELECT asset_key FROM item_info WHERE relevance = 'not relevant'
+    UNION SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid
+    WHERE g.type = 'versions' AND g.main_key IS NOT NULL AND g.main_key != m.asset_key"""
 
 # Display names of search hits that aren't scanned items (knowledge, questions, business projects...).
 _KNOWLEDGE_NAME = """CASE s.kind

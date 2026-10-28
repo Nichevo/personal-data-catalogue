@@ -15,15 +15,15 @@ Page = Callable[[Catalogue], None]
 
 
 def sections() -> dict[str, dict[str, Page]]:
-    from . import (bproject_pages, curation_pages, erd_page, keys_pages, knowledge_pages, lists, ml_pages,
-                   scanning, setup_page)
+    from . import (bproject_pages, curation_pages, erd_page, groups_page, keys_pages, knowledge_pages, lists,
+                   ml_pages, scanning, setup_page)
     return {
         "🔎 Find": {"Search": search.search_page, "Company-wide keys": keys_pages.keys_page,
                    "Packages": code.packages_page},
         "📚 Knowledge": {"Knowledge": knowledge_pages.knowledge_page, "Business projects": bproject_pages.bprojects_page,
                         "Question library": knowledge_pages.questions_page,
                         "Metric glossary": knowledge_pages.metrics_page, "Feature dictionary": ml_pages.features_page},
-        "📋 Review": {"Coverage": curation_pages.coverage_page, "Describe columns": curation_pages.describe_columns_page,
+        "📋 Review": {"Suggestions": groups_page.suggestions_page, "Coverage": curation_pages.coverage_page, "Describe columns": curation_pages.describe_columns_page,
                      "Edit many items": curation_pages.bulk_edit_page, "To review": review_pages.review_page, "Issue hotspots": review_pages.hotspots_page,
                      "Data issues": search.data_issues_page, "Needs notes": search.needs_notes_page,
                      "Recent notes": search.recent_notes_page, "Unmatched tables": search.unmatched_page,

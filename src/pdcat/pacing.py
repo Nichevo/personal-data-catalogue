@@ -36,6 +36,7 @@ DEFAULTS: dict[str, Any] = {
     "sql_quiet_hours": "",
     "sql_stop_on_timeout": True,
     "sql_scan_definitions": True,
+    "sql_skip_tool_tables": True,
 }
 LABELS = {
     "sql_pause_seconds": "Pause between queries (seconds)",
@@ -47,6 +48,7 @@ LABELS = {
     "sql_quiet_hours": "Quiet hours (no queries), e.g. 07:00-09:30, 16:00-17:00",
     "sql_stop_on_timeout": "Stop the run on the first time-out",
     "sql_scan_definitions": "Read view and procedure definitions when scanning",
+    "sql_skip_tool_tables": "Skip tables SQL Server tools make for themselves (dbo.sysdiagrams)",
 }
 
 

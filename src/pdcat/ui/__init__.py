@@ -18,6 +18,9 @@ def pages_for_key(key: str) -> Callable | None:
     if key.startswith("key://"):
         from .keys_pages import key_page
         return key_page
+    if key.startswith("group://"):
+        from .groups_page import group_page
+        return group_page
     if key.startswith("bp://"):
         from .bproject_pages import bproject_page
         return bproject_page
