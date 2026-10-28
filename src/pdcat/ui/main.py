@@ -31,9 +31,9 @@ def combined(title: str, caption: str, views: dict[str, Page]) -> Page:
 
 def sections() -> dict[str, dict[str, Page]]:
     from . import (bproject_pages, curation_pages, erd_page, groups_page, home_page, keys_pages, knowledge_pages,
-                   lists, ml_pages, scanning, setup_page, sources_extra, sql_pages)
+                   lists, menu_guide, ml_pages, scanning, setup_page, sources_extra, sql_pages)
     return {
-        "🏠 Home": {"Home": home_page.home_page},
+        "🏠 Home": {"Home": home_page.home_page, "Menu guide": menu_guide.menu_guide_page},
         "🔎 Find": {"Search": search.search_page, "SQL queries": sql_pages.queries_page},
         "📚 Knowledge": {"Knowledge": knowledge_pages.knowledge_page, "Business projects": bproject_pages.bprojects_page,
                         "Question library": knowledge_pages.questions_page,
@@ -136,6 +136,9 @@ def sidebar(cat: Catalogue) -> tuple[str, Page]:
             page = st.radio("Page", list(pages), key=f"nav-{section}", label_visibility="collapsed",
                             on_change=leave_item)
         recently_viewed(cat)
+        from .common import go_page
+        st.button("📖 Menu guide", key="menu-guide-link", on_click=go_page, args=("Menu guide",), type="tertiary",
+                  help="What every page in the menu is for")
         st.divider()
         stats = cat.stats()
         kinds = stats["kinds"]

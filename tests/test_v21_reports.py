@@ -140,3 +140,24 @@ def test_suggested_metrics_from_code_sql_and_reports(catalogue, report, tmp_path
     assert m["definition"] == "Weighted absolute percentage error."
     metricfind.find_metrics(catalogue)
     assert "WAPE" not in {s["title"] for s in suggestions.open_suggestions(catalogue, "metric")}
+
+
+def test_screenshots_only_in_exports_and_shares_when_ticked(catalogue, tmp_path):
+    import io
+    import json
+    import zipfile
+
+    from pdcat import screenshots, sharing
+    from pdcat.export import to_csv_zip
+    from pdcat.store import Catalogue
+    screenshots.add(catalogue, "files://r/Sales.pbix", "Overview", b"\x89PNG fake", "image/png", "the overview")
+    plain = zipfile.ZipFile(io.BytesIO(to_csv_zip(catalogue)))
+    assert not any(n.startswith("screenshots") for n in plain.namelist())
+    ticked = zipfile.ZipFile(io.BytesIO(to_csv_zip(catalogue, screenshots=True)))
+    assert "screenshots.csv" in ticked.namelist() and any(n.startswith("screenshots/") for n in ticked.namelist())
+    assert "screenshots" not in sharing.make_share(catalogue)
+    pack = json.loads(sharing.to_share_json(catalogue, screenshots=True))
+    other = Catalogue(tmp_path / "other.db")
+    summary = sharing.merge(other, sharing.read_share(json.dumps(pack)), {})
+    assert summary["screenshots"] == 1
+    assert screenshots.for_page(other, "files://r/Sales.pbix", "Overview")[0]["caption"] == "the overview"

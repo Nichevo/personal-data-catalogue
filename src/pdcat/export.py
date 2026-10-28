@@ -129,12 +129,20 @@ def _csv_text(rows: list[dict[str, Any]]) -> str:
     return buf.getvalue()
 
 
-def to_csv_zip(cat: Catalogue) -> bytes:
-    """One CSV per table in a zip. UTF-8 with BOM so Excel shows accents correctly."""
+def to_csv_zip(cat: Catalogue, *, screenshots: bool = False) -> bytes:
+    """One CSV per table in a zip. UTF-8 with BOM so Excel shows accents correctly. Report screenshots (which can
+    show real numbers) go in only when asked for, as a screenshots folder and an index CSV."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, rows in export_data(cat).items():
-            z.writestr(f"{name}.csv", "﻿" + _csv_text(rows))
+            z.writestr(f"{name}.csv", "\ufeff" + _csv_text(rows))
+        if screenshots:
+            from . import screenshots as S
+            rows = S.index_rows(cat)
+            if rows:
+                z.writestr("screenshots.csv", "\ufeff" + _csv_text(rows))
+                for r in rows:
+                    z.write(S.folder(cat) / r["file"], f"screenshots/{r['file']}")
     return buf.getvalue()
 
 

@@ -15,9 +15,14 @@ def export_page(cat: Catalogue) -> None:
     st.caption("Everything in the catalogue: tables, columns, links, notes, profiles, functions, packages and "
                "what you know about each item. Sensitive values are never included. The files are built when "
                "you click, so this page stays quick.")
+    from pdcat.screenshots import index_rows
+    n_shots = len(index_rows(cat))
+    shots = st.checkbox(f"Include report screenshots ({n_shots})", disabled=not n_shots, key="export-shots",
+                        help="Left out unless ticked, since they can show real numbers. CSV zip only.")
     c1, c2 = st.columns(2)
     with c1:
-        lazy_download("⬇️ CSV files (zip)", to_csv_zip, "catalogue-export.zip", "application/zip", "export-csv")
+        lazy_download("⬇️ CSV files (zip)", lambda c: to_csv_zip(c, screenshots=shots), "catalogue-export.zip",
+                      "application/zip", f"export-csv-{shots}")
     with c2:
         lazy_download("⬇️ JSON", to_json, "catalogue-export.json", "application/json", "export-json")
     st.subheader("OpenMetadata")
@@ -70,6 +75,11 @@ def copilot_page(cat: Catalogue) -> None:
         copilot_round_trip(cat)
 
 
+def _json(pack: dict) -> str:
+    import json
+    return json.dumps(pack, indent=1, ensure_ascii=False, default=str)
+
+
 @cached
 def _test_questions(cat: Catalogue) -> list[dict]:
     from pdcat.aipack21 import test_questions
@@ -120,8 +130,34 @@ def sharing_page(cat: Catalogue) -> None:
         sources = [s["name"] for s in S.source_list(cat)]
         scans = st.multiselect("Also include my scans of", sources, help="For colleagues who can't scan these "
                                                                          "themselves. Sensitive values are left out.")
-        lazy_download("⬇️ My share file", lambda c: S.to_share_json(c, scans), f"catalogue-share-{cat.author()}.json",
-                      "application/json", f"share-{'-'.join(scans)}")
+        from pdcat.screenshots import index_rows
+        n_shots = len(index_rows(cat))
+        shots = st.checkbox(f"Include report screenshots ({n_shots})", disabled=not n_shots, key="share-shots",
+                            help="Left out unless ticked, since they can show real numbers.")
+        lazy_download("⬇️ My share file", lambda c: S.to_share_json(c, scans, screenshots=shots),
+                      f"catalogue-share-{cat.author()}.json", "application/json",
+                      f"share-{'-'.join(scans)}-{shots}")
+        st.divider()
+        st.markdown("**Questions for colleagues**")
+        st.caption("A file holding only your open questions (question library entries with no answer yet). A "
+                   "colleague merges it, answers the questions in their question library, and sends you their "
+                   "answers file, which you merge here to fill in the answers.")
+        n_open = sum(S._open_question(q) for q in S.questions_share(cat)["questions"])
+        c1, c2 = st.columns(2)
+        with c1:
+            if n_open:
+                lazy_download(f"⬇️ My {n_open} open question(s)", lambda c: _json(S.questions_share(c)),
+                              f"questions-from-{cat.author()}.json", "application/json", "share-questions")
+            else:
+                st.caption("No open questions. Add one in Knowledge › Question library.")
+        asked = S.asked_of_me(cat)
+        with c2:
+            answered = [q for q in asked if not S._open_question(q)]
+            if answered:
+                lazy_download(f"⬇️ My answers ({len(answered)})", lambda c: _json(S.answers_share(c)),
+                              f"answers-from-{cat.author()}.json", "application/json", "share-answers")
+            elif asked:
+                st.caption(f"{len(asked)} question(s) from colleagues waiting in your question library.")
     with tab_merge:
         up = st.file_uploader("A colleague's share file", type=["json"])
         if up is not None:

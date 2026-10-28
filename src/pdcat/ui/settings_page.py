@@ -26,6 +26,7 @@ def settings_page(cat: Catalogue) -> None:
             st.toast("Saved")
 
     backups_section(cat)
+    schedule_section(cat)
 
     st.subheader("SQL Server: pace and limits")
     st.caption("Every query the catalogue sends follows these. Lower them if your DBA asks; the query log on the "
@@ -97,6 +98,49 @@ def settings_page(cat: Catalogue) -> None:
     if upgraded:
         st.caption(f"Upgraded from version 1. The untouched copy made before the upgrade: `{upgraded}`")
     st.caption(f"Catalogue file: `{cat.path}`")
+
+
+def schedule_section(cat: Catalogue) -> None:
+    from pdcat import taskscheduler as T
+
+    from .common import config_path
+    st.subheader("Scan on a schedule")
+    folder = Path(cat.path).parent
+    if not T.available():
+        st.caption("Windows only: creates a weekly Task Scheduler task that runs `pdcat scan` and then "
+                   "`pdcat profile --queue`. On this machine, use cron to run those two commands.")
+        return
+    state = T.status()
+    if state:
+        worked = {True: "✅ worked", False: f"❌ failed (code {state['last_result']})", None: "not run yet"}[
+            state["worked"]]
+        st.markdown(f"The weekly scan is set up: {state['schedule'] or 'weekly'}.  \n"
+                    f"Last run {state['last_run'] or 'never'}, {worked}. Next run {state['next_run'] or '?'}.")
+        tail = T.log_tail(folder)
+        if tail:
+            with st.expander("The end of scan.log"):
+                st.code(tail, language="text")
+        if st.button("Remove the scheduled scan", key="sched-remove"):
+            try:
+                T.remove()
+                st.toast("Removed")
+            except RuntimeError as e:
+                st.error(f"Couldn't remove it: {e}")
+            st.rerun()
+        return
+    st.caption("Refresh the catalogue every week without opening the app: a Task Scheduler task runs "
+               "`pdcat scan`, then profiles the tables approved under Add › Sources › SQL scanning. Output goes to "
+               f"`{folder / 'scan.log'}`. It runs only while you're signed in to Windows.")
+    with st.form("sched-create"):
+        c1, c2 = st.columns(2)
+        day = c1.selectbox("Day", T.DAYS, format_func=lambda d: d.capitalize())
+        time = c2.text_input("Time (24-hour)", value="07:00")
+        if st.form_submit_button("Schedule the weekly scan", type="primary"):
+            try:
+                batch = T.create(folder, config_path(), day, time.strip())
+                st.success(f"Scheduled. The task runs `{batch}`.")
+            except (RuntimeError, ValueError, OSError) as e:
+                st.error(f"Couldn't create the task: {e}")
 
 
 def backups_section(cat: Catalogue) -> None:

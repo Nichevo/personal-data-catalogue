@@ -84,7 +84,8 @@ def source_list(cat: Catalogue) -> list[dict[str, Any]]:
     return list(out.values())
 
 
-def make_share(cat: Catalogue, *, scans: list[str] | None = None, author: str | None = None) -> dict[str, Any]:
+def make_share(cat: Catalogue, *, scans: list[str] | None = None, author: str | None = None,
+               screenshots: bool = False) -> dict[str, Any]:
     from .curation import is_sensitive, sensitive_columns
     hidden = sensitive_columns(cat)
     pack: dict[str, Any] = {"format": FORMAT, "version": VERSION, "author": author or cat.author(), "made_at": now(),
@@ -119,11 +120,45 @@ def make_share(cat: Catalogue, *, scans: list[str] | None = None, author: str | 
             if is_sensitive(hidden, a["key"]):
                 a["attrs"] = json.dumps({k: v for k, v in json.loads(a["attrs"]).items() if k != "sample"})
         pack["scans"][source] = {"assets": assets, "columns": columns, "links": links, "profiles": profiles}
+    if screenshots:
+        from .screenshots import for_share
+        pack["screenshots"] = for_share(cat)
     return pack
 
 
-def to_share_json(cat: Catalogue, scans: list[str] | None = None) -> str:
-    return json.dumps(make_share(cat, scans=scans), indent=1, ensure_ascii=False, default=str)
+def _open_question(q: dict[str, Any]) -> bool:
+    return not (q.get("answer") or "").strip() and not (q.get("sql") or "").strip()
+
+
+def questions_share(cat: Catalogue) -> dict[str, Any]:
+    """A share file holding only your open questions (no answer and no SQL yet), for a colleague to answer.
+    They merge it like any share file, answer the questions in their question library, and send the answers back."""
+    rows = [dict(r) for r in cat.conn.execute("SELECT * FROM questions WHERE coalesce(author, '') IN (?, '')",
+                                              (cat.author(),))]
+    rows = [{k: v for k, v in r.items() if k != "import_batch"} for r in rows if _open_question(r)]
+    return {"format": FORMAT, "version": VERSION, "author": cat.author(), "made_at": now(), "purpose": "questions",
+            "sources": source_list(cat), "questions": rows}
+
+
+def answers_share(cat: Catalogue) -> dict[str, Any]:
+    """Answers to questions colleagues asked you: their questions that now have an answer or SQL in your library."""
+    me = cat.author()
+    rows = [dict(r) for r in cat.conn.execute("SELECT * FROM questions WHERE coalesce(author, '') NOT IN (?, '') "
+                                              "AND import_batch IS NOT NULL", (me,))]
+    rows = [{k: v for k, v in r.items() if k != "import_batch"} for r in rows if not _open_question(r)]
+    return {"format": FORMAT, "version": VERSION, "author": me, "made_at": now(), "purpose": "answers",
+            "sources": source_list(cat), "questions": rows}
+
+
+def asked_of_me(cat: Catalogue) -> list[dict[str, Any]]:
+    """Questions colleagues sent you, answered or not."""
+    return [dict(r) for r in cat.conn.execute(
+        "SELECT * FROM questions WHERE coalesce(author, '') NOT IN (?, '') AND import_batch IS NOT NULL "
+        "ORDER BY created_at DESC", (cat.author(),))]
+
+
+def to_share_json(cat: Catalogue, scans: list[str] | None = None, screenshots: bool = False) -> str:
+    return json.dumps(make_share(cat, scans=scans, screenshots=screenshots), indent=1, ensure_ascii=False, default=str)
 
 
 def read_share(text: str | bytes) -> dict[str, Any]:
@@ -307,6 +342,9 @@ def merge(cat: Catalogue, pack: dict[str, Any], mapping: dict[str, str], *, take
         for source, scan in (pack.get("scans") or {}).items():
             scans[source] = _merge_scan(cat, scan, mapping, author, batch, added)
         summary = {"counts": counts, "scans": scans, "added": added, "replaced": replaced}
+        if pack.get("screenshots"):
+            from .screenshots import merge_shared
+            summary["screenshots"] = merge_shared(cat, pack["screenshots"], lambda k: remap_key(k, mapping))
         cat.conn.execute("UPDATE import_batches SET summary = ? WHERE id = ?", (json.dumps(summary, default=str), batch))
     save_mapping(cat, author, mapping)
     cat.resolve_refs()

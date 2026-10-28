@@ -49,3 +49,32 @@ def remove(cat: Catalogue, report_key: str, page: str, name: str) -> None:
 def all_files(cat: Catalogue) -> list[Path]:
     d = folder(cat)
     return sorted(d.glob("*")) if d.is_dir() else []
+
+
+def index_rows(cat: Catalogue) -> list[dict[str, Any]]:
+    """One row per screenshot kept: report, page, file, caption, when and by whom."""
+    out = []
+    for report, pages in (cat.setting("screenshots", {}) or {}).items():
+        for page, shots in pages.items():
+            for s in shots:
+                if (folder(cat) / s["file"]).is_file():
+                    out.append({"report": report, "page": page, **s})
+    return out
+
+
+def for_share(cat: Catalogue) -> list[dict[str, Any]]:
+    """Screenshots with their image as base64, for a share file when you tick them in."""
+    import base64
+    return [{**r, "data": base64.b64encode((folder(cat) / r["file"]).read_bytes()).decode()} for r in index_rows(cat)]
+
+
+def merge_shared(cat: Catalogue, shots: list[dict[str, Any]], remap=lambda k: k) -> int:
+    import base64
+    n = 0
+    for s in shots or []:
+        data = base64.b64decode(s["data"])
+        mime = next((m for m, ext in SUFFIXES.items() if s["file"].endswith(ext)), "image/png")
+        before = len(for_page(cat, remap(s["report"]), s["page"]))
+        add(cat, remap(s["report"]), s["page"], data, mime, s.get("caption", ""))
+        n += len(for_page(cat, remap(s["report"]), s["page"])) > before
+    return n

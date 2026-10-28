@@ -200,3 +200,15 @@ def test_copilot_page_round_trip(app, catalogue):
     assert not app.exception
     assert suggestions.open_suggestions(catalogue, "copilot")
     assert any(b.label.startswith("Accept") for b in app.button)
+
+
+def test_menu_guide_covers_every_page(app):
+    from pdcat.ui.main import sections
+    from pdcat.ui.menu_guide import GUIDE, SECTIONS
+    assert set(SECTIONS) == set(sections())
+    assert {p for pages in sections().values() for p in pages} <= set(GUIDE)
+    app.run()
+    [b for b in app.sidebar.button if b.key == "menu-guide-link"][0].click().run()
+    assert not app.exception and app.title[0].value == "Menu guide"
+    [b for b in app.button if b.key == "guide-SQL queries"][0].click().run()
+    assert not app.exception and app.title[0].value == "SQL queries"
