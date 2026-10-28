@@ -21,11 +21,11 @@ dev = ["pytest>=8"]
 # Optional readers: the compressed model inside .pbix files, and exact reading of Excel macros.
 office = ["pbixray", "olefile"]
 # Optional: exact SQL reading (falls back to a simpler reader without it), Access databases on Windows,
-# and text from Word and PDF reference documents.
+# and text from PDF reference documents (Word documents are read without it).
 sql = ["sqlglot>=25"]
 access = ["pywin32; sys_platform == 'win32'"]
-documents = ["python-docx", "pypdf"]
-all = ["pbixray", "olefile", "sqlglot>=25", "pywin32; sys_platform == 'win32'", "python-docx", "pypdf"]
+documents = ["pypdf"]
+all = ["pbixray", "olefile", "sqlglot>=25", "pywin32; sys_platform == 'win32'", "pypdf"]
 
 [project.scripts]
 pdcat = "pdcat.cli:main"

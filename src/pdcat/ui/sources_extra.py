@@ -196,3 +196,63 @@ def access_section(cat: Catalogue, key: str, asset: dict) -> None:
         st.subheader(f"Local tables ({len(a['tables'])})")
         st.dataframe(pd.DataFrame([{"table": t["name"], "rows": t["rows"], "columns": len(t["columns"])}
                                    for t in a["tables"]]), hide_index=True, width="stretch")
+
+
+def excel_import_page(cat: Catalogue) -> None:
+    import pandas as pd
+
+    from pdcat import excelimport as X
+    st.title("Import from Excel")
+    st.caption("Bring in SQL queries, metrics or knowledge notes kept in a workbook (or a CSV). Pick the sheet, say "
+               "what each row is, match the columns, check the preview, then import. Each item remembers the "
+               "workbook it came from.")
+    up = st.file_uploader("Workbook", type=["xlsx", "xlsm", "csv"], key="xi-file")
+    if up is None:
+        return
+    data = up.getvalue()
+    try:
+        sheets = X.sheet_names(data, up.name)
+    except Exception as e:
+        st.error(f"Couldn't open the workbook: {type(e).__name__}: {e}")
+        return
+    sheet = st.selectbox("Sheet", sheets, key="xi-sheet")
+    try:
+        rows = X.read_sheet(data, sheet, up.name)
+    except Exception as e:
+        st.error(f"Couldn't read that sheet: {type(e).__name__}: {e}")
+        return
+    if not rows:
+        st.info("That sheet is empty.")
+        return
+    mode = st.radio("What's on the sheet", ["One item per row", "Free text: import the whole sheet as one note"],
+                    horizontal=True, key="xi-mode")
+    if mode.startswith("Free"):
+        title = st.text_input("Note title", value=f"{up.name.rsplit('.', 1)[0]}: {sheet}", key="xi-title")
+        st.text("\n".join(" · ".join(c for c in r if c.strip()) for r in rows[:20]))
+        if st.button("Import as one knowledge note", type="primary", key="xi-whole"):
+            uid = X.import_whole_sheet(cat, rows, title, up.name, sheet)
+            go(f"kb://{uid}")
+            st.rerun()
+        return
+    c1, c2 = st.columns(2)
+    row_type = c1.selectbox("Each row is", list(X.ROW_TYPES), format_func=lambda t: X.ROW_TYPES[t][0], key="xi-type")
+    header_row = c2.number_input("Header row", min_value=1, max_value=min(len(rows), 20), value=1, key="xi-header") - 1
+    columns, records = X.as_records(rows, int(header_row))
+    guess = X.guess_mapping(row_type, columns)
+    st.markdown("**Match columns to fields**")
+    mapping = {}
+    cols = st.columns(3)
+    for i, field in enumerate(X.ROW_TYPES[row_type][1]):
+        opts = ["(none)", *columns]
+        cur = guess.get(field)
+        pick = cols[i % 3].selectbox(field + (" *" if field in X.REQUIRED[row_type] else ""), opts,
+                                     index=opts.index(cur) if cur in opts else 0, key=f"xi-map-{row_type}-{field}")
+        mapping[field] = None if pick == "(none)" else pick
+    items = X.preview(row_type, records, mapping)
+    st.caption(f"{len(items)} of {len(records)} rows have the required fields (marked *).")
+    if items:
+        st.dataframe(pd.DataFrame(items[:50]), hide_index=True, width="stretch")
+        if st.button(f"Import {len(items)} {X.ROW_TYPES[row_type][0].split(' (')[0].lower()}(s)", type="primary",
+                     key="xi-go"):
+            n = X.import_rows(cat, row_type, items, up.name, sheet)
+            st.success(f"Imported {n}.")

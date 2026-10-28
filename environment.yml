@@ -16,10 +16,9 @@ dependencies:
   - pytest>=8
   # Optional readers for Power BI .pbix models and Excel macros
   - olefile
-  # Optional (2.1): exact SQL reading, and text from Word and PDF reference documents.
+  # Optional (2.1): exact SQL reading, and text from PDF reference documents.
   # The app works without them; each feature falls back or says what to install.
   - sqlglot>=25
-  - python-docx
   - pypdf
   - pip:
       - pbixray
