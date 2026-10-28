@@ -159,6 +159,7 @@ def _scan_notebook(text: str) -> Found:
     patterns: list[str] = []
     sql_strings: list[dict] = []
     renames: list[dict] = []
+    metric_cands: list[dict] = []
     merged: dict[str, dict] = {"function_info": {}, "import_map": {}, "function_refs": {}}
     for i, cell in enumerate(cells, start=1):
         source = "".join(cell.get("source", []))
@@ -190,6 +191,7 @@ def _scan_notebook(text: str) -> Found:
         unknown += [{**u, "cell": i} for u in cell_found.attrs.get("unknown_files", [])]
         sql_strings += [{**q, "cell": i} for q in cell_found.attrs.get("sql_strings", [])]
         renames += [{**r, "cell": i} for r in cell_found.attrs.get("column_renames", [])]
+        metric_cands += [{**m, "cell": i} for m in cell_found.attrs.get("metric_candidates", [])]
         patterns += cell_found.attrs.get("write_patterns", [])
         for name, value in merged.items():
             for k, v in cell_found.attrs.get(name, {}).items():
@@ -210,6 +212,8 @@ def _scan_notebook(text: str) -> Found:
         found.attrs["sql_strings"] = sql_strings[:MAX_SQL]
     if renames:
         found.attrs["column_renames"] = renames[:500]
+    if metric_cands:
+        found.attrs["metric_candidates"] = metric_cands[:100]
     if patterns:
         found.attrs["write_patterns"] = sorted(set(patterns))
     if errors:
@@ -276,6 +280,10 @@ def scan_python_source(text: str) -> Found:
         found.attrs["sql_strings"] = sorted(env.sql.values(), key=lambda q: q["line"])
     if env.renames:
         found.attrs["column_renames"] = env.renames[:500]
+    from .metricfind import python_candidates
+    metrics = python_candidates(tree)
+    if metrics:
+        found.attrs["metric_candidates"] = metrics
     return found
 
 

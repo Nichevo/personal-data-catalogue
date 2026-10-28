@@ -189,6 +189,14 @@ def metrics_page(cat: Catalogue) -> None:
                "Power BI measures can be turned into metrics from their page.")
     with st.expander("➕ New metric"):
         metric_form(cat, None)
+    from pdcat import suggestions
+    waiting = len(suggestions.open_suggestions(cat, "metric"))
+    if waiting:
+        with st.expander(f"💡 Suggested metrics ({waiting})", expanded=not K.list_metrics(cat)):
+            st.caption("Calculations found in your code, SQL and reports that aren't in the glossary yet. Tick the "
+                       "ones to add; rejected ones don't come back.")
+            from .groups_page import suggestion_picker
+            suggestion_picker(cat, "metric", prefix="mp")
     rows = K.list_metrics(cat)
     if not rows:
         st.info("No metrics yet.")

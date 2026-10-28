@@ -114,3 +114,29 @@ def test_report_labels_suggest_business_names(catalogue, tmp_path):
     suggestions.accept(catalogue, found["Units sold"]["id"])
     assert column_info(catalogue, sales)[units]["business_name"] == "Units sold"
     assert any(r["key"] == sales for r in catalogue.search("units sold"))
+
+
+def test_suggested_metrics_from_code_sql_and_reports(catalogue, report, tmp_path):
+    from pdcat import metricfind, sqllibrary, suggestions
+    from pdcat.config import PythonSource
+    from pdcat.knowledge import list_metrics
+    from pdcat.scan_python import scan_project
+    root = tmp_path / "m"
+    root.mkdir()
+    (root / "metrics.py").write_text(
+        "def wape(actual, forecast):\n    '''Weighted absolute percentage error.'''\n"
+        "    return abs(actual - forecast).sum() / actual.sum()\n"
+        "bias = (forecast - actual).sum() / actual.sum()\n"
+        'Q = "SELECT region, SUM(shipped) / NULLIF(SUM(ordered), 0) AS fill_rate FROM dbo.Orders GROUP BY region"\n')
+    scan_project(catalogue, PythonSource(name="m", path=root))
+    sqllibrary.build_library(catalogue)
+    metricfind.find_metrics(catalogue)
+    found = {s["title"]: s for s in suggestions.open_suggestions(catalogue, "metric")}
+    assert {"WAPE", "Bias", "Fill rate", "Total units"} <= set(found)
+    assert found["WAPE"]["payload"]["formula"] == "abs(actual - forecast).sum() / actual.sum()"
+    assert any(s["payload"].get("from_measure") for s in found.values())
+    suggestions.accept(catalogue, found["WAPE"]["id"])
+    [m] = [m for m in list_metrics(catalogue) if m["name"] == "WAPE"]
+    assert m["definition"] == "Weighted absolute percentage error."
+    metricfind.find_metrics(catalogue)
+    assert "WAPE" not in {s["title"] for s in suggestions.open_suggestions(catalogue, "metric")}

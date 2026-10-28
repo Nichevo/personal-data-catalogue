@@ -140,28 +140,7 @@ def suggestions_page(cat: Catalogue) -> None:
     tabs = st.tabs([f"{suggestions.KIND_LABELS.get(k, k)} ({counts[k]})" for k in kinds])
     for kind, tab in zip(kinds, tabs):
         with tab:
-            rows = suggestions.open_suggestions(cat, kind, limit=300)
-            c1, c2, _ = st.columns([1.4, 1.4, 4])
-            picked = []
-            for s in rows:
-                cc1, cc2 = st.columns([0.4, 8])
-                if cc1.checkbox("pick", key=f"sp-{s['id']}", label_visibility="collapsed"):
-                    picked.append(s["id"])
-                with cc2:
-                    st.markdown(s["title"])
-                    if s.get("detail"):
-                        st.caption(s["detail"])
-                    if s["subject"] and not s["subject"].startswith(("rule:", "naming:")):
-                        st.button("Open the item", key=f"spo-{s['id']}", on_click=go, args=(s["subject"],),
-                                  type="tertiary")
-            if c1.button(f"Accept {len(picked) or 'ticked'}", key=f"sacc-{kind}", disabled=not picked, type="primary"):
-                for sid in picked:
-                    suggestions.accept(cat, sid)
-                st.rerun()
-            if c2.button(f"Reject {len(picked) or 'ticked'}", key=f"srej-{kind}", disabled=not picked):
-                for sid in picked:
-                    suggestions.reject(cat, sid)
-                st.rerun()
+            suggestion_picker(cat, kind)
     with st.expander("Decided suggestions"):
         done = [dict(r) for r in cat.conn.execute(
             "SELECT id, kind, title, state, decided_by, updated_at FROM suggestions WHERE state IN ('accepted', 'rejected') "
@@ -173,6 +152,35 @@ def suggestions_page(cat: Catalogue) -> None:
             if d["state"] == "rejected" and c2.button("Ask again", key=f"sre-{d['id']}"):
                 suggestions.reopen(cat, d["id"])
                 st.rerun()
+
+
+def suggestion_picker(cat: Catalogue, kind: str, *, prefix: str = "sp") -> None:
+    """Open suggestions of one kind, each with a tick box, and Accept / Reject for the ticked ones."""
+    rows = suggestions.open_suggestions(cat, kind, limit=300)
+    if not rows:
+        st.caption("Nothing waiting.")
+        return
+    c1, c2, _ = st.columns([1.4, 1.4, 4])
+    picked = []
+    for s in rows:
+        cc1, cc2 = st.columns([0.4, 8])
+        if cc1.checkbox("pick", key=f"{prefix}-{s['id']}", label_visibility="collapsed"):
+            picked.append(s["id"])
+        with cc2:
+            st.markdown(s["title"])
+            if s.get("detail"):
+                st.caption(s["detail"])
+            if s["subject"] and not s["subject"].startswith(("rule:", "naming:")):
+                st.button("Open the item", key=f"{prefix}o-{s['id']}", on_click=go, args=(s["subject"],),
+                          type="tertiary")
+    if c1.button(f"Accept {len(picked) or 'ticked'}", key=f"{prefix}acc-{kind}", disabled=not picked, type="primary"):
+        for sid in picked:
+            suggestions.accept(cat, sid)
+        st.rerun()
+    if c2.button(f"Reject {len(picked) or 'ticked'}", key=f"{prefix}rej-{kind}", disabled=not picked):
+        for sid in picked:
+            suggestions.reject(cat, sid)
+        st.rerun()
 
 
 def groups_list_page(cat: Catalogue) -> None:
