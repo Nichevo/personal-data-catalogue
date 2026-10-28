@@ -272,7 +272,10 @@ one at a time, and every query is logged:
   one row ("SOH: daily, weekly, monthly") that opens to its members. Quick filter
   buttons above the results (Tables, Files, Code, Reports and measures, Metrics,
   Knowledge) replace hunting through the Kind list, and a metric found in search shows
-  the Power BI measures and SQL that calculate it, and the reverse.
+  the Power BI measures and SQL that calculate it, and the reverse. A "Group by" choice
+  regroups the results: by the script that creates them (so ten outputs of one script
+  sit under that script, with anything nothing creates under "Not linked to a script"),
+  by family, by folder or database, by business project, or not at all.
 - **Recently viewed** items in the sidebar.
 - **Edit history** on notes and descriptions: who changed what and when, with undo.
 - **Schedule scans from the app**: a Settings button that creates (or removes) the
