@@ -440,6 +440,16 @@ def to_dot(g: Graph) -> str:
         "focus": 'shape=box style="rounded,filled,bold" fillcolor="#fde68a" color="#b45309" penwidth=2',
         "libfn": 'shape=box style="rounded,filled" fillcolor="#f3e8fd" color="#8a4ac9"',
         "external": 'shape=plain fontcolor="#666666"',
+        "report": 'shape=box style="rounded,filled" fillcolor="#ffe7d6" color="#e07b39"',
+        "workbook": 'shape=box style="rounded,filled" fillcolor="#ddf1e6" color="#1e7a46"',
+        "access_db": 'shape=cylinder style=filled fillcolor="#f6e3e3" color="#a33a3a"',
+        "api": 'shape=hexagon style=filled fillcolor="#e0f2fe" color="#0284c7"',
+        "web_scraping": 'shape=octagon style=filled fillcolor="#fce7f3" color="#be185d"',
+        "web_file": 'shape=note style=filled fillcolor="#e0f2fe" color="#0284c7"',
+        "database": 'shape=cylinder style=filled fillcolor="#d1fae5" color="#047857" penwidth=2',
+        "cloud_storage": 'shape=ellipse style=filled fillcolor="#ede9fe" color="#6d28d9"',
+        "sharepoint": 'shape=folder style=filled fillcolor="#ccfbf1" color="#0f766e"',
+        "sap": 'shape=box3d style=filled fillcolor="#fef3c7" color="#b45309"',
     }
     lines = ["digraph codemap {", '  rankdir=LR; graph [fontname="Helvetica" fontsize=11];',
              '  node [fontname="Helvetica" fontsize=10]; edge [fontname="Helvetica" fontsize=9 color="#666666"];']
@@ -478,7 +488,11 @@ def to_mermaid(g: Graph) -> str:
     ids = _ids(g)
     shape = {"code": ('["', '"]'), "project": ('["', '"]'), "library": ('[["', '"]]'),
              "table": ('[("', '")]'), "file": ('>"', '"]'), "function": ('("', '")'),
-             "focus": ('(["', '"])'), "libfn": ('("', '")'), "external": ('["', '"]')}
+             "focus": ('(["', '"])'), "libfn": ('("', '")'), "external": ('["', '"]'),
+             "report": ('("', '")'), "workbook": ('("', '")'), "access_db": ('[("', '")]'),
+             "api": ('{{"', '"}}'), "web_scraping": ('{{"', '"}}'), "web_file": ('>"', '"]'),
+             "database": ('[("', '")]'), "cloud_storage": ('(("', '"))'), "sharepoint": ('[/"', '"/]'),
+             "sap": ('[["', '"]]')}
     lines = ["flowchart LR"]
     groups: dict[str | None, list[str]] = defaultdict(list)
     for k, n in g.nodes.items():
@@ -500,8 +514,14 @@ def to_mermaid(g: Graph) -> str:
         lines.append(f'    {ids[a]} {arrow}|"{_mq(text)}"| {ids[b]}' if text else f"    {ids[a]} {arrow} {ids[b]}")
     lines += ["    classDef table fill:#e6f4ea,stroke:#3b8a4e", "    classDef file fill:#fef7e0,stroke:#b58a00",
               "    classDef library fill:#f3e8fd,stroke:#8a4ac9", "    classDef libfn fill:#f3e8fd,stroke:#8a4ac9",
-              "    classDef focus fill:#fde68a,stroke:#b45309,stroke-width:2px"]
-    for kind in ("table", "file", "library", "libfn", "focus"):
+              "    classDef focus fill:#fde68a,stroke:#b45309,stroke-width:2px",
+              "    classDef report fill:#ffe7d6,stroke:#e07b39", "    classDef workbook fill:#ddf1e6,stroke:#1e7a46",
+              "    classDef api fill:#e0f2fe,stroke:#0284c7", "    classDef web_scraping fill:#fce7f3,stroke:#be185d",
+              "    classDef web_file fill:#e0f2fe,stroke:#0284c7", "    classDef database fill:#d1fae5,stroke:#047857",
+              "    classDef cloud_storage fill:#ede9fe,stroke:#6d28d9",
+              "    classDef sharepoint fill:#ccfbf1,stroke:#0f766e", "    classDef sap fill:#fef3c7,stroke:#b45309"]
+    for kind in ("table", "file", "library", "libfn", "focus", "report", "workbook", "api", "web_scraping",
+                 "web_file", "database", "cloud_storage", "sharepoint", "sap"):
         members = [ids[k] for k, n in g.nodes.items() if n["kind"] == kind]
         if members:
             lines.append(f"    class {','.join(members)} {kind}")

@@ -10,8 +10,14 @@
     code: ["#dbe8ff", "#3b6fd8"], library: ["#ece2ff", "#7a4fd1"], project: ["#dbe8ff", "#3b6fd8"],
     table: ["#dcf3e3", "#2f9e57"], view: ["#e6f6ea", "#4caf6f"], file: ["#fff5cc", "#c9a227"],
     package: ["#eeeeee", "#8a8a8a"], report: ["#ffe7d6", "#e07b39"], workbook: ["#ddf1e6", "#1e7a46"],
-    function: ["#eef3ff", "#5b7fd6"], other: ["#f1f1f1", "#999999"],
+    function: ["#eef3ff", "#5b7fd6"], other: ["#f1f1f1", "#999999"], access_db: ["#f6e3e3", "#a33a3a"],
+    api: ["#e0f2fe", "#0284c7"], web_scraping: ["#fce7f3", "#be185d"], web_file: ["#e0f2fe", "#0284c7"],
+    database: ["#d1fae5", "#047857"], cloud_storage: ["#ede9fe", "#6d28d9"], sharepoint: ["#ccfbf1", "#0f766e"],
+    sap: ["#fef3c7", "#b45309"],
   };
+  // Shapes for the kinds of data source on the data flow diagram.
+  const SHAPES = { api: "round-hexagon", web_scraping: "round-octagon", web_file: "round-tag", database: "barrel",
+                   cloud_storage: "ellipse", sharepoint: "round-rectangle", sap: "cut-rectangle", access_db: "barrel" };
   const EDGE = { imports: "#3b6fd8", runs: "#8a4ac9", reads: "#7a8699", writes: "#d64545", calls: "#5b7fd6", declared: "#2f9e57",
                  confirmed: "#2f9e57", suggested: "#b0b6c3", uses: "#7a8699" };
 
@@ -72,6 +78,10 @@
     s.splice(1, 0, { selector: "node[kind = 'file']", style: { "shape": "tag", "width": tagWidth,
                                                                 "text-margin-x": (n) => -0.12 * tagWidth(n) } });
     s.splice(1, 0, { selector: "node[kind = 'package']", style: { "shape": "rectangle" } });
+    Object.keys(SHAPES).forEach((k) => {
+      s.splice(1, 0, { selector: `node[kind = '${k}']`, style: { "shape": SHAPES[k],
+        "padding": ["api", "web_scraping"].includes(k) ? "12px" : "10px" } });
+    });
     return s;
   }
 
