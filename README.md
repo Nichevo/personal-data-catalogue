@@ -288,7 +288,11 @@ one at a time, and every query is logged:
 - **Tidier "Contains" lists**: a folder's contents show dated copies of the same data
   as one line per series (`sales_{yyyy}{mm}.csv · 48 files · Jan 2022 to Dec 2025`),
   opening to the files, and the rest grouped by subfolder and type, as a sortable table
-  with a filter box instead of a long list of buttons.
+  with a filter box instead of a long list of buttons. Scripts help find the series: a
+  script that writes `f"out/sales_{run_date}.csv"` shows that every file matching
+  `out/sales_*.csv` is one output, so they're grouped even when the part that changes
+  isn't a recognisable date (a run number, a version, an odd date format), and the
+  series links back to the script that makes it.
 - **Power BI measures as a table**: a report's measures (some have hundreds) show as a
   sortable, filterable table: name, home table, display folder, format, what it uses
   (columns and other measures), which pages and visuals show it, and whether it's in
