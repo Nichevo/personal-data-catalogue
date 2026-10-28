@@ -50,7 +50,8 @@ def gather(cat: Catalogue) -> list[dict[str, Any]]:
     out: list[dict[str, Any] | None] = []
     for r in cat.conn.execute(
             "SELECT key, kind, name, source, attrs FROM assets WHERE status = 'active' AND kind IN "
-            "('script', 'notebook', 'sql_script', 'workbook', 'report', 'access_db', 'sql_snippet')"):
+            "('script', 'notebook', 'sql_script', 'workbook', 'report', 'access_db', 'sql_snippet', 'view', "
+            "'procedure')"):
         a = json.loads(r["attrs"])
         key, kind, src = r["key"], r["kind"], r["source"]
         stem = PurePath(r["name"]).stem
@@ -76,6 +77,9 @@ def gather(cat: Catalogue) -> list[dict[str, Any]]:
                 out.append(_place(q.get("sql", ""), key, f"saved query {q.get('name', '')}", q.get("name"), src))
         elif kind == "sql_snippet":
             out.append(_place(a.get("sql", ""), key, "pasted SQL", r["name"], src))
+        elif kind in ("view", "procedure") and a.get("definition"):
+            out.append(_place(a["definition"], key, f"{kind} definition", r["name"], src,
+                              database=f"{src}/{a.get('database', '')}".lower()))
     return [p for p in out if p]
 
 
@@ -130,7 +134,8 @@ def build_library(cat: Catalogue) -> int:
             sql = max((p["sql"] for p in ps), key=len)
             old = existing.get(uid)
             analysis = json.loads(old["analysis"]) if old and old["analysis"] not in (None, "", "{}") else analyse(sql)
-            hint = next((hints[p["item"]] for p in ps if p["item"] in hints), None)
+            hint = next((p["database"] for p in ps if p.get("database")), None) or \
+                next((hints[p["item"]] for p in ps if p["item"] in hints), None)
             if not hint:  # an Access query's bare names are that file's own tables first
                 access = next((p for p in ps if p["location"].startswith("saved query")), None)
                 if access:
@@ -266,7 +271,9 @@ def activity(cat: Catalogue, q: dict[str, Any], *, ctx: dict[str, Any] | None = 
         reasons.append("writes files that keep refreshing")
     if any(i in ctx["current_versions"] for i in live):
         reasons.append("current version of its script")
-    if any(t.get("relation") == "calls" and t.get("key") for t in q["tables"]):
+    if any(i in ctx["objects"] for i in live):
+        reasons.append("a view or procedure that exists now")
+    elif any(t.get("relation") == "calls" and t.get("key") for t in q["tables"]):
         reasons.append("calls a procedure that exists")
     if any(ctx["recent"].get(i) for i in live):
         reasons.append("changed recently")
@@ -300,7 +307,9 @@ def context(cat: Catalogue) -> dict[str, Any]:
     for k, v in last_change(cat).items():
         if v.get("at") and v["at"] >= iso_cutoff:
             recent[k] = True
-    return {"hidden": hidden, "scheduled": scheduled_keys(cat), "refreshing_writers": writers,
+    objects = {r[0] for r in cat.conn.execute("SELECT key FROM assets WHERE kind IN ('view', 'procedure') AND "
+                                              "status = 'active'")}
+    return {"hidden": hidden, "scheduled": scheduled_keys(cat), "refreshing_writers": writers, "objects": objects,
             "current_versions": current, "recent": recent}
 
 
@@ -331,18 +340,22 @@ def using_table(cat: Catalogue, table_key: str) -> list[dict[str, Any]]:
             join_text.append({"other": other, "other_key": by_name.get(other, {}).get("key"), "column": ours,
                               "other_column": theirs, "kind": j["kind"]})
         reasons = activity(cat, q, ctx=ctx)
+        from .sqlchecks import SEVERITY_ICONS, findings_for
+        found = [f for f in findings_for(cat, q) if not f["ok"]]
         old = q["status"] == "missing" or bool(q["places"]) and all(p["item"] in ctx["hidden"] for p in q["places"])
         out.append({"uid": q["uid"], "name": q["name"], "status": q["status"], "relation": ", ".join(
             sorted({t["relation"] for t in mine})), "columns": sorted({c for t in mine for c in t["columns"]},
                                                                    key=str.lower),
-                    "joins": join_text, "active": reasons, "old": old, "places": q["places"]})
+                    "joins": join_text, "active": reasons, "old": old, "places": q["places"],
+                    "checks": " ".join(f"{SEVERITY_ICONS[f['severity']]} {f['title']}" for f in found[:3])})
     out.sort(key=lambda r: (r["old"], -len(r["active"]), r["name"].lower()))
     return out
 
 
-def field_elements(q: dict[str, Any]) -> list[dict[str, Any]]:
+def field_elements(q: dict[str, Any], cat: Catalogue | None = None) -> list[dict[str, Any]]:
     """A field diagram for one query: each table with the columns the query uses, joins drawn between
-    them labelled with their columns, and the columns it renames."""
+    them labelled with their columns (plus the database's keys between them, dashed), and the columns
+    it renames."""
     nodes, edges = [], []
     ids = {}
     for t in q["tables"]:
@@ -360,6 +373,15 @@ def field_elements(q: dict[str, Any]) -> list[dict[str, Any]]:
         if a and b:
             edges.append({"data": {"id": f"j{i}", "source": a, "target": b, "relation": "joins",
                                    "label": f"{j['left_column']} = {j['right_column']} ({j['kind']})"}})
+    joined = {(e["data"]["source"], e["data"]["target"]) for e in edges}
+    keys = {t["key"] for t in q["tables"] if t.get("key")}
+    if cat is not None and len(keys) > 1:
+        from .relationships import relationships
+        for i, r in enumerate(relationships(cat, keys)):
+            if r["state"] in ("declared", "confirmed") and (r["src_key"], r["dst_key"]) not in joined \
+                    and (r["dst_key"], r["src_key"]) not in joined:
+                edges.append({"data": {"id": f"k{i}", "source": r["src_key"], "target": r["dst_key"],
+                                       "relation": "suggested", "label": f"key: {r['src_columns']} = {r['dst_columns']}"}})
     renames = q["analysis"].get("renames", [])
     if renames:
         nodes.append({"data": {"id": "sqlout", "label": "\n".join(

@@ -129,7 +129,7 @@ def detail(cat: Catalogue, key: str) -> None:
     renames_box(cat, key)
     if asset["kind"] in ("table", "view", "procedure"):
         using_table_box(cat, key)
-    if asset["kind"] in ("script", "notebook", "sql_script", "workbook", "report", "access_db"):
+    if asset["kind"] in ("script", "notebook", "sql_script", "workbook", "report", "access_db", "view", "procedure"):
         queries_in_box(cat, key)
 
     from .extras import item_extras_bottom

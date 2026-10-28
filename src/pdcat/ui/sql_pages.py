@@ -126,7 +126,7 @@ def query_page(cat: Catalogue, key: str) -> None:
     if q["tables"]:
         with st.expander("Field diagram", expanded=len(q["tables"]) > 1):
             from .graphview import graph_view
-            graph_view(cat, sqllibrary.field_elements(q), key=f"qdiag-{uid}", height=420, name=f"query-{uid[:6]}")
+            graph_view(cat, sqllibrary.field_elements(q, cat), key=f"qdiag-{uid}", height=420, name=f"query-{uid[:6]}")
     _findings_box(cat, q)
 
 
@@ -182,13 +182,27 @@ def using_table_box(cat: Catalogue, key: str) -> None:
                 st.button(("🗄️ " if r["old"] else "🧾 ") + r["name"], key=f"ut-{key}-{i}", type="tertiary",
                           on_click=go, args=(f"query://{r['uid']}",))
             text = f"{how}  \nin {where}" + (f" · ✅ {', '.join(r['active'])}" if r["active"] else "")
+            if r.get("checks"):
+                text += " · " + r["checks"]
             c2.caption(text if not r["old"] else f":gray[{text} · looks old]")
 
 
 def queries_in_box(cat: Catalogue, key: str) -> None:
-    """On a script, workbook, report or Access page: the SQL found in it."""
+    """On a script, workbook, report or Access page: the SQL found in it. On a view or procedure: the
+    tables and fields its definition uses, and its checks."""
     rows = sqllibrary.queries_in(cat, key)
     if not rows:
+        return
+    asset = cat.get_asset(key) or {}
+    if asset.get("kind") in ("view", "procedure"):
+        q = sqllibrary.get(cat, rows[0]["uid"])
+        with st.expander(f"🧾 Tables and fields it uses ({len(q['tables'])})"):
+            if q["tables"]:
+                from .graphview import graph_view
+                graph_view(cat, sqllibrary.field_elements(q, cat), key=f"qdiag-{key}", height=420,
+                           name=f"fields-{asset.get('name', 'sql')}")
+            st.button("Open as a query (checks, places, rename)", key=f"qi-{key}", on_click=go,
+                      args=(f"query://{q['uid']}",))
         return
     with st.expander(f"🧾 SQL in this file ({len(rows)})"):
         for i, r in enumerate(rows):

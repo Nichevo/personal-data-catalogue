@@ -199,3 +199,23 @@ def test_sql_alias_into_a_table_is_a_rename(cat):
     from pdcat import colrenames
     colrenames.find_renames(cat)
     assert colrenames.renames_for(cat, STORES)["from"][0]["src_column"] == "Area"
+
+
+def test_views_are_in_the_library_and_catalogue_checks(cat):
+    cat.set_columns(SALES, [{"name": "StoreId", "data_type": "varchar(10)", "ordinal": 1}])
+    cat.set_columns(STORES, [{"name": "StoreId", "data_type": "int", "ordinal": 1}])
+    cat.upsert_asset("sql://dw/salesdb/dbo.vsales", "view", "dbo.vSales", "dw",
+                     attrs={"object": "vsales", "schema": "dbo", "database": "salesdb",
+                            "definition": "CREATE VIEW dbo.vSales AS SELECT s.StoreId FROM dbo.Sales s "
+                                          "JOIN dbo.Stores st ON st.StoreId = s.StoreId JOIN dbo.Gone g ON g.id = s.id"})
+    cat.conn.commit()
+    sqllibrary.build_library(cat)
+    [q] = sqllibrary.queries_in(cat, "sql://dw/salesdb/dbo.vsales")
+    q = sqllibrary.get(cat, q["uid"])
+    assert "a view or procedure that exists now" in sqllibrary.activity(cat, q)
+    rules = {f["rule"]: f for f in sqlchecks.findings_for(cat, q)}
+    assert "type_mismatch" in rules and rules["missing_object"]["about"] == "dbo.gone"
+    snippet = cat.save_snippet("bare", "SELECT StoreId FROM Sales")
+    sqllibrary.build_library(cat)
+    [b] = sqllibrary.queries_in(cat, snippet)
+    assert "missing_schema" in {f["rule"] for f in sqlchecks.findings_for(cat, sqllibrary.get(cat, b["uid"]))}

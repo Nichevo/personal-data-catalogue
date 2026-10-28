@@ -50,6 +50,35 @@ RULES: dict[str, tuple[str, str, str, str]] = {
     "distinct_join": ("wrong", "SELECT DISTINCT over joins",
                       "DISTINCT can hide a join that multiplies rows. Check the join keys give one match.",
                       DOCS + "t-sql/queries/select-transact-sql"),
+    "join_no_condition": ("wrong", "JOIN without ON",
+                          "A join with no join condition pairs every row with every row. Add ON, or write CROSS "
+                          "JOIN if that's what you mean.", DOCS + "relational-databases/performance/joins"),
+    "divide_no_guard": ("wrong", "Division without a zero guard",
+                        "Dividing by a column fails (or gives NULL with ANSI settings off) when it's 0. "
+                        "NULLIF(x, 0) avoids the error.", DOCS + "t-sql/functions/nullif-transact-sql"),
+    "non_unique_join": ("wrong", "Join on columns that aren't unique",
+                        "Neither side of the join is unique (from the profiles), so rows multiply.",
+                        DOCS + "relational-databases/performance/joins"),
+    "type_mismatch": ("wrong", "Join compares different types",
+                      "The joined columns have different data types, so SQL Server converts one side: values can "
+                      "fail to match, and indexes may not be used.",
+                      DOCS + "t-sql/data-types/data-type-conversion-database-engine"),
+    "missing_object": ("wrong", "Table not found",
+                       "This table isn't in the scanned database any more (or never was). It may have been dropped "
+                       "or renamed.", DOCS + "t-sql/statements/drop-table-transact-sql"),
+    "deprecated_object": ("wrong", "Uses a table marked deprecated",
+                          "The table is marked deprecated or retired in the catalogue; see its page for what replaces "
+                          "it.", DOCS + "t-sql/statements/drop-table-transact-sql"),
+    "union_not_all": ("slow", "UNION without ALL",
+                      "UNION removes duplicates, which means sorting everything. UNION ALL is faster when there "
+                      "can't be duplicates or they don't matter.", DOCS + "t-sql/language-elements/set-operators-union-transact-sql"),
+    "hard_coded_date": ("risky", "Hard-coded date",
+                        "A fixed date in the SQL goes stale. Use a parameter or a date worked out from today.",
+                        DOCS + "t-sql/functions/date-and-time-data-types-and-functions-transact-sql"),
+    "missing_schema": ("risky", "Table without a schema name",
+                       "Without the schema (dbo.), SQL Server looks the name up in the user's default schema first, "
+                       "which can pick a different table and stops plans being reused.",
+                       DOCS + "relational-databases/security/authentication-access/ownership-and-user-schema-separation"),
     "function_on_column": ("slow", "Function on a column in WHERE or JOIN",
                            "Wrapping a column in a function (YEAR(), CONVERT(), ISNULL()...) stops SQL Server using "
                            "an index on it. Compare the bare column with a range instead.",
@@ -140,6 +169,19 @@ def check_sql(sql: str) -> tuple[tuple[str, str], ...]:
             found.append(("drop_or_truncate", m.group(2).strip("[]")))
     if re.search(r"\b(?:from|join)\s+(?:\[?\w+\]?\.){3}\[?\w+\]?", code):
         found.append(("linked_server", ""))
+    for m in re.finditer(r"(?<!cross )(?<!natural )\bjoin\s+[\w\[\]\.#@]+(?:\s+(?:as\s+)?(?!on\b)\w+)?\s+"
+                         r"(join|left|right|inner|full|where|group|order|union|$)", code):
+        found.append(("join_no_condition", ""))
+        break
+    if re.search(r"\bunion\s+(?!all\b)", code):
+        found.append(("union_not_all", ""))
+    for m in re.finditer(r"(?<![/*])/\s*(?!\s*nullif\b)(\(?\s*(?:[a-z_\[][\w\].]*))", code):
+        operand = m.group(1).strip("( ")
+        if operand and not operand[0].isdigit() and not operand.startswith("nullif"):
+            found.append(("divide_no_guard", operand))
+            break
+    if re.search(r"(=|<|>|between|and)\s*'(?:19|20)\d\d-?[01]\d-?[0-3]\d", raw):
+        found.append(("hard_coded_date", ""))
     return tuple(dict.fromkeys(found))
 
 
@@ -177,6 +219,7 @@ def findings_for(cat: Catalogue, q: dict[str, Any], marks: set | None = None) ->
     places = q.get("places") or []
     if any(p.get("built_from_variables") for p in places):
         pairs.append(("built_from_variables", ""))
+    pairs += _catalogue_checks(cat, q)
     out = []
     for rule, about in pairs:
         sev, title, why, article = RULES[rule]
@@ -184,6 +227,70 @@ def findings_for(cat: Catalogue, q: dict[str, Any], marks: set | None = None) ->
                     "detail": why, "article": article, "ok": (q["uid"], rule, about) in marks})
     order = {"wrong": 0, "risky": 1, "slow": 2}
     return sorted(out, key=lambda f: (f["ok"], order[f["severity"]]))
+
+
+def _catalogue_checks(cat: Catalogue, q: dict[str, Any]) -> list[tuple[str, str]]:
+    """Checks that need what's catalogued: missing or deprecated tables, schema names, and joins
+    compared with the columns' types and profiles."""
+    out: list[tuple[str, str]] = []
+    tables = q.get("tables") or []
+    analysis = q.get("analysis") or {}
+    ctes = {c.lower() for c in re.findall(r"(?:\bwith|,)\s*(\w+)\s*(?:\([^)]*\))?\s+as\s*\(", q["sql"] or "", re.I)}
+    resolved = [t for t in tables if t.get("key")]
+    for t in tables:
+        name = t["name"]
+        if "." not in name and not name.startswith(("#", "@")) and name not in ctes and t.get("relation") != "calls":
+            out.append(("missing_schema", name))
+    if resolved:
+        from .curation import item_info
+        for t in resolved:
+            if (item_info(cat, t["key"]) or {}).get("lifecycle") in ("deprecated", "retired"):
+                out.append(("deprecated_object", t["name"]))
+        # a table named in the same database as ones we know, but not found there
+        known_dbs = {k.rsplit("/", 1)[0] for k in (t["key"] for t in resolved)}
+        for t in tables:
+            if not t.get("key") and t.get("relation") != "calls" and not t["name"].startswith(("#", "@")) \
+                    and t["name"] not in ctes and t["name"].count(".") <= 1 and len(known_dbs) == 1:
+                if not cat.match_table(t["name"]):
+                    out.append(("missing_object", t["name"]))
+    keys = {t["name"]: t.get("key") for t in tables}
+    for j in analysis.get("joins", []):
+        a, b = keys.get(j["left_table"]), keys.get(j["right_table"])
+        if not a or not b:
+            continue
+        pa, pb = _profile(cat, a, j["left_column"]), _profile(cat, b, j["right_column"])
+        if pa and pb and _not_unique(pa) and _not_unique(pb):
+            out.append(("non_unique_join", f"{j['left_column']} = {j['right_column']}"))
+        ta, tb = _col_type(cat, a, j["left_column"]), _col_type(cat, b, j["right_column"])
+        if ta and tb and _type_family(ta) != _type_family(tb):
+            out.append(("type_mismatch", f"{j['left_column']} ({ta}) = {j['right_column']} ({tb})"))
+    return out
+
+
+def _profile(cat: Catalogue, key: str, column: str):
+    return cat.conn.execute("SELECT row_count, distinct_count, null_count FROM profiles WHERE asset_key = ? AND "
+                            "lower(column_name) = ?", (key, column.lower())).fetchone()
+
+
+def _not_unique(p) -> bool:
+    rows, distinct = p["row_count"] or 0, p["distinct_count"] or 0
+    return rows > 0 and distinct > 0 and distinct < rows - (p["null_count"] or 0)
+
+
+def _col_type(cat: Catalogue, key: str, column: str) -> str | None:
+    r = cat.conn.execute("SELECT data_type FROM columns WHERE asset_key = ? AND lower(name) = ?",
+                         (key, column.lower())).fetchone()
+    return (r[0] or "").lower().split("(")[0] if r and r[0] else None
+
+
+def _type_family(t: str) -> str:
+    if any(x in t for x in ("char", "text", "string", "object")):
+        return "text"
+    if any(x in t for x in ("date", "time")):
+        return "date"
+    if any(x in t for x in ("int", "dec", "num", "float", "real", "money", "bit")):
+        return "number"
+    return t
 
 
 def check_all(cat: Catalogue) -> int:
