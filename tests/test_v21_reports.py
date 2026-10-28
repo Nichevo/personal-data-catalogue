@@ -83,3 +83,34 @@ def test_report_page_shows_measures_table_and_wireframe(catalogue, report, monke
     assert any("<svg" in m.value for m in app.markdown)
     app.toggle(key=f"munused-{report}").set_value(True).run()
     assert not app.exception
+
+
+def test_report_labels_suggest_business_names(catalogue, tmp_path):
+    from pdcat import labels, suggestions
+    from pdcat.curation import column_info
+    assert labels.m_renames('Table.RenameColumns(t, {{"Units", "Units sold"}, {"Region", "Area"}})') == {
+        "Units sold": "Units", "Area": "Region"}
+    model = copy.deepcopy(TMSL)
+    part = model["model"]["tables"][0]["partitions"][0]["source"]["expression"]
+    part[-2:-1] = ['    t = Source{[Schema="dbo",Item="SalesDaily"]}[Data],',
+                   '    r = Table.RenameColumns(t, {{"Units", "Units sold"}})']
+    part[-1] = "    r"
+    lay = layout()
+    cfg = json.loads(lay["sections"][0]["visualContainers"][0]["config"])
+    cfg["singleVisual"]["columnProperties"] = {"Sales.Units sold": {"displayName": "Sold"}}
+    lay["sections"][0]["visualContainers"][0]["config"] = json.dumps(cfg)
+    folder = tmp_path / "lab"
+    folder.mkdir()
+    with zipfile.ZipFile(folder / "L.pbit", "w") as z:
+        z.writestr("Report/Layout", json.dumps(lay).encode("utf-16-le"))
+        z.writestr("DataModelSchema", json.dumps(model).encode("utf-16-le"))
+    scan_folder(catalogue, "lab", folder)
+    sales = "sql://warehouse/forecastdb/dbo.salesdaily"
+    units = next(c["name"] for c in catalogue.columns(sales) if c["name"].lower() == "units")
+    labels.find_labels(catalogue)
+    found = {s["payload"]["label"]: s for s in suggestions.open_suggestions(catalogue, "label")}
+    assert {"Units sold", "Sold"} <= set(found)
+    assert found["Units sold"]["payload"]["key"] == sales and found["Units sold"]["payload"]["column"] == units
+    suggestions.accept(catalogue, found["Units sold"]["id"])
+    assert column_info(catalogue, sales)[units]["business_name"] == "Units sold"
+    assert any(r["key"] == sales for r in catalogue.search("units sold"))

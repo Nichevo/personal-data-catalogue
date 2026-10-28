@@ -90,7 +90,25 @@ def _visual(cfg: dict) -> dict[str, Any] | None:
     if not vtype:
         return None
     fields = _fields_in(sv, {})
-    return {"type": vtype, "title": _title(cfg), "fields": fields}
+    out = {"type": vtype, "title": _title(cfg), "fields": fields}
+    labels = _display_names(sv)
+    if labels:
+        out["labels"] = labels
+    return out
+
+
+def _display_names(sv: dict) -> dict[str, str]:
+    """Field ("Sales.Units") -> the name the visual shows for it, where someone renamed it in the visual."""
+    out: dict[str, str] = {}
+    for ref, props in (sv.get("columnProperties") or {}).items():
+        if isinstance(props, dict) and props.get("displayName"):
+            out[ref] = props["displayName"]
+    state = ((sv.get("query") or {}).get("queryState") or {})
+    for role in state.values():
+        for p in (role or {}).get("projections", []) if isinstance(role, dict) else []:
+            if isinstance(p, dict) and p.get("displayName") and p.get("queryRef"):
+                out[p["queryRef"]] = p["displayName"]
+    return out
 
 
 def _pos(d: dict) -> list[float]:

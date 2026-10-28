@@ -22,6 +22,7 @@ FEATURES: dict[str, str] = {
     "backups": "Suggest main and backup table pairs",
     "renames": "Follow column renames in code and SQL",
     "comments": "Draft descriptions from comments and docstrings",
+    "report_labels": "Suggest business names for columns from Power BI report labels",
     "learned_joins": "Learn usual joins from your queries",
     "freshness": "Track whether output files keep refreshing",
 }

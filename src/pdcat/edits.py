@@ -80,6 +80,9 @@ def undo(cat: Catalogue, edit_id: int) -> str:
         from .links import set_link_mark
         set_link_mark(cat, t["src"], t["relation"], t["dst"], t.get("old"), record_edit=False)
         done = "link mark put back"
+    elif kind == "column_extra":
+        curation.set_column_extra(cat, t["key"], t["column"], t["field"], t.get("old"))
+        done = f"{t['field'].replace('_', ' ')} of {t['column']} put back"
     elif kind == "query_name":
         from .sqllibrary import rename
         rename(cat, t["uid"], t.get("old") or "", record_edit=False, named_by=t.get("old_by", "auto"))

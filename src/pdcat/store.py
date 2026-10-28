@@ -592,7 +592,7 @@ ADDED_COLUMNS = {
     "folders": {"canonical": "TEXT", "roles": "TEXT"},
     "libraries": {"role": "TEXT NOT NULL DEFAULT 'library'", "from_folder": "TEXT"},
     "item_info": {"relevance": "TEXT", "sap_name": "TEXT"},
-    "column_info": {"sap_name": "TEXT"},
+    "column_info": {"sap_name": "TEXT", "business_name": "TEXT"},
 }
 
 
@@ -958,7 +958,8 @@ class Catalogue:
         cols_by_key: dict[str, list[str]] = defaultdict(list)
         w, p = where("c.asset_key")
         for c in self.conn.execute(
-                "SELECT c.asset_key, c.name, c.description, ci.description AS mine FROM columns c "
+                "SELECT c.asset_key, c.name, c.description, coalesce(ci.description, '') || ' ' || coalesce(ci.business_name, '') || "
+                "' ' || coalesce(ci.sap_name, '') AS mine FROM columns c "
                 "LEFT JOIN column_info ci ON ci.asset_key = c.asset_key AND ci.column_name = c.name WHERE 1 = 1" + w, p):
             cols_by_key[c["asset_key"]].append(f"{c['name']} {c['description'] or ''} {c['mine'] or ''}")
         w, p = where("asset_key")

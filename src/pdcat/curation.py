@@ -93,6 +93,27 @@ def set_column_info(cat: Catalogue, key: str, column: str, *, description: str |
         cat.reindex_search(key)
 
 
+COLUMN_EXTRAS = ("sap_name", "business_name")
+
+
+def set_column_extra(cat: Catalogue, key: str, column: str, field: str, value: str | None) -> None:
+    """Set a column's SAP name or business name (the label people know it by)."""
+    if field not in COLUMN_EXTRAS:
+        raise ValueError(field)
+    old = cat.conn.execute(f"SELECT {field} FROM column_info WHERE asset_key = ? AND column_name = ?",
+                           (key, column)).fetchone()
+    value = (value or "").strip() or None
+    from .edits import record
+    with cat.conn:
+        record(cat, f"{key}#{column}", field.replace("_", " "), old[0] if old else None, value,
+               {"type": "column_extra", "key": key, "column": column, "field": field, "old": old[0] if old else None})
+        cat.conn.execute(
+            f"INSERT INTO column_info (asset_key, column_name, {field}, updated_at, author) VALUES (?, ?, ?, ?, ?) "
+            f"ON CONFLICT(asset_key, column_name) DO UPDATE SET {field} = excluded.{field}, "
+            "updated_at = excluded.updated_at, author = excluded.author", (key, column, value, now(), cat.author()))
+    cat.reindex_search(key)
+
+
 def set_relevance(cat: Catalogue, keys: list[str] | str, relevance: str) -> None:
     """Mark items not relevant or old (or "" to bring them back)."""
     if relevance not in RELEVANCE:

@@ -66,6 +66,7 @@ V21_STEPS = [
     ("backups", "backups", "find_backups", "main and backup tables"),
     ("renames", "colrenames", "find_renames", "column renames"),
     ("comments", "drafts2", "find_descriptions", "descriptions from comments"),
+    ("report_labels", "labels", "find_labels", "report labels"),
     ("learned_joins", "learned", "learn_joins", "usual joins"),
     ("freshness", "freshness", "track", "freshness"),
 ]

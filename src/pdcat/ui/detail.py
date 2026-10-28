@@ -252,28 +252,42 @@ def _key_badge(k: dict | None) -> str:
 
 
 def column_editor(cat: Catalogue, key: str, df: pd.DataFrame) -> None:
-    """Edit descriptions and sensitivity in the table itself; Save writes only what changed.
-    Also where a column is marked as a company-wide key."""
+    """Edit descriptions, business names, SAP names and sensitivity in the table itself; Save writes only
+    what changed. Also where a column is marked as a company-wide key."""
     from .keys_pages import mark_key_form
     mark_key_form(cat, key, list(df["column"]))
+    mine = curation.column_info(cat, key)
+    df = df.copy()
+    df.insert(1, "business name", [mine.get(c, {}).get("business_name") or "" for c in df["column"]])
+    df["SAP"] = [mine.get(c, {}).get("sap_name") or "" for c in df["column"]]
+    editable = ("description", "sensitive", "business name", "SAP")
     edited = st.data_editor(df, hide_index=True, width="stretch", key=f"coled-{key}",
-                            disabled=[c for c in df.columns if c not in ("description", "sensitive")],
+                            disabled=[c for c in df.columns if c not in editable],
                             column_config={"sensitive": st.column_config.CheckboxColumn(
-                                "🔒", help="Sensitive: values are never stored, shown or exported")})
-    changed = [(r["column"], r["description"], r["sensitive"]) for (_, r), (_, o) in
-               zip(edited.iterrows(), df.iterrows()) if r["description"] != o["description"]
-               or r["sensitive"] != o["sensitive"]]
+                                "🔒", help="Sensitive: values are never stored, shown or exported"),
+                                "business name": st.column_config.TextColumn(
+                                    help="What people call it, for example the label a report shows"),
+                                "SAP": st.column_config.TextColumn(help="The SAP field it holds, for example WERKS")})
+    changed = [(r, o) for (_, r), (_, o) in zip(edited.iterrows(), df.iterrows())
+               if any(r[c] != o[c] for c in editable)]
     if changed:
         c1, c2 = st.columns([1, 3])
         also = c2.checkbox("Also describe same-named columns elsewhere that have no description", value=True,
                            key=f"coled-everywhere-{key}")
         if c1.button(f"Save {len(changed)} change(s)", type="primary", key=f"coled-save-{key}"):
             everywhere = False
-            for col, desc, sens in changed:
-                curation.set_column_info(cat, key, col, description=desc, sensitive=bool(sens), rebuild=False)
-                if also and desc:
-                    curation.describe_everywhere(cat, col, desc, only_empty=True)
-                    everywhere = True
+            for r, o in changed:
+                col = r["column"]
+                if r["description"] != o["description"] or r["sensitive"] != o["sensitive"]:
+                    curation.set_column_info(cat, key, col, description=r["description"],
+                                             sensitive=bool(r["sensitive"]), rebuild=False)
+                    if also and r["description"] and r["description"] != o["description"]:
+                        curation.describe_everywhere(cat, col, r["description"], only_empty=True)
+                        everywhere = True
+                if r["business name"] != o["business name"]:
+                    curation.set_column_extra(cat, key, col, "business_name", r["business name"])
+                if r["SAP"] != o["SAP"]:
+                    curation.set_column_extra(cat, key, col, "sap_name", r["SAP"])
             if not everywhere:  # describe_everywhere already rebuilt the search index
                 cat.reindex_search(key)
             st.session_state.pop(f"coled-{key}", None)
