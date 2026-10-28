@@ -306,11 +306,21 @@ one at a time, and every query is logged:
     `LGORT`, `MEINS`), plus APO (planning books, key figures, DP and SNP), EWM
     (warehouse tasks, storage bins, handling units) and IBP (key figures, planning
     levels, attributes such as `PRDID` and `LOCID`).
+  - *APO to IBP*: what changed in the move, as a side-by-side guide: APO DP becomes IBP
+    for demand, SNP becomes IBP for supply (and response); planning books and data views
+    become planning views (mostly in the Excel add-in); characteristics and CVCs become
+    master data attributes and planning objects; location products become
+    product-location master data; macros become key figure calculations and planning
+    operators; and how forecasting, time buckets, lifecycle and realignment differ.
+    Each pair says what to check when an old APO report, extract or metric is rebuilt
+    on IBP data.
 - **Link data to SAP**: mark what a table or column is in SAP terms ("PlantID is SAP
   `WERKS`", "this table is an extract of `MARC`"). Matches are suggested from column
   names (SAP field names, or common English names such as Material and Plant), for you
   to confirm. Linked items show the SAP meaning on their page, company-wide keys gain
   their SAP field, and the Copilot pack explains both so Copilot can answer in either.
+  Data and scripts that still use APO (its tables, extracts or key figures) are flagged
+  with the IBP equivalent, so you can see what needs moving and what already has.
 - **Power BI measures as a table**: a report's measures (some have hundreds) show as a
   sortable, filterable table: name, home table, display folder, format, what it uses
   (columns and other measures), which pages and visuals show it, and whether it's in
