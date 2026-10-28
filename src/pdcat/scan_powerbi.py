@@ -28,7 +28,7 @@ from typing import Any
 
 from . import mquery
 
-READER_VERSION = 2  # 2: passwords removed from stored Power Query text
+READER_VERSION = 3  # 2: passwords removed from stored Power Query text; 3: visual positions for wireframes
 REPORT_SUFFIXES = (".pbix", ".pbit")
 
 
@@ -93,6 +93,14 @@ def _visual(cfg: dict) -> dict[str, Any] | None:
     return {"type": vtype, "title": _title(cfg), "fields": fields}
 
 
+def _pos(d: dict) -> list[float]:
+    """[x, y, width, height] of a visual on its page."""
+    try:
+        return [round(float(d.get(k) or 0), 1) for k in ("x", "y", "width", "height")]
+    except (TypeError, ValueError):
+        return [0, 0, 0, 0]
+
+
 def pages_from_layout(layout: dict) -> list[dict[str, Any]]:
     """Pages and visuals from the classic Report/Layout (or report.json) file."""
     pages = []
@@ -105,8 +113,10 @@ def pages_from_layout(layout: dict) -> list[dict[str, Any]]:
                 continue
             v = _visual(cfg)
             if v:
+                v["pos"] = _pos(vc)
                 visuals.append(v)
-        pages.append({"name": sec.get("displayName") or sec.get("name", ""), "visuals": visuals})
+        pages.append({"name": sec.get("displayName") or sec.get("name", ""), "visuals": visuals,
+                      "size": [sec.get("width") or 1280, sec.get("height") or 720]})
     return pages
 
 
@@ -124,9 +134,11 @@ def pages_from_definition(files: dict[str, bytes]) -> list[dict[str, Any]]:
             continue
         if m.group(2) == "page.json":
             page["name"] = doc.get("displayName") or page["name"]
+            page["size"] = [doc.get("width") or 1280, doc.get("height") or 720]
         else:
             v = _visual(doc)
             if v:
+                v["pos"] = _pos(doc.get("position") or {})
                 page["visuals"].append(v)
     return list(pages.values())
 
