@@ -425,7 +425,7 @@ def _ids(g: Graph) -> dict[str, str]:
 
 
 def _q(text: str) -> str:
-    return text.replace("\\", "/").replace('"', "'")
+    return text.replace("\\", "/").replace('"', "'").replace("\n", "\\n")
 
 
 def to_dot(g: Graph) -> str:
@@ -530,7 +530,7 @@ def to_mermaid(g: Graph) -> str:
 
 
 def _mq(text: str) -> str:
-    return re.sub(r'["<>]', "'", text.replace("\\", "/"))
+    return re.sub(r'["<>]', "'", text.replace("\\", "/")).replace("\n", "<br/>")
 
 
 def _short(text: str, limit: int = 40) -> str:

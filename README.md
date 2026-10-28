@@ -84,6 +84,12 @@ through your scripts and reports to the tables and files they write:
 
 ![Data flow page](docs/screenshots/dataflow.png)
 
+**Power BI map**: every Power BI report, drawn bigger the more pages, visuals and measures
+it has, with the tables and files it loads, the scripts that write those and where their
+data comes from. Older versions are folded into the current report, and reports that load
+nothing catalogued (or couldn't be read) are flagged. A table lists the same reports with
+their counts, as CSV too.
+
 **Database diagrams**: tables and how they join, split into subject areas worked out
 from the joins. Rename areas and move tables; your changes are kept:
 
@@ -193,6 +199,13 @@ through, and the tables and files that come out.
   database; outputs end up on the right. Layout is automatic.
 - **Where data comes from** table under the diagram, with a CSV download, plus Mermaid and
   Graphviz downloads of the diagram.
+- **On every script's page** (notebooks and SQL files too) the same diagram, centred on that
+  file: what it reads, what it writes, and what reads that afterwards.
+- **Power BI map** (🗺️ Map → Power BI map): every report sized by its pages, visuals and
+  measures, with the tables and files it loads, the scripts that write those, and the APIs
+  and databases behind them. Older versions are folded into the current report, and a red
+  dashed border marks a report that loads nothing catalogued, has no sources, or couldn't be
+  read. The reports table beside it (biggest first) has a CSV download.
 - When an address is built at run time (`requests.get(url)` with `url` from elsewhere), the
   source is still listed, named after the code that holds the address, so you can add a note
   saying where it points.
