@@ -265,6 +265,10 @@ one at a time, and every query is logged:
   to the home page (with an optional note on where you were), so you can get back to
   what you were working on. Untick it when you're done.
 - **Search box always in the sidebar**, so you can search from any page.
+- **Search results as a table**: a sortable table with kind, name, where it lives,
+  description, what it matched on, rows, last changed or scanned, notes, status and
+  trust, and how many scripts use it. Filter by kind or source in the table, click a row
+  to open it, and switch back to the card view if you prefer.
 - **Recently viewed** items in the sidebar.
 - **Edit history** on notes and descriptions: who changed what and when, with undo.
 - **Schedule scans from the app**: a Settings button that creates (or removes) the
@@ -293,6 +297,13 @@ one at a time, and every query is logged:
   `out/sales_*.csv` is one output, so they're grouped even when the part that changes
   isn't a recognisable date (a run number, a version, an odd date format), and the
   series links back to the script that makes it.
+- **File families by grain**: files with the same base name and a grain suffix
+  (`SOH_D`, `SOH_W`, `SOH_M`; also `_daily`, `_weekly`, `_monthly`, `_Q`, `_Y`) are
+  grouped as one family, "SOH", while each stays its own item. The family page compares
+  them side by side: the grain (from the suffix, checked against the spacing of the
+  dates inside once profiled), date range, rows, columns that differ, and which scripts
+  write and read each. The grouping is suggested for you to confirm, and you can add
+  your own suffixes.
 - **Starter knowledge packs**: optional packs of general knowledge you can load into the
   Knowledge section and Metric glossary, marked "general" so they're kept apart from
   what's specific to your data, and editable like anything else (loading again never
