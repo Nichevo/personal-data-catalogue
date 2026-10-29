@@ -35,6 +35,7 @@ def combined(title: str, caption: str, views: dict[str, Page]) -> Page:
 def sections() -> dict[str, dict[str, Page]]:
     from . import (
         bproject_pages,
+        browse_pages,
         curation_pages,
         dataflow_page,
         erd_page,
@@ -55,7 +56,9 @@ def sections() -> dict[str, dict[str, Page]]:
     )
     return {
         "🏠 Home": {"Home": home_page.home_page, "Menu guide": menu_guide.menu_guide_page},
-        "🔎 Find": {"Search": search.search_page, "SQL queries": sql_pages.queries_page},
+        "🔎 Find": {"Search": search.search_page, "Tables and datasets": browse_pages.tables_page,
+                   "Python": browse_pages.python_page, "Power BI": browse_pages.powerbi_page,
+                   "SQL queries": sql_pages.queries_page},
         "📚 Knowledge": {"Knowledge": knowledge_pages.knowledge_page, "Business projects": bproject_pages.bprojects_page,
                         "Question library": knowledge_pages.questions_page,
                         "Metric glossary": knowledge_pages.metrics_page, "ML model features": ml_pages.features_page,

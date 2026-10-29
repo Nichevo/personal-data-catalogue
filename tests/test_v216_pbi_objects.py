@@ -128,3 +128,28 @@ def test_search_shows_a_measures_report_and_its_dax(catalogue, tmp_path):
     assert rows["Sales[Units vs LY]"]["description"] == "[Total Units] - [Units LY]"
     assert rows["Sales[Total Units]"]["description"] == "Units sold, net of returns"  # its own description first
     assert rows["Sales[Total Units]"]["_folder"] == f"🗂️ reports/{folder}"
+
+
+def test_all_model_tables_and_queries(catalogue, report):
+    tables = pbiobjects.all_objects(catalogue, "tables")
+    assert {(t["name"], t["in"]) for t in tables} == {("Sales", "Sales.pbit"), ("Store", "Sales.pbit")}
+    queries = pbiobjects.all_objects(catalogue, "queries")
+    assert {q["in"] for q in queries} == {"Sales.pbit", "Sales.xlsm"}
+    assert next(q for q in queries if q["name"] == "ServerName")["type"] == "parameter"
+
+
+def test_find_menu_lists_open(catalogue, report, monkeypatch):
+    from pdcat.ui.menu_guide import GUIDE
+    for page in ("Tables and datasets", "Python", "Power BI"):
+        assert page in GUIDE
+    app = _app(catalogue, monkeypatch)
+    app.run()
+    app.session_state["nav-section"] = "🔎 Find"
+    for page in ("Tables and datasets", "Python", "Power BI"):
+        app.session_state["nav-🔎 Find"] = page
+        app.run()
+        assert not app.exception, page
+        assert any(t.value == page for t in app.title), page
+    for view in ("Model tables", "Queries", "Measures", "Reports"):
+        app.radio(key="browse-pbi-view").set_value(view).run()
+        assert not app.exception, view
