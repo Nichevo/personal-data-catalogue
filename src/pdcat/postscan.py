@@ -2,6 +2,7 @@
 relationship suggestions, company-wide key suggestions, dated file series, duplicates and the review list."""
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import Callable
 
@@ -39,18 +40,28 @@ KEEP_RUNS = 50  # after-scan runs kept for the scan log
 def after_scan(cat: Catalogue, progress=lambda *_: None, report: Report = quiet) -> dict[str, int]:
     """`progress(text)` hears about failed steps; `report(text, done, total)` hears each step as it starts,
     and any step that took a long time."""
+    from .features import on
     from .relationships import find_suggestions
     from .review import refresh_tasks
-    steps = [("relationship suggestions", find_suggestions), *_extra_steps(), ("review list", refresh_tasks)]
+
+    def relationships(cat: Catalogue, report: Report = quiet) -> int:
+        return find_suggestions(cat, report) if on(cat, "relationships") else 0
+
+    steps = [("relationship suggestions", relationships), *_extra_steps(), ("review list", refresh_tasks)]
     out: dict[str, int] = {}
     begun = time.monotonic()
     timings: list[tuple[str, float]] = []
     failed: list[str] = []
     for i, (name, step) in enumerate(steps):
-        report(f"After the scan: {name} ({i + 1} of {len(steps)})", i, len(steps))
+        title = f"After the scan: {name} ({i + 1} of {len(steps)})"
+        report(title, i, len(steps))
         started = time.monotonic()
+
+        def within(text: str, done: int | None = None, total: int | None = None, title: str = title) -> None:
+            """A long step says how far it has got; the bar then shows that step's own progress."""
+            report(text if text.startswith("  ") else f"{title}: {text}", done, total)
         try:
-            out[name] = step(cat)
+            out[name] = step(cat, report=within) if "report" in inspect.signature(step).parameters else step(cat)
         except Exception as e:  # one failing step must not hide the scan's results
             progress(f"  {name} failed: {type(e).__name__}: {e}")
             failed.append(name)

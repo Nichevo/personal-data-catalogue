@@ -62,6 +62,21 @@ _JINJA_SOURCE = re.compile(
 _JINJA_EXPR = re.compile(r"\{\{[\s\S]*?\}\}")
 _SUBST_VAR = re.compile(r"\$\(\s*\w+\s*\)|\$\{\s*[\w.]+\s*\}")
 _FORMAT_FIELD = re.compile(r"\{[\w.!:\[\]]*\}")  # "{schema}", "{0}", "{}" from str.format
+# Functions that use FROM inside their brackets: TRIM(' ' FROM name), SUBSTRING(x FROM 2 FOR 3), EXTRACT(year FROM d)
+_FROM_IN_FUNCTION = re.compile(r"\b(trim|ltrim|rtrim|extract|substring|overlay|position)\s*\(([^()]*?)\bfrom\b", re.I)
+# Old-style table hints in brackets straight after a table name: FROM dbo.Sales (NOLOCK)
+_TABLE_HINTS = re.compile(r"\(\s*(?:nolock|readuncommitted|readcommitted|readpast|repeatableread|serializable|"
+                          r"holdlock|updlock|xlock|rowlock|paglock|tablock|tablockx|nowait|index\b)", re.I)
+# Schemas that hold SQL Server's own catalogue views, never your tables
+SYSTEM_SCHEMAS = {"sys", "information_schema"}
+
+
+def is_system(name: str) -> bool:
+    """sys.objects, information_schema.columns, db.sys.tables: SQL Server's own views."""
+    parts = name.lower().split(".")
+    return len(parts) >= 2 and parts[-2] in SYSTEM_SCHEMAS
+
+
 # Cursor steps name the cursor, not a table: FETCH NEXT FROM c INTO @id
 _CURSOR_FETCH = re.compile(r"\bfetch\s+(?:(?:next|prior|first|last|absolute\s+\S+|relative\s+\S+)\s+)?"
                            r"(?:from\s+)?(?:global\s+)?[@\w]+", re.I)
@@ -120,6 +135,7 @@ def extract_refs(sql: str, dynamic: bool = False) -> list[SqlRef]:
     sql, templated = expand_templates(sql)
     dynamic = dynamic or templated  # a template variable is a name filled in later, like a Python variable
     sql = _CURSOR_FETCH.sub(" ", strip_comments(sql))
+    sql = _FROM_IN_FUNCTION.sub(lambda m: f"{m[1]}({m[2]} ", sql)
     ctes = {m.group(1).lower() for m in re.finditer(_CTE_PATTERN, sql, re.IGNORECASE)}
     # "UPDATE f SET ... FROM dbo.Forecast f" writes to dbo.Forecast, so map aliases back to tables.
     aliases = {}
@@ -134,7 +150,7 @@ def extract_refs(sql: str, dynamic: bool = False) -> list[SqlRef]:
         name = normalise(ident, dynamic)
         if name and name != aliases.get(name, name):
             name = aliases[name]
-        if name and name not in ctes:
+        if name and name not in ctes and not is_system(name):
             refs[(relation, name)] = None
 
     for pattern in _WRITE_PATTERNS:
@@ -142,6 +158,9 @@ def extract_refs(sql: str, dynamic: bool = False) -> list[SqlRef]:
             write_spans.add(m.start("t"))
             add("writes", m.group("t"))
     for m in re.finditer(_READ_PATTERN, sql, re.IGNORECASE):
+        after = sql[m.end("t"):m.end("t") + 40].lstrip()
+        if after.startswith("(") and not _TABLE_HINTS.match(after):
+            continue  # a table-valued function, FROM dbo.fnSales(@day), not a table
         if m.start("t") not in write_spans:
             add("reads", m.group("t"))
     for m in re.finditer(_MERGE_SOURCE, sql, re.IGNORECASE):

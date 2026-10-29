@@ -6,6 +6,7 @@ from __future__ import annotations
 from .store import Catalogue
 
 FEATURES: dict[str, str] = {
+    "relationships": "Suggest relationships between tables from joins in SQL and matching key names",
     "called_by": "Find scripts that run other scripts (subprocess, python -m, %run)",
     "more_outputs": "Follow file paths through function arguments, settings modules and config dictionaries",
     "script_versions": "Group versions of a script (forecast_v2.py, forecast_v3.py)",

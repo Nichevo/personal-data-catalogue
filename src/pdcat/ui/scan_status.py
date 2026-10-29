@@ -36,6 +36,12 @@ class ScanStatus:
         self.bar.progress(0.0)
         self.phase_started = time.monotonic()
 
+    @property
+    def counts_started(self) -> dict:
+        if not hasattr(self, "_counts_started"):
+            self._counts_started: dict = {}
+        return self._counts_started
+
     def __call__(self, text: str, done: int | None = None, total: int | None = None) -> None:
         self.terminal(text, done, total)
         if text.startswith("  "):  # a slow file or step
@@ -44,8 +50,11 @@ class ScanStatus:
         # Every update is shown: Streamlit only sends the latest one for each element, so this stays cheap,
         # and skipping one could leave the previous file's name on screen while a slow one is read.
         left = ""
+        # Each count is timed from when it was first seen, so a step's own progress (reading 40 of 300 views)
+        # doesn't upset the estimate for the steps around it.
+        began = self.counts_started.setdefault((self.phase_started, total), time.monotonic())
         if total and done and done >= 3:  # a few files in, the pace gives a rough time left
-            per = (time.monotonic() - getattr(self, "phase_started", self.started)) / done
+            per = (time.monotonic() - began) / done
             left = f" · about {_elapsed(per * (total - done))} left"
         self.line.markdown(f"{text}  \n*{_elapsed(time.monotonic() - self.started)} so far{left}*")
         if total:

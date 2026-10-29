@@ -165,6 +165,29 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.18
+
+- **Relationship suggestions keep up with big databases.** The first step after a scan used to
+  read every view and procedure again each time. Now what each one joins is saved with a
+  fingerprint of its SQL, so a rescan only reads the ones that changed. The joins found are saved
+  every couple of seconds, so pressing Stop keeps them, and a run stops reading after two minutes
+  and reads the rest next time. The step shows which view it is reading ("reading the SQL of
+  rpt.vSales (120 of 302)") and its own progress bar. Matching key names now only looks at
+  key-like columns and skips pairs whose types can't join (a text code against a number). Turn
+  the step off under **Settings → Scan extras** if you don't want it; what it found is kept. Checked
+  with a made-up database of 415 tables, 302 views and 120 procedures (`tests/bigdb.py`).
+- **Fewer false "unmatched tables".** SQL Server's own views (`sys.objects`,
+  `INFORMATION_SCHEMA.COLUMNS`), table-valued functions (`FROM dbo.fnSales(@day)`) and the FROM
+  inside `TRIM(' ' FROM name)` or `SUBSTRING(x FROM 2)` are no longer counted as tables. Rescan
+  your SQL Server to drop the ones found before (system views drop out straight away). The
+  **Unmatched tables** page and `pdcat scan` now say why each name didn't match: in a database or
+  on a server you haven't scanned, built while the code runs, several tables with that name, or
+  not found in what you've scanned.
+- **A diagram on every table and view page.** Under **Diagram**, the table sits in the middle with
+  the tables it joins to directly: foreign keys and confirmed joins solid, suggested ones dashed.
+  Fields are off unless you switch them on, a click opens a table, and **Open the full database
+  diagram** goes to **Database diagrams** with this database and its subject area picked.
+
 ## New in version 2.16
 
 - **Power BI model tables and queries open pages of their own.** On a report's page, pick a row

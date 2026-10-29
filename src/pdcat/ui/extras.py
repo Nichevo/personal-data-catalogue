@@ -6,7 +6,7 @@ import streamlit as st
 
 from pdcat.store import Catalogue
 
-from .common import first_line, go
+from .common import first_line, go, go_page
 
 
 def item_extras_top(cat: Catalogue, key: str, asset: dict) -> None:
@@ -83,6 +83,8 @@ def item_extras_bottom(cat: Catalogue, key: str, asset: dict) -> None:
     from pdcat.relationships import joins_for, set_relationship_state
     hints = join_hints(cat, key)
     joins = joins_for(cat, key) if asset["kind"] in ("table", "view") else []
+    if asset["kind"] in ("table", "view"):
+        item_erd(cat, key, asset, bool(joins))
     if hints or joins:
         st.subheader("Joins to")
         for i, h in enumerate(hints):
@@ -122,6 +124,40 @@ def item_extras_bottom(cat: Catalogue, key: str, asset: dict) -> None:
         for q in qs:
             st.button(f"❓ {q['question']}", key=f"q-{key}-{q['uid']}", on_click=go, args=(f"q://{q['uid']}",),
                       type="tertiary")
+
+
+def item_erd(cat: Catalogue, key: str, asset: dict, joined: bool = True) -> None:
+    """A small diagram of the tables this one joins to directly, with a way into the full database diagram."""
+    from pdcat import erd
+
+    from .graphview import graph_view
+    st.subheader("Diagram")
+    c1, c2 = st.columns([1, 2], vertical_alignment="center")
+    fields = c1.toggle("Show fields", key=f"item-erd-fields-{key}", help="List every column, not just the keys")
+    elements, left_out = erd.item_elements(cat, key, fields=fields)
+    database = asset["attrs"].get("database")
+    db_key = asset.get("parent") if (asset.get("parent") or "").startswith("sql://") else None
+
+    area = erd.area_of(cat, key) if db_key else None  # worked out now: the button's callback runs after this page
+
+    def open_full() -> None:
+        if db_key:
+            st.session_state["erd-db"] = db_key
+            st.session_state[f"erd-area-{db_key}"] = area or "all"
+        go_page("Database diagrams")
+
+    c2.button("🗺️ Open the full database diagram", key=f"item-erd-open-{key}", on_click=open_full, type="tertiary",
+              help=f"Every table in {database or 'this database'}, grouped into subject areas")
+    if not joined:
+        st.caption("No joins found for this one yet. They come from foreign keys, joins in your SQL and matching "
+                   "key names, worked out after each scan.")
+        return
+    st.caption("This table in the middle and the tables it joins to: foreign keys and confirmed joins solid, "
+               "suggested ones dashed. Click a table to open it."
+               + (f" {left_out} more joined tables are left out here; the full diagram has them all." if left_out
+                  else ""))
+    graph_view(cat, elements, key=f"item-erd-{key}{'-f' if fields else ''}", height=420, direction="RIGHT",
+               name=f"erd-{asset['name']}")
 
 
 def manual_link_form(cat: Catalogue, key: str) -> None:
