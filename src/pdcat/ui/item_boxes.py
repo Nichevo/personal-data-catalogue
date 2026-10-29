@@ -24,7 +24,8 @@ def item_actions(cat: Catalogue, key: str, info: dict | None = None) -> None:
         if fol and st.button("Done: stop following", key=f"unfu-{key}"):
             followups.unfollow(cat, key)
             st.rerun()
-    if key.startswith(("kb://", "q://", "metric://", "feature://", "key://", "bp://", "group://", "query://")):
+    if key.startswith(("kb://", "q://", "metric://", "feature://", "key://", "bp://", "group://", "query://",
+                       "pbitable://", "pq://")):
         return
     rel = info.get("relevance") or ""
     if rel == "not relevant":
