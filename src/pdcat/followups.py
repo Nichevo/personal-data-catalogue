@@ -27,9 +27,17 @@ def following(cat: Catalogue, item: str) -> dict[str, Any] | None:
 
 
 def follow_ups(cat: Catalogue) -> list[dict[str, Any]]:
-    return [dict(r) for r in cat.conn.execute(
+    return [_named(dict(r)) for r in cat.conn.execute(
         f"SELECT f.item, f.note, f.created_at, {_NAME} AS name, a.kind FROM follow_ups f "
         "LEFT JOIN assets a ON a.key = f.item ORDER BY f.created_at DESC")]
+
+
+def _named(row: dict[str, Any]) -> dict[str, Any]:
+    """Model tables and Power Query queries have no row of their own: their name comes from the key."""
+    from .pbiobjects import display_name
+    if row["name"] == row["item"]:
+        row["name"] = display_name(row["item"]) or row["name"]
+    return row
 
 
 def viewed(cat: Catalogue, item: str) -> None:
@@ -42,7 +50,7 @@ def viewed(cat: Catalogue, item: str) -> None:
 
 
 def recent(cat: Catalogue, limit: int = 8) -> list[dict[str, Any]]:
-    return [dict(r) for r in cat.conn.execute(
+    return [_named(dict(r)) for r in cat.conn.execute(
         f"SELECT r.item, r.at, {_NAME.replace('f.item', 'r.item')} AS name, a.kind FROM recent_views r "
         "LEFT JOIN assets a ON a.key = r.item ORDER BY r.at DESC LIMIT ?", (limit,))]
 
@@ -65,7 +73,8 @@ def kind_of(key: str, kind: str | None) -> str:
         return kind
     for prefix, k in (("kb://", "knowledge"), ("q://", "question"), ("metric://", "metric"), ("feature://", "feature"),
                       ("bp://", "bproject"), ("key://", "key"), ("pkg://", "package"), ("group://", "group"),
-                      ("query://", "query"), ("env://", "environment"), ("doc://", "document")):
+                      ("query://", "query"), ("env://", "environment"), ("doc://", "document"),
+                      ("pbitable://", "pbi_table"), ("pq://", "pq_query")):
         if key.startswith(prefix):
             return k
     return "note"

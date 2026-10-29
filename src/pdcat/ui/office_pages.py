@@ -4,9 +4,18 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from pdcat.pbiobjects import query_key, table_key
 from pdcat.store import Catalogue
 
-from .common import asset_button
+from .common import asset_button, go
+
+
+def _open_on_select(event, keys: list[str]) -> None:
+    """Open the item behind the row picked in a table, like the measures table does."""
+    sel = event.selection.rows if event else []
+    if sel:
+        go(keys[sel[0]])
+        st.rerun()
 
 
 def office_section(cat: Catalogue, key: str, asset: dict) -> None:
@@ -25,6 +34,7 @@ def queries_block(attrs: dict, key: str) -> None:
     if not queries:
         return
     st.subheader(f"Queries ({len(queries)})")
+    st.caption("Pick a row to open the query: its code, what it reads and what it loads.")
     rows = []
     for q in queries:
         rows.append({"query": q["name"],
@@ -32,9 +42,14 @@ def queries_block(attrs: dict, key: str) -> None:
                      "reads": ", ".join(q.get("tables", []) + q.get("files", []) + q.get("folders", [])
                                         + q.get("web", []) + q.get("odbc", [])),
                      "uses queries": ", ".join(q.get("uses", []))})
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    _open_on_select(st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", on_select="rerun",
+                                 selection_mode="single-row", key=f"qtable-{key}"),
+                    [query_key(key, q["name"]) for q in queries])
     if params:
         st.caption("Parameters: " + ", ".join(f"{p['name']} = {p['parameter']}" for p in params))
+        for i, p in enumerate(params):
+            asset_button(query_key(key, p["name"]), f"{p['name']} = {p['parameter']}", "pq_query",
+                         f"qparam-{key}-{i}")
     with st.expander("Query code (M)"):
         pick = st.selectbox("Query", [q["name"] for q in queries], key=f"mq-{key}")
         q = next(q for q in queries if q["name"] == pick)
@@ -57,10 +72,16 @@ def report_section(cat: Catalogue, key: str, asset: dict) -> None:
     measures_table(cat, key)
     if a.get("tables"):
         st.subheader(f"Model tables ({len(a['tables'])})")
-        st.dataframe(pd.DataFrame([{"table": t["name"], "columns": len(t["columns"]),
-                                    "calculated": "yes" if t.get("calculated") else "",
-                                    "calculated columns": ", ".join(c["name"] for c in t["columns"] if c["calculated"])}
-                                   for t in a["tables"]]), hide_index=True, width="stretch")
+        st.caption("Pick a row to open the table: its columns, measures, relationships, source and lineage.")
+        homes = {}
+        for m in a.get("measures") or []:
+            homes[m.get("table")] = homes.get(m.get("table"), 0) + 1
+        _open_on_select(st.dataframe(pd.DataFrame([
+            {"table": t["name"], "columns": len(t["columns"]), "measures": homes.get(t["name"], 0),
+             "calculated": "yes" if t.get("calculated") else "",
+             "calculated columns": ", ".join(c["name"] for c in t["columns"] if c["calculated"])}
+            for t in a["tables"]]), hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
+            key=f"ttable-{key}"), [table_key(key, t["name"]) for t in a["tables"]])
     if a.get("relationships"):
         with st.expander(f"Relationships ({len(a['relationships'])})"):
             st.dataframe(pd.DataFrame([{"from": r["from"], "to": r["to"], "active": "" if r.get("active", True)
@@ -138,6 +159,12 @@ def pages_section(cat: Catalogue, key: str, a: dict) -> None:
                     st.caption("Measures: " + ", ".join(ms))
                 if cs:
                     st.caption("Columns: " + ", ".join(cs))
+                known = {t["name"] for t in a.get("tables") or []}
+                shown = sorted({f["table"] for f in v["fields"] if f.get("table") in known})
+                if shown:
+                    for col, t in zip(st.columns(min(len(shown), 4)), shown[:4]):
+                        with col:
+                            asset_button(table_key(key, t), t, "pbi_table", f"vt-{key}-{pi}-{t}")
             st.dataframe(pd.DataFrame([{
                 "visual": v["title"] or v["type"], "type": v["type"],
                 "measures": ", ".join(f["name"] for f in v["fields"] if f["kind"] == "measure"),
@@ -213,6 +240,9 @@ def measure_section(cat: Catalogue, key: str, asset: dict) -> None:
     report = cat.get_asset(asset["parent"]) if asset["parent"] else None
     if report:
         asset_button(report["key"], report["name"], "report", f"mrep-{key}")
+        if a.get("table") in {t["name"] for t in report["attrs"].get("tables") or []}:
+            asset_button(table_key(report["key"], a["table"]), f"Home table {a['table']}", "pbi_table",
+                         f"mtab-{key}")
     linked = [m for m in list_metrics(cat) if m.get("from_measure") == key]
     if linked:
         for m in linked:
