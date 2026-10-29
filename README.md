@@ -165,6 +165,27 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.19
+
+- **Search finds part of a name.** Typing *Stock* now finds StockonHand, OfficeStockonHand,
+  vw_MaterialStockOnHand, STOCK_LEVELS and Overstock. Names are matched by their parts
+  (CamelCase, snake_case and dotted names are split up), and a word of three letters or more
+  also matches anywhere inside a name. Separators don't matter: *stock on hand*, *stock_on_hand*
+  and *StockOnHand* find the same things.
+- **Best matches first.** A name that is exactly what you typed comes first, then names that start
+  with it, then names with it as a part, then names with it inside, then matches in descriptions,
+  columns, notes and code.
+- **Abbreviations.** A new **Abbreviations** page under Knowledge holds short forms that search
+  understands both ways: with *SOH = Stock on hand*, searching *SOH* finds StockonHand and
+  searching *stock on hand* finds SOH_Daily. It starts with common supply chain terms (SOH, ATP,
+  MRP, MOQ, OTIF, DOS, FG, WIP, PO, STO…); change it to suit your business.
+- **The same matching everywhere.** The sidebar search, the Search page, Columns only, and the
+  Find lists (Tables and datasets, Python, Power BI, including model tables and queries) all
+  match this way.
+- **Search remembers.** Coming back to Search from another page keeps your words, view, grouping
+  and filters; the Find lists keep their filter too.
+- **No rescan needed.** The search index is rebuilt once, the first time 2.19 opens your catalogue.
+
 ## New in version 2.18
 
 - **Relationship suggestions keep up with big databases.** The first step after a scan used to
