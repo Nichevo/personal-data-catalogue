@@ -184,7 +184,7 @@ def read_joins(cat: Catalogue, report: Report = quiet, budget: float | None = No
 
     for i, (key, fp, texts) in enumerate(todo):
         t = time.monotonic()
-        if t - began > budget:
+        if t - began >= budget:  # >=: on Windows the clock moves in 15 ms steps
             break
         if t - last_report >= 0.5 or i == 0:
             report(f"reading the SQL of {names[key]} ({i + 1} of {len(todo)} changed since last time)", i, len(todo))
