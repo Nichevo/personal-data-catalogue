@@ -317,3 +317,30 @@ def sap_page(cat: Catalogue) -> None:
         if sel:
             go(apo[sel[0]]["key"])
             st.rerun()
+
+
+def abbreviations_page(cat: Catalogue) -> None:
+    from pdcat import searchwords
+    st.title("Abbreviations")
+    st.caption("Short forms that search understands both ways: with **SOH = Stock on hand**, searching *SOH* finds "
+               "StockonHand and searching *stock on hand* finds SOH_Daily. The list starts with common supply chain "
+               "terms; change it to fit your business. One per line, as `short = what it stands for`.")
+    now = cat.abbreviations()
+    with st.form("abbreviations"):
+        text = st.text_area("Abbreviations", value=searchwords.as_text(now), height=420,
+                            label_visibility="collapsed")
+        c1, c2 = st.columns([1, 4])
+        save = c1.form_submit_button("Save", type="primary")
+        reset = c2.form_submit_button("Put back the starter list",
+                                      help="Replaces this list with the supply chain terms it started with.")
+    if save:
+        new = searchwords.parse(text)
+        cat.set_abbreviations(new)
+        st.toast(f"Saved {len(new)} abbreviations")
+        st.rerun()
+    if reset:
+        cat.set_abbreviations(searchwords.STARTER)
+        st.toast("Starter list put back")
+        st.rerun()
+    st.caption(f"{len(now)} abbreviations. Lines without '=' are ignored. The list is kept in the catalogue, so it "
+               "travels with it and is in backups.")

@@ -7,7 +7,7 @@ import streamlit as st
 
 from pdcat.store import Catalogue
 
-from .common import go, page_title
+from .common import go, keep, page_title, restore
 
 LIMIT = 2000
 
@@ -18,7 +18,9 @@ def _browse(cat: Catalogue, name: str, kinds: tuple[str, ...], placeholder: str,
     from .search import results_table
     tag = name.lower().replace(" ", "-")
     c1, c2 = st.columns([3, 1.3])
+    restore(f"browse-text-{tag}")
     text = c1.text_input("Filter", placeholder=placeholder, key=f"browse-text-{tag}", label_visibility="collapsed")
+    keep(f"browse-text-{tag}")
     group = c2.selectbox("Group by", SV.GROUP_BY, index=SV.GROUP_BY.index(group_by), key=f"browse-group-{tag}")
     rows = [dict(r) for r in cat.search(text, kinds=kinds, limit=LIMIT)]
     if not rows:
@@ -27,6 +29,18 @@ def _browse(cat: Catalogue, name: str, kinds: tuple[str, ...], placeholder: str,
     if len(rows) == LIMIT:
         st.caption(f"Showing the first {LIMIT:,}. Type in the filter to narrow it down.")
     results_table(cat, SV.rows_for(cat, rows), group, key=f"browse-{tag}")
+
+
+def filter_rows(cat: Catalogue, rows: list[dict], text: str) -> list[dict]:
+    """Rows with every typed word (or what it stands for) anywhere in them, separators ignored, so 'stock' finds
+    'OfficeStockonHand' and 'SOH' finds 'Stock on hand'. Names that start with the words come first."""
+    from pdcat.searchwords import alternatives, squash, words
+    groups = [alternatives(w, cat.abbreviations()) for w in words(text)]
+    hits = [r for r in rows
+            if all(any(squash(a) in squash(" ".join(str(v) for k, v in r.items() if k != "key")) for a in g)
+                   for g in groups)]
+    q = squash(text)
+    return sorted(hits, key=lambda r: not squash(str(r.get("name", ""))).startswith(q))
 
 
 def python_page(cat: Catalogue) -> None:
@@ -59,13 +73,13 @@ def powerbi_page(cat: Catalogue) -> None:
     what = "tables" if view == "Model tables" else "queries"
     st.caption(f"Every {'model table' if what == 'tables' else 'Power Query query'} in your "
                f"{'reports' if what == 'tables' else 'reports and Excel workbooks'}. Pick a row to open it.")
+    restore(f"browse-pbi-{what}")
     text = st.text_input("Filter", placeholder="name, report or source", key=f"browse-pbi-{what}",
                          label_visibility="collapsed")
+    keep(f"browse-pbi-{what}")
     rows = all_objects(cat, what)
     if text:
-        words = text.lower().split()
-        rows = [r for r in rows if all(w in " ".join(str(v) for k, v in r.items() if k != "key").lower()
-                                       for w in words)]
+        rows = filter_rows(cat, rows, text)
     if not rows:
         st.info("No matches." if text else "Nothing catalogued yet. Scan a folder with Power BI reports in it.")
         return
