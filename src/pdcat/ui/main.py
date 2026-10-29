@@ -62,7 +62,8 @@ def sections() -> dict[str, dict[str, Page]]:
         "📚 Knowledge": {"Knowledge": knowledge_pages.knowledge_page, "Business projects": bproject_pages.bprojects_page,
                         "Question library": knowledge_pages.questions_page,
                         "Metric glossary": knowledge_pages.metrics_page, "ML model features": ml_pages.features_page,
-                        "SAP links": knowledge_pages.sap_page, "Company-wide keys": keys_pages.keys_page},
+                        "SAP links": knowledge_pages.sap_page, "Company-wide keys": keys_pages.keys_page,
+                        "Abbreviations": knowledge_pages.abbreviations_page},
         "📋 Review": {
             "To review": combined("To review", "", {
                 "All checks": review_pages.review_page, "Data issues": search.data_issues_page,
