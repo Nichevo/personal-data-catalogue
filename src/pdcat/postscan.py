@@ -19,6 +19,7 @@ from . import (
     learned,
     metricfind,
     naming,
+    reportgroups,
     rulechecks,
     sapterms,
     schedules,
@@ -87,7 +88,8 @@ def _extra_steps() -> list[tuple[str, Callable[[Catalogue], int]]]:
     """(label, step) pairs, in the order they run. Each finder in SWITCHABLE_STEPS can be switched off in Settings."""
     from .features import on
     steps: list[tuple[str, Callable[[Catalogue], int]]] = [
-        ("key suggestions", suggest_keys), ("feature suggestions", suggest_features), ("duplicates", find_duplicates)]
+        # before script versions, which only suggests what this didn't group; it clears its groups when off
+        ("report versions", reportgroups.sync), ("key suggestions", suggest_keys), ("feature suggestions", suggest_features), ("duplicates", find_duplicates)]
     for feature, step, label in SWITCHABLE_STEPS:
         steps.append((label, lambda cat, step=step, feature=feature: step(cat) if on(cat, feature) else 0))
     return steps
