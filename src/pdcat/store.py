@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS assets (
     last_seen   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_assets_source ON assets(source);
+CREATE INDEX IF NOT EXISTS ix_assets_parent ON assets(parent);
 
 CREATE TABLE IF NOT EXISTS columns (
     asset_key   TEXT NOT NULL,
@@ -1114,16 +1115,19 @@ class Catalogue:
         self.changed()
 
     def search(self, text: str, *, kind: str | None = None, source: str | None = None,
-               limit: int = 100, include_hidden: bool = False, kinds: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
+               limit: int = 100, include_hidden: bool = False, kinds: tuple[str, ...] | None = None,
+               old_versions: bool = False) -> list[sqlite3.Row]:
         """Ranked matches. Each row has a "snippet" showing where the words matched (with **bold** hits).
         Deprecated and retired items sink to the bottom. Items marked not relevant and older versions of
-        scripts are left out unless `include_hidden`. `kinds` limits the results to several kinds."""
+        scripts and reports are left out unless `include_hidden`; `old_versions` brings back just the older
+        versions. `kinds` limits the results to several kinds."""
         tokens = re.findall(r"\w+", text or "")
         if not tokens:
-            return self.list_assets(kind=kind, source=source, limit=limit, include_hidden=include_hidden, kinds=kinds)
+            return self.list_assets(kind=kind, source=source, limit=limit, include_hidden=include_hidden, kinds=kinds,
+                                    old_versions=old_versions)
         filters, params = [], []
         if not include_hidden:
-            filters.append(f"s.key NOT IN ({HIDDEN_KEYS})")
+            filters.append(f"s.key NOT IN ({NOT_RELEVANT_KEYS if old_versions else HIDDEN_KEYS})")
         if kinds:
             filters.append(f"s.kind IN ({', '.join('?' * len(kinds))})")
             params += list(kinds)
@@ -1198,10 +1202,10 @@ class Catalogue:
 
     def list_assets(self, *, kind: str | None = None, source: str | None = None,
                     limit: int = 100, include_hidden: bool = False,
-                    kinds: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
+                    kinds: tuple[str, ...] | None = None, old_versions: bool = False) -> list[sqlite3.Row]:
         filters, params = ["kind != 'series_file'"], []
         if not include_hidden:
-            filters.append(f"key NOT IN ({HIDDEN_KEYS})")
+            filters.append(f"key NOT IN ({NOT_RELEVANT_KEYS if old_versions else HIDDEN_KEYS})")
         if kinds:
             filters.append(f"kind IN ({', '.join('?' * len(kinds))})")
             params += list(kinds)
@@ -1557,10 +1561,15 @@ def _norm_path(p: str) -> str:
     return p.replace("\\", "/").lower()
 
 
-# Items left out of search and lists: marked not relevant, or an older version of a script.
-HIDDEN_KEYS = """SELECT asset_key FROM item_info WHERE relevance = 'not relevant'
-    UNION SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid
-    WHERE g.type = 'versions' AND g.main_key IS NOT NULL AND g.main_key != m.asset_key"""
+# Items left out of search and lists: marked not relevant, or an older version of a script or report (and the
+# measures in an older report). `old_versions=True` on search and list_assets brings the older versions back.
+NOT_RELEVANT_KEYS = "SELECT asset_key FROM item_info WHERE relevance = 'not relevant'"
+OLDER_VERSION_KEYS = """SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid
+    WHERE g.type = 'versions' AND g.main_key IS NOT NULL AND g.main_key != m.asset_key
+    UNION SELECT a.key FROM assets a JOIN group_members m ON m.asset_key = a.parent
+    JOIN item_groups g ON g.uid = m.group_uid
+    WHERE a.kind = 'measure' AND g.type = 'versions' AND g.main_key IS NOT NULL AND g.main_key != m.asset_key"""
+HIDDEN_KEYS = f"{NOT_RELEVANT_KEYS} UNION {OLDER_VERSION_KEYS}"
 
 # Display names of search hits that aren't scanned items (knowledge, questions, business projects...).
 _KNOWLEDGE_NAME = """CASE s.kind
