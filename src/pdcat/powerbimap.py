@@ -20,19 +20,23 @@ from .dataflow import flow_graph
 from .store import Catalogue
 
 
-def reports(cat: Catalogue, *, workbooks: bool = False, show_old: bool = False) -> list[dict[str, Any]]:
-    """One row per current report (and workbook, when asked): what is in it and what it loads."""
+def reports(cat: Catalogue, *, workbooks: bool = False, show_old: bool = False,
+            old_versions: bool = False) -> list[dict[str, Any]]:
+    """One row per current report (and workbook, when asked): what is in it and what it loads. Older versions
+    are folded into the current one ("+2 older") unless `old_versions`, which lists them as reports of their own."""
     from .groups import older_versions
     from .reportversions import counts
-    hidden = hidden_from_map(cat, show_old)
     old = older_versions(cat)
+    hidden = hidden_from_map(cat, show_old) - (old if old_versions else set())
+    if old_versions:
+        old = set()
     kinds = ("report", "workbook") if workbooks else ("report",)
     marks = ", ".join("?" * len(kinds))
     versions: dict[str, int] = {}
     for r in cat.conn.execute("SELECT g.main_key, COUNT(*) FROM group_members m JOIN item_groups g "
                               "ON g.uid = m.group_uid WHERE g.type = 'versions' AND g.main_key IS NOT NULL "
                               "AND m.asset_key != g.main_key GROUP BY g.main_key"):
-        versions[r[0]] = r[1]
+        versions[r[0]] = 0 if old_versions else r[1]
     notes = dict(cat.conn.execute("SELECT asset_key, COUNT(*) FROM notes GROUP BY asset_key").fetchall())
     rows = []
     for a in cat.conn.execute(f"SELECT key, kind, name, source, attrs FROM assets WHERE kind IN ({marks}) "
@@ -82,10 +86,10 @@ def pick_reports(rows: list[dict[str, Any]], *, text: str = "", flagged_only: bo
 
 
 def report_map(cat: Catalogue, *, workbooks: bool = False, show_old: bool = False, hops: int = 3,
-               rows: list[dict[str, Any]] | None = None) -> Graph:
+               rows: list[dict[str, Any]] | None = None, old_versions: bool = False) -> Graph:
     """Reports on the right, everything that feeds them to the left (up to `hops` steps back). `rows` limits
     the map to those reports (from `pick_reports`); by default every current report is drawn."""
-    rows = reports(cat, workbooks=workbooks, show_old=show_old) if rows is None else rows
+    rows = reports(cat, workbooks=workbooks, show_old=show_old, old_versions=old_versions) if rows is None else rows
     g = flow_graph(cat, start={r["key"] for r in rows}, downstream=False, show_old=show_old, hops=hops)
     biggest = max([r["size"] for r in rows] or [1]) or 1
     for r in rows:

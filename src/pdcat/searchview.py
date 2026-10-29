@@ -48,6 +48,17 @@ def rows_for(cat: Catalogue, results: list[dict[str, Any]], *, families_as_one: 
             f"SELECT m.asset_key, g.uid, g.name FROM group_members m JOIN item_groups g ON g.uid = m.group_uid "
             f"WHERE g.type = 'family' AND m.asset_key IN ({marks})", keys):
         families[r[0]] = (r[1], r[2])
+    # Versions: the current one says how many older ones are folded under it; an older one (shown when asked) says so.
+    older_count: dict[str, int] = {}
+    older: set[str] = set()
+    for r in cat.conn.execute(
+            f"SELECT m.asset_key, g.main_key, (SELECT COUNT(*) - 1 FROM group_members x WHERE x.group_uid = g.uid) "
+            f"FROM group_members m JOIN item_groups g ON g.uid = m.group_uid WHERE g.type = 'versions' "
+            f"AND g.main_key IS NOT NULL AND m.asset_key IN ({marks})", keys):
+        if r[0] == r[1]:
+            older_count[r[0]] = r[2]
+        else:
+            older.add(r[0])
     projects: dict[str, list[str]] = defaultdict(list)
     for r in cat.conn.execute(
             f"SELECT m.asset_key, p.name FROM bproject_members m JOIN bprojects p ON p.uid = m.project_uid "
@@ -69,14 +80,16 @@ def rows_for(cat: Catalogue, results: list[dict[str, Any]], *, families_as_one: 
         attrs = json.loads(a["attrs"]) if a.get("attrs") else {}
         report = reports.get(a.get("parent") or "") if r["kind"] == "measure" else None
         row = {
-            "key": r["key"], "kind": r["kind"], "name": r["name"],
+            "key": r["key"], "kind": r["kind"],
+            "name": r["name"] + (f"  (+{older_count[r['key']]} older)" if older_count.get(r["key"]) else ""),
             "where": _where(r, a, attrs, report),
             "description": _description(r, attrs),
             "matched on": _snippet(r.get("snippet")).replace("**", ""),
             "rows": attrs.get("row_count"),
             "changed": (attrs.get("modified") or a.get("last_seen") or "")[:10],
             "notes": r.get("note_count") or 0,
-            "status": r.get("lifecycle") or ("missing" if r.get("status") == "missing" else ""),
+            "status": r.get("lifecycle") or ("missing" if r.get("status") == "missing" else "")
+            or ("older version" if r["key"] in older else ""),
             "trust": r.get("trust") or "",
             "used by": used_by.get(r["key"], 0),
             "made by": ", ".join(dict.fromkeys(n.rsplit("/", 1)[-1] for _, n in makers.get(r["key"], []))),
