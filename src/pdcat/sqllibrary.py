@@ -24,6 +24,8 @@ from .sqlrefs import looks_like_sql, strip_comments
 from .store import Catalogue, now
 
 RECENT_DAYS = 90
+EXACT_BUDGET = 300  # seconds of exact (sqlglot) reading per library build; the rest is read simply and redone next time
+MAX_TIMEOUTS = 3    # after this many queries run out of time, the rest of this build is read simply
 CODE_KINDS = ("script", "notebook", "sql_script")
 
 
@@ -132,14 +134,20 @@ def build_library(cat: Catalogue) -> int:
     index = cat.table_index()
     ts = now()
     new = 0
+    began = time.monotonic()
+    timeouts = 0
     with cat.conn:
         for uid, ps in by_uid.items():
             ps.sort(key=lambda p: (p["item"], p["location"]))
             sql = max((p["sql"] for p in ps), key=len)
             old = existing.get(uid)
             analysis = json.loads(old["analysis"]) if old and old["analysis"] not in (None, "", "{}") else {}
-            if analysis.get("version") != VERSION:  # read again with the latest reading (joins in WHERE, ...)
-                analysis = analyse(sql)
+            if analysis.get("version") != VERSION or analysis.get("deferred"):  # read with the latest reading
+                exact = timeouts < MAX_TIMEOUTS and time.monotonic() - began < EXACT_BUDGET
+                analysis = analyse(sql, exact=exact)
+                if not exact and analysis.get("parser") == "regex":
+                    analysis["deferred"] = True  # read exactly on a later build, when there's time
+                timeouts += bool(analysis.get("timed_out"))
             hint = next((p["database"] for p in ps if p.get("database")), None) or \
                 next((hints[p["item"]] for p in ps if p["item"] in hints), None)
             if not hint:  # an Access query's bare names are that file's own tables first
@@ -169,8 +177,45 @@ def build_library(cat: Catalogue) -> int:
             for uid, ps in by_uid.items() for p in ps if p.get("function") or p.get("built_from_variables")},
             quiet=True)
     cat.set_setting("sql_library_counts", {"queries": len(by_uid), "new": new, "places": len(places),
-                                           "missing": len(gone)}, quiet=True)
+                                           "missing": len(gone), "reading": reading_counts(cat)}, quiet=True)
     return len(by_uid)
+
+
+def reading_counts(cat: Catalogue) -> dict[str, Any]:
+    """How the active queries were read: {"exact", "partly", "simple", "timed_out", "commands", "cleaned": {note: n}}.
+    "partly" means some statements were read by the simple reader (sqlglot gave up on them or read them only as
+    a generic Command); "simple" means all of it was."""
+    from .sqlparser import available
+    out: dict[str, Any] = {"exact": 0, "partly": 0, "simple": 0, "timed_out": 0, "commands": 0, "cleaned": {},
+                           "sqlglot": available()}
+    for (raw,) in cat.conn.execute("SELECT analysis FROM sql_queries WHERE status = 'active'"):
+        a = json.loads(raw or "{}")
+        parser = a.get("parser")
+        out[{"sqlglot": "exact", "mixed": "partly"}.get(parser, "simple")] += 1
+        out["timed_out"] += bool(a.get("timed_out"))
+        out["commands"] += a.get("commands") or 0
+        for note in a.get("cleaned") or []:
+            out["cleaned"][note] = out["cleaned"].get(note, 0) + 1
+    return out
+
+
+READ_LABELS = {"sqlglot": "exactly", "mixed": "partly", "regex": "simply"}
+
+
+def read_label(analysis: dict[str, Any] | None) -> str:
+    return READ_LABELS.get((analysis or {}).get("parser"), "")
+
+
+def reading_summary(reading: dict[str, Any] | None) -> str:
+    """One line for the scan log: "412 read exactly, 9 partly, 3 simply (2 ran out of time)"."""
+    if not reading:
+        return ""
+    if not reading.get("sqlglot"):
+        return f"{reading.get('simple', 0)} read simply (install sqlglot for exact reading)"
+    text = f"{reading.get('exact', 0)} read exactly, {reading.get('partly', 0)} partly, {reading.get('simple', 0)} simply"
+    if reading.get("timed_out"):
+        text += f" ({reading['timed_out']} ran out of time)"
+    return text
 
 
 def _row(r) -> dict[str, Any]:
@@ -193,7 +238,7 @@ def queries(cat: Catalogue, *, table: str | None = None, item: str | None = None
     if text:
         where.append("(q.name LIKE ? OR q.sql LIKE ?)")
         params += [f"%{text}%", f"%{text}%"]
-    sql = ("SELECT q.uid, q.name, q.named_by, q.sql, q.tables, q.status, q.first_seen, q.last_seen, "
+    sql = ("SELECT q.uid, q.name, q.named_by, q.sql, q.tables, q.status, q.first_seen, q.last_seen, q.analysis, "
            "(SELECT COUNT(*) FROM sql_query_places p WHERE p.query_uid = q.uid) AS places FROM sql_queries q"
            + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY q.name COLLATE NOCASE")
     out = [_row(r) for r in cat.conn.execute(sql, params)]
