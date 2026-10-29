@@ -44,6 +44,8 @@ GUIDE = {
     "SAP links": "Tables and columns matched to SAP tables and fields, and what still uses APO.",
     "Company-wide keys": "Identifiers such as PlantID that tie data together across tables, with join hints and "
                          "checks against the master list.",
+    "Abbreviations": "Short forms search understands both ways (SOH = Stock on hand), starting with common supply "
+                     "chain terms. Add your own.",
     "To review": "Everything that needs your eyes, most important first, with views for data issues, items needing "
                  "notes, unmatched tables, unlinked data and duplicates.",
     "Suggestions": "Things the catalogue worked out for you to confirm: groups, descriptions, SAP meanings, joins, "
