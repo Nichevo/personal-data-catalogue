@@ -68,7 +68,7 @@ TABLE_COLUMNS = ["kind", "name", "where", "description", "matched on", "rows", "
                  "trust", "used by", "made by"]
 
 
-def results_table(cat: Catalogue, rows: list[dict], group_by: str) -> None:
+def results_table(cat: Catalogue, rows: list[dict], group_by: str, key: str = "search-table") -> None:
     """Results as sortable tables, one per group. Picking a row opens it (a file family opens to its members)."""
     from pdcat import searchview as SV
     groups = SV.grouped(rows, group_by)
@@ -83,7 +83,7 @@ def results_table(cat: Catalogue, rows: list[dict], group_by: str) -> None:
         df = df[[c for c in TABLE_COLUMNS if c in ("kind", "name") or df[c].astype(str).str.strip().replace(
             {"0": "", "None": "", "nan": ""}).any()]]
         event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
-                             key=f"search-table-{gi}", column_config={
+                             key=f"{key}-{gi}", column_config={
                                  "rows": st.column_config.NumberColumn(format="%d"),
                                  "description": st.column_config.TextColumn(width="large")})
         sel = event.selection.rows if event and hasattr(event, "selection") else []
@@ -112,7 +112,10 @@ def result_card(cat: Catalogue, r: dict, text: str, i: int, *, detailed: bool) -
         left, right = st.columns([4, 2])
         with left:
             asset_button(r["key"], r["name"], r["kind"], f"search-{i}")
-        bits = [kind_label(r["kind"])] + ([r["source"]] if r.get("source") else [])
+        measure = cat.get_asset(r["key"]) if r["kind"] == "measure" else None
+        report = cat.get_asset(measure["parent"]) if measure and measure["parent"] else None
+        where = f"{r['source']} › {report['name']}" if report else r.get("source")
+        bits = [kind_label(r["kind"])] + ([where] if where else [])
         if r.get("note_count"):
             bits.append(f"📝 {r['note_count']}")
         if r.get("status") == "missing":
@@ -120,6 +123,9 @@ def result_card(cat: Catalogue, r: dict, text: str, i: int, *, detailed: bool) -
         bits += badges(r)
         right.caption(" · ".join(bits))
         about = r.get("purpose") or first_line(r.get("description"))
+        if not about and measure and measure["attrs"].get("expression"):
+            from pdcat.textclean import as_text
+            about = " ".join(as_text(measure["attrs"]["expression"]).split())[:200]
         if about:
             st.caption(about)
         if not detailed:

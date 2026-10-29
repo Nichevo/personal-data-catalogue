@@ -1,0 +1,79 @@
+"""One-click lists under Find: Python code, Power BI, and tables and datasets. Each is the search table with
+the kinds already picked, and a filter box."""
+from __future__ import annotations
+
+import pandas as pd
+import streamlit as st
+
+from pdcat.store import Catalogue
+
+from .common import go, page_title
+
+LIMIT = 2000
+
+
+def _browse(cat: Catalogue, name: str, kinds: tuple[str, ...], placeholder: str, group_by: str) -> None:
+    from pdcat import searchview as SV
+
+    from .search import results_table
+    tag = name.lower().replace(" ", "-")
+    c1, c2 = st.columns([3, 1.3])
+    text = c1.text_input("Filter", placeholder=placeholder, key=f"browse-text-{tag}", label_visibility="collapsed")
+    group = c2.selectbox("Group by", SV.GROUP_BY, index=SV.GROUP_BY.index(group_by), key=f"browse-group-{tag}")
+    rows = [dict(r) for r in cat.search(text, kinds=kinds, limit=LIMIT)]
+    if not rows:
+        st.info("No matches." if text else f"No {name.lower()} catalogued yet. Add them under ➕ Add → Sources.")
+        return
+    if len(rows) == LIMIT:
+        st.caption(f"Showing the first {LIMIT:,}. Type in the filter to narrow it down.")
+    results_table(cat, SV.rows_for(cat, rows), group, key=f"browse-{tag}")
+
+
+def python_page(cat: Catalogue) -> None:
+    page_title("Python")
+    st.caption("Your Python projects, scripts and notebooks. Pick a row to open it.")
+    _browse(cat, "Python code", ("project", "script", "notebook"), "project, script or notebook name, or any word",
+            "Folder or database")
+
+
+def tables_page(cat: Catalogue) -> None:
+    page_title("Tables and datasets")
+    st.caption("Database tables and views, and the data files and file series in your folders. Pick a row to open it.")
+    _browse(cat, "Tables and datasets", ("table", "view", "data_file", "file_series"), "table, file or column word",
+            "Folder or database")
+
+
+def powerbi_page(cat: Catalogue) -> None:
+    from pdcat.pbiobjects import all_objects
+    page_title("Power BI")
+    view = st.radio("Show", ["Reports", "Model tables", "Queries", "Measures"], horizontal=True, key="browse-pbi-view",
+                    label_visibility="collapsed")
+    if view == "Reports":
+        st.caption("Every Power BI report. Pick a row to open it.")
+        _browse(cat, "Power BI reports", ("report",), "report name or any word", "Folder or database")
+        return
+    if view == "Measures":
+        st.caption("Every measure in every report. Pick a row to open it.")
+        _browse(cat, "Measures", ("measure",), "measure name or DAX word", "Not at all")
+        return
+    what = "tables" if view == "Model tables" else "queries"
+    st.caption(f"Every {'model table' if what == 'tables' else 'Power Query query'} in your "
+               f"{'reports' if what == 'tables' else 'reports and Excel workbooks'}. Pick a row to open it.")
+    text = st.text_input("Filter", placeholder="name, report or source", key=f"browse-pbi-{what}",
+                         label_visibility="collapsed")
+    rows = all_objects(cat, what)
+    if text:
+        words = text.lower().split()
+        rows = [r for r in rows if all(w in " ".join(str(v) for k, v in r.items() if k != "key").lower()
+                                       for w in words)]
+    if not rows:
+        st.info("No matches." if text else "Nothing catalogued yet. Scan a folder with Power BI reports in it.")
+        return
+    st.caption(f"{len(rows)} {view.lower()}")
+    df = pd.DataFrame([{k: v for k, v in r.items() if k != "key"} for r in rows])
+    event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
+                         key=f"browse-pbi-table-{what}")
+    sel = event.selection.rows if event else []
+    if sel:
+        go(rows[sel[0]]["key"])
+        st.rerun()
