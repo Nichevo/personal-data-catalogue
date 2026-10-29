@@ -117,3 +117,60 @@ def _esc(s: str) -> str:
 def _type_label(t: str) -> str:
     """columnChart -> column chart."""
     return re.sub(r"(?<!^)(?=[A-Z])", " ", t).lower()
+
+
+# ---- the same measure in several reports ----------------------------------------------------------
+
+def _dax_key(expression: str) -> str:
+    """A DAX expression with comments, spacing and case taken out, so two copies compare equal."""
+    text = re.sub(r"//[^\n]*|--[^\n]*|/\*[\s\S]*?\*/", " ", expression or "")
+    return re.sub(r"\s+", "", text).lower()
+
+
+def across_reports(cat: Catalogue) -> dict[str, list[dict[str, Any]]]:
+    """Measures that recur across Power BI reports.
+
+    "same_dax": one entry per expression found in more than one report, with every name it goes by and
+    where; names that differ are worth agreeing on. "same_name": one entry per measure name that is worked
+    out differently in different reports; those are the ones to check, because the same label on two
+    reports then means two different numbers. Old versions of a report (the Versions groups) are left out,
+    so a measure in a report and its earlier copies counts once."""
+    old = {r[0] for r in cat.conn.execute(
+        "SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid "
+        "WHERE g.type = 'versions' AND m.asset_key != g.main_key")}
+    reports = {r["key"]: r["name"] for r in cat.conn.execute(
+        "SELECT key, name FROM assets WHERE kind = 'report' AND status = 'active'") if r["key"] not in old}
+    by_dax: dict[str, list[dict]] = {}
+    by_name: dict[str, list[dict]] = {}
+    for r in cat.conn.execute("SELECT key, name, parent, attrs FROM assets WHERE kind = 'measure' AND status = 'active'"):
+        if r["parent"] not in reports:
+            continue
+        a = json.loads(r["attrs"] or "{}")
+        expr = (a.get("expression") or "").strip()
+        if not expr:
+            continue
+        row = {"key": r["key"], "measure": r["name"], "name": (a.get("name") or r["name"]).strip(), "expression": expr,
+               "report": reports[r["parent"]], "report_key": r["parent"], "dax": _dax_key(expr)}
+        by_dax.setdefault(row["dax"], []).append(row)
+        by_name.setdefault(row["name"].lower(), []).append(row)
+    same_dax = []
+    for rows in by_dax.values():
+        if len({x["report_key"] for x in rows}) < 2:
+            continue
+        names = sorted({x["name"] for x in rows}, key=str.lower)
+        same_dax.append({"expression": rows[0]["expression"], "names": names, "reports": len({x["report_key"] for x in rows}),
+                         "different_names": len(names) > 1, "measures": rows})
+    same_name = []
+    for rows in by_name.values():
+        versions = {}
+        for x in rows:
+            versions.setdefault(x["dax"], []).append(x)
+        if len(versions) < 2:
+            continue
+        same_name.append({"name": rows[0]["name"], "versions": len(versions),
+                          "reports": len({x["report_key"] for x in rows}),
+                          "variants": [{"expression": v[0]["expression"], "reports": sorted({x["report"] for x in v}),
+                                        "measures": v} for v in versions.values()]})
+    same_dax.sort(key=lambda e: (-e["different_names"], -e["reports"], e["names"][0].lower()))
+    same_name.sort(key=lambda e: (-e["versions"], e["name"].lower()))
+    return {"same_dax": same_dax, "same_name": same_name}

@@ -70,18 +70,22 @@ def compact_table(cat: Catalogue, tasks: list[dict], sort: str) -> None:
                                         "what": st.column_config.TextColumn(width="large"),
                                         "used by": st.column_config.NumberColumn(width="small")})
     picked = [df.loc[i, "id"] for i in (event.selection.rows if event else [])]
-    c1, c2, c3, c4 = st.columns([1.2, 1.4, 1.2, 4])
+    c0, c1, c2, c3, c4 = st.columns([1.2, 1.2, 1.4, 1.2, 3])
     label = f" ({len(picked)})" if picked else ""
 
     def bulk(status: str) -> None:
         set_tasks_status(cat, picked, status)
         st.session_state.pop("review-table", None)
 
+    # Clicking a cell only selects it, so the way to an item is: tick its row, then Open (or the title below).
+    one = by_id[picked[0]] if len(picked) == 1 else None
+    c0.button("↗ Open", disabled=one is None, on_click=go, args=(one["asset_key"] if one else None,), type="primary",
+              help="Open the ticked item's page" if one else "Tick one row to open its item")
     c1.button(f"✓ Done{label}", disabled=not picked, on_click=bulk, args=("done",))
     c2.button(f"💤 Snooze 30 days{label}", disabled=not picked, on_click=bulk, args=("snoozed",))
     c3.button(f"Dismiss{label}", disabled=not picked, on_click=bulk, args=("dismissed",),
               help="Not a problem; don't show these again")
-    c4.caption("Tick rows to act on them. Ticked rows open below with their full text.")
+    c4.caption("Tick a row (the box at its left) to open its item or act on it. Ticked rows show below in full.")
     for tid in picked[:10]:
         task_card(cat, by_id[tid])
     if len(picked) > 10:

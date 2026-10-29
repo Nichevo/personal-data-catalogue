@@ -265,3 +265,45 @@ def workbook_section(cat: Catalogue, key: str, asset: dict) -> None:
     elif a.get("macros"):
         st.caption("Macros: " + ", ".join(a["macros"]) + " (no SQL found in them)")
     over_time(cat, key, "workbook")
+
+
+def measures_across_page(cat: Catalogue) -> None:
+    """Measures that recur across reports: the same DAX under different names, and the same name worked out
+    differently."""
+    import pandas as pd
+
+    from pdcat.measures import across_reports
+
+    from .common import asset_button, page_title
+    page_title("Measures across reports")
+    st.caption("The same measure often lives in several Power BI reports. Here are the ones worth a look: the same "
+               "calculation under different names (agree on one name, or put it in the glossary), and the same name "
+               "with different calculations (two reports showing different numbers under one label). Earlier versions "
+               "of a report are left out.")
+    found = across_reports(cat)
+    if not found["same_dax"] and not found["same_name"]:
+        st.info("No measure recurs across the scanned reports yet. Scan more .pbix or .pbit files to compare them.")
+        return
+    clashes = found["same_name"]
+    st.subheader(f"Same name, different calculation ({len(clashes)})")
+    if not clashes:
+        st.success("Every measure name means the same thing wherever it appears.")
+    for e in clashes[:50]:
+        with st.expander(f"⚠️ {e['name']} · {e['versions']} calculations in {e['reports']} report(s)"):
+            for v in e["variants"]:
+                st.markdown("**In " + ", ".join(v["reports"]) + ":**")
+                st.code(v["expression"], language=None)
+                cols = st.columns(min(len(v["measures"]), 4))
+                for i, m in enumerate(v["measures"][:4]):
+                    with cols[i]:
+                        asset_button(m["key"], f"{m['report']} › {m['name']}", "measure", f"mx-{m['key']}")
+    shared = found["same_dax"]
+    st.subheader(f"Same calculation in several reports ({len(shared)})")
+    renamed = [e for e in shared if e["different_names"]]
+    if renamed:
+        st.caption(f"{len(renamed)} of these go by different names in different reports (marked ✏️).")
+    st.dataframe(pd.DataFrame([{"": "✏️" if e["different_names"] else "", "names": ", ".join(e["names"]),
+                                "reports": e["reports"],
+                                "in": ", ".join(sorted({m["report"] for m in e["measures"]})),
+                                "expression": e["expression"][:160]} for e in shared]),
+                 hide_index=True, width="stretch")

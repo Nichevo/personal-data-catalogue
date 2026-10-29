@@ -66,6 +66,23 @@ def settings_page(cat: Catalogue) -> None:
     if group != bool(cat.setting("series_grouping", True)):
         cat.set_setting("series_grouping", group)
         st.rerun()
+    from pdcat.scan_files import RECENT_MINUTES, SAMPLE_NEWEST, SAMPLE_OVER
+    with st.form("scan-pace"):
+        c1, c2, c3 = st.columns(3)
+        over = c1.number_input("Sample folders with more data files than (0 = read every file)", 0, 10 ** 7,
+                               int(cat.setting("sample_over_files", SAMPLE_OVER)), 100,
+                               help="In a bigger folder only the newest files of each dated series and the newest "
+                                    "stand-alone files are opened; the rest are listed from the file system.")
+        newest = c2.number_input("Files read per dated series when sampling", 1, 1000,
+                                 int(cat.setting("sample_newest", SAMPLE_NEWEST)))
+        recent = c3.number_input("Skip a re-scan of a source scanned less than (minutes, 0 = never skip)", 0, 10 ** 5,
+                                 int(cat.setting("recent_scan_minutes", RECENT_MINUTES)), 5,
+                                 help="Applies to Re-scan in the app and to `pdcat scan` (use --force to override).")
+        if st.form_submit_button("Save scan settings"):
+            cat.set_setting("sample_over_files", int(over), quiet=True)
+            cat.set_setting("sample_newest", int(newest), quiet=True)
+            cat.set_setting("recent_scan_minutes", int(recent), quiet=True)
+            st.toast("Saved")
     split = cat.setting("series_split", [])
     if split:
         with st.expander(f"Series you split ({len(split)})"):

@@ -63,6 +63,48 @@ KNOWN: dict[str, tuple[str, str]] = {
 }
 
 
+# Where the documentation lives for packages whose docs aren't on PyPI's front page. Anything else gets its
+# PyPI page, which links to the project's own docs.
+DOCS: dict[str, str] = {
+    "pandas": "https://pandas.pydata.org/docs/", "numpy": "https://numpy.org/doc/stable/",
+    "polars": "https://docs.pola.rs/", "pyarrow": "https://arrow.apache.org/docs/python/",
+    "scipy": "https://docs.scipy.org/doc/scipy/", "statsmodels": "https://www.statsmodels.org/stable/",
+    "scikit-learn": "https://scikit-learn.org/stable/user_guide.html", "lightgbm": "https://lightgbm.readthedocs.io/",
+    "xgboost": "https://xgboost.readthedocs.io/", "catboost": "https://catboost.ai/docs/",
+    "torch": "https://pytorch.org/docs/stable/", "tensorflow": "https://www.tensorflow.org/api_docs/python",
+    "keras": "https://keras.io/api/", "prophet": "https://facebook.github.io/prophet/docs/quick_start.html",
+    "pmdarima": "https://alkaline-ml.com/pmdarima/", "sktime": "https://www.sktime.net/en/stable/",
+    "darts": "https://unit8co.github.io/darts/", "statsforecast": "https://nixtlaverse.nixtla.io/statsforecast/",
+    "optuna": "https://optuna.readthedocs.io/", "shap": "https://shap.readthedocs.io/",
+    "mlflow": "https://mlflow.org/docs/latest/", "joblib": "https://joblib.readthedocs.io/",
+    "matplotlib": "https://matplotlib.org/stable/", "seaborn": "https://seaborn.pydata.org/",
+    "plotly": "https://plotly.com/python/", "altair": "https://altair-viz.github.io/",
+    "streamlit": "https://docs.streamlit.io/", "requests": "https://requests.readthedocs.io/",
+    "httpx": "https://www.python-httpx.org/", "pyodbc": "https://github.com/mkleehammer/pyodbc/wiki",
+    "sqlalchemy": "https://docs.sqlalchemy.org/", "openpyxl": "https://openpyxl.readthedocs.io/",
+    "xlsxwriter": "https://xlsxwriter.readthedocs.io/", "beautifulsoup4": "https://www.crummy.com/software/BeautifulSoup/bs4/doc/",
+    "selenium": "https://www.selenium.dev/documentation/", "scrapy": "https://docs.scrapy.org/",
+    "pyspark": "https://spark.apache.org/docs/latest/api/python/", "dask": "https://docs.dask.org/",
+    "duckdb": "https://duckdb.org/docs/", "pytest": "https://docs.pytest.org/", "pydantic": "https://docs.pydantic.dev/",
+    "fastapi": "https://fastapi.tiangolo.com/", "flask": "https://flask.palletsprojects.com/",
+    "dash": "https://dash.plotly.com/", "imbalanced-learn": "https://imbalanced-learn.org/stable/",
+    "skforecast": "https://skforecast.org/", "mlforecast": "https://nixtlaverse.nixtla.io/mlforecast/",
+    "neuralprophet": "https://neuralprophet.com/", "tsfresh": "https://tsfresh.readthedocs.io/",
+}
+
+
+def docs_url(package: str) -> str:
+    """The package's documentation, or its PyPI page when the docs site isn't known."""
+    norm = normalise(package)
+    for pkg, url in DOCS.items():
+        if normalise(pkg) == norm:
+            return url
+    for top, (pkg, _) in KNOWN.items():  # an import name such as sklearn
+        if top == package or normalise(pkg) == norm:
+            return DOCS.get(pkg) or f"https://pypi.org/project/{pkg}/"
+    return f"https://pypi.org/project/{package}/"
+
+
 def purpose(package_or_import: str) -> str:
     hit = KNOWN.get(package_or_import)
     if hit:
