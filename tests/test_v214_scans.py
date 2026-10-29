@@ -55,6 +55,7 @@ def test_big_folders_read_only_the_newest_files_of_each_series(tmp_path):
     counts = scan_folder(cat, "drops", root, report=lambda t, done=None, total=None: heard.append(t))
     assert counts["files"] == 10 and counts["series"] == 1
     assert any("sampled by date" in t for t in heard)
+    assert any(t.startswith("Listing data files") and "not opened" in t for t in heard)
     s = cat.get_asset(SERIES)["attrs"]
     assert s["file_count"] == 8 and s["files_not_read"] == 6
     assert [f["rows"] for f in s["files"]] == [None] * 6 + [7, 8]  # the two newest were opened

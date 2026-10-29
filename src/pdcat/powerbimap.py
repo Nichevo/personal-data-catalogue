@@ -71,9 +71,21 @@ def reports(cat: Catalogue, *, workbooks: bool = False, show_old: bool = False) 
     return sorted(rows, key=lambda r: (-r["size"], r["name"].lower()))
 
 
-def report_map(cat: Catalogue, *, workbooks: bool = False, show_old: bool = False, hops: int = 3) -> Graph:
-    """Reports on the right, everything that feeds them to the left (up to `hops` steps back)."""
-    rows = reports(cat, workbooks=workbooks, show_old=show_old)
+def pick_reports(rows: list[dict[str, Any]], *, text: str = "", flagged_only: bool = False,
+                 limit: int | None = None) -> list[dict[str, Any]]:
+    """The reports to show: those whose name or folder holds `text`, only flagged ones if asked, and at most
+    `limit` of them (the biggest first, which is how `reports` orders them)."""
+    words = [w for w in text.lower().split() if w]
+    out = [r for r in rows if all(w in f"{r['name']} {r['folder']}".lower() for w in words)
+           and (r["flag"] or not flagged_only)]
+    return out[:limit] if limit else out
+
+
+def report_map(cat: Catalogue, *, workbooks: bool = False, show_old: bool = False, hops: int = 3,
+               rows: list[dict[str, Any]] | None = None) -> Graph:
+    """Reports on the right, everything that feeds them to the left (up to `hops` steps back). `rows` limits
+    the map to those reports (from `pick_reports`); by default every current report is drawn."""
+    rows = reports(cat, workbooks=workbooks, show_old=show_old) if rows is None else rows
     g = flow_graph(cat, start={r["key"] for r in rows}, downstream=False, show_old=show_old, hops=hops)
     biggest = max([r["size"] for r in rows] or [1]) or 1
     for r in rows:
