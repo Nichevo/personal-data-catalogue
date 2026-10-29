@@ -15,9 +15,11 @@ from .common import (
     first_line,
     go,
     icon,
+    keep,
     kind_label,
     note_meta,
     page_title,
+    restore,
     result_list,
     size_label,
 )
@@ -28,6 +30,8 @@ DETAILED = 15  # results shown with their matching columns; the rest stay one li
 def search_page(cat: Catalogue) -> None:
     from pdcat import searchview as SV
     st.title("Search")
+    for k in ("search-text", "search-quick", "search-view", "search-group"):
+        restore(k)
     text = st.text_input("Search", placeholder="table, column, script, note, rule or tag…", key="search-text",
                          label_visibility="collapsed")
     quick = st.radio("Show", ["Everything", *SV.QUICK_FILTERS], horizontal=True, key="search-quick",
@@ -39,9 +43,13 @@ def search_page(cat: Catalogue) -> None:
     kinds = SV.QUICK_FILTERS.get(quick)
     kind_choices = [k for k in [*cat.kinds(), "knowledge", "question", "metric", "feature"]
                     if not kinds or k in kinds]
+    restore("search-kind", ["Any kind", *kind_choices])
     kind = c3.selectbox("Kind", ["Any kind", *kind_choices], format_func=lambda k: k if k == "Any kind" else kind_label(k),
                         key="search-kind")
-    source = c4.selectbox("Source", ["Any source", *cat.sources()], key="search-source")
+    sources = ["Any source", *cat.sources()]
+    restore("search-source", sources)
+    source = c4.selectbox("Source", sources, key="search-source")
+    keep("search-text", "search-quick", "search-view", "search-group", "search-kind", "search-source")
     if view == "Columns only":
         columns_only(cat, text)
         return
