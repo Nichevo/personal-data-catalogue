@@ -78,6 +78,18 @@ PNG, SVG or Mermaid:
 
 ![Code map page](docs/screenshots/codemap.png)
 
+**Data flow**: an ETL-style picture of where data comes from (APIs, scraped web sites,
+database connections, files, cloud storage, SharePoint, SAP) and the path it follows
+through your scripts and reports to the tables and files they write:
+
+![Data flow page](docs/screenshots/dataflow.png)
+
+**Power BI map**: every Power BI report, drawn bigger the more pages, visuals and measures
+it has, with the tables and files it loads, the scripts that write those and where their
+data comes from. Older versions are folded into the current report, and reports that load
+nothing catalogued (or couldn't be read) are flagged. A table lists the same reports with
+their counts, as CSV too.
+
 **Database diagrams**: tables and how they join, split into subject areas worked out
 from the joins. Rename areas and move tables; your changes are kept:
 
@@ -192,6 +204,50 @@ keeps what it had read.
   (`f"{self.out}/{self.topic}_{stamp}.csv"`), so more `to_csv` targets get a file pattern
   instead of landing under Unknown files.
 
+## New in version 2.13
+
+**Data flow diagram** (🗺️ Map → Data flow, and on each project's page). It reads left to
+right, like an ETL diagram: where the data starts, the code and reports it passes
+through, and the tables and files that come out.
+
+- **Where data comes from is now recognised in your code**, not only tables and files:
+  - 🌐 **APIs**: `requests`, `httpx`, `aiohttp`, `urllib`, sessions and clients with a
+    `base_url`, boto3 services.
+  - 🕸️ **Web scraping**: pages fetched in a script that uses BeautifulSoup, lxml,
+    requests-html and similar, Selenium and Playwright browsers, Scrapy spiders and
+    `pd.read_html` on a web address. An address that looks like an API (`api.` host,
+    `/api/`, `/v1/`, `.json`, OData) stays an API even in a scraping script.
+  - 🛢️ **Database connections**: `pyodbc`, `pymssql`, SQLAlchemy `create_engine` (with
+    `odbc_connect` too), PostgreSQL, MySQL, Oracle, SQLite, DuckDB, Snowflake, SAP HANA,
+    Databricks, Teradata, JDBC and more. Connection strings are read for the server and
+    database only.
+  - ⬇️ **Files from the web** (`pd.read_csv("https://...")`, `urlretrieve`) and
+    ☁️ **cloud storage** (`s3://`, `abfss://`, `gs://` paths, Azure Blob and S3 clients).
+  - 🏭 **SAP** through `pyrfc`, with the RFC functions called (and the table for
+    `RFC_READ_TABLE`).
+  - In **Power BI reports and Excel workbooks**: Web.Contents, OData, SharePoint and the
+    SQL Servers and ODBC sources in Power Query and workbook connections.
+- **Each source is an item** (🔌 data source) you can open, describe and add notes to. Its
+  page lists the addresses used and what uses it. The same API used by two projects is one
+  box on the diagram.
+- **Addresses never keep secrets.** Only the host and path are kept: query strings (where
+  API keys usually are), user names and passwords are left out.
+- **Start from one project** and the diagram also follows the data downstream (a report
+  reading the table your script loads) and upstream (the script that writes the table
+  your project reads). Tables and files nothing writes are grouped on the left by
+  database; outputs end up on the right. Layout is automatic.
+- **Where data comes from** table under the diagram, with a CSV download, plus Mermaid and
+  Graphviz downloads of the diagram.
+- **On every script's page** (notebooks and SQL files too) the same diagram, centred on that
+  file: what it reads, what it writes, and what reads that afterwards.
+- **Power BI map** (🗺️ Map → Power BI map): every report sized by its pages, visuals and
+  measures, with the tables and files it loads, the scripts that write those, and the APIs
+  and databases behind them. Older versions are folded into the current report, and a red
+  dashed border marks a report that loads nothing catalogued, has no sources, or couldn't be
+  read. The reports table beside it (biggest first) has a CSV download.
+- When an address is built at run time (`requests.get(url)` with `url` from elsewhere), the
+  source is still listed, named after the code that holds the address, so you can add a note
+  saying where it points.
 ## New in version 2.12
 
 Folder scans no longer look stuck, and big folders scan faster.
