@@ -33,4 +33,9 @@ def pages_for_key(key: str) -> Callable | None:
     if key.startswith("bp://"):
         from .bproject_pages import bproject_page
         return bproject_page
+    from pdcat.pbiobjects import split_key
+    parts = split_key(key)
+    if parts:
+        from .pbi_pages import query_page, table_page
+        return table_page if parts[0] == "table" else query_page
     return None
