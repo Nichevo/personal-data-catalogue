@@ -165,6 +165,45 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.14
+
+Folders with thousands of data files scan in minutes rather than hours, and a stopped scan
+keeps what it had read.
+
+- **Big folders are sampled by date.** A folder with more than 2,000 data files (Settings)
+  opens only the newest 10 files of each dated series and the newest 2,000 stand-alone files;
+  the rest are listed from the file system (name, size, modified) without being read. The
+  folder card says how many files were opened, with a **Read every file** switch, and a
+  sampled series says so on its page. A file read in an earlier scan keeps its rows and
+  columns.
+- **Daily files with a time in the name form one series.** `TOPIC_TOPIC_202304201901500.csv`
+  is 20 April 2023 followed by a time, so a folder of such files becomes one daily series
+  (pattern `TOPIC_TOPIC_{yyyy}{mm}{dd}{time}.csv`) instead of thousands of separate files.
+  `sales_2023-04-20_190150.csv` works the same way.
+- **Scans save as they go.** Power BI reports and Excel workbooks are saved a few at a time,
+  then each dated series and every 200 stand-alone files, each in a short transaction. Pressing
+  **Stop** (or a crash) loses only the batch being read; the scan log records the stop and the
+  next scan carries on from what was saved. Files that have gone are marked missing when a scan
+  completes, as before. Other windows can write to the catalogue throughout.
+- **No re-scan of a folder scanned a moment ago.** Re-scan on a folder scanned in the last hour
+  (Settings) asks you to press again; `pdcat scan` skips such sources unless run with
+  `--force`. Unchanged files were already skipped; this saves the walk and the checks too.
+- **Faster reading of each file.** The delimiter of a CSV is read off its first lines (the
+  csv sniffer runs only when that isn't clear), most-common values are counted on the values
+  themselves instead of a text copy of every column, and progress updates for files that
+  aren't opened are drawn every half second rather than per file. On a folder of 3,000 small
+  CSVs this roughly halves the time per file.
+- **Measures across reports** (Map menu): the same DAX under different names in different
+  reports, and the same measure name worked out differently, each with links to the measures.
+  Earlier versions of a report are left out.
+- **Smaller fixes:** the To review table has an **Open** button for the ticked row (clicking a
+  cell only selects it); What's new no longer fails with a duplicate element key; Database
+  diagrams can list the fields of chosen tables, not only all or none; package pages link to
+  the package's documentation (or PyPI); the Copilot pack's test questions include a SQL
+  script's reads and writes; f-strings in scripts follow attributes and calls
+  (`f"{self.out}/{self.topic}_{stamp}.csv"`), so more `to_csv` targets get a file pattern
+  instead of landing under Unknown files.
+
 ## New in version 2.13
 
 **Data flow diagram** (🗺️ Map → Data flow, and on each project's page). It reads left to

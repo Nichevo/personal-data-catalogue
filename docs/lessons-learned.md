@@ -141,3 +141,25 @@ the busy timeout is a minute rather than five seconds.
 the first caller ignores it. Run libraries you don't control in a subprocess with a timeout
 when they chew on user files. Walk a file tree once and prune what you will never want. With SQLite, do slow work outside
 the write transaction, and never write on open unless something actually needs changing.
+
+## 10. Save as you go, and count the cost of progress updates (2.14)
+
+Version 2.12 read every file first and wrote the whole folder in one transaction, so a failed
+scan changed nothing. That is the right instinct for a database load and the wrong one for a
+scan a person watches: pressing Stop after twenty minutes threw away twenty minutes of
+reading, and nothing could be looked at until the whole folder was done. 2.14 saves each
+batch (a few reports, a dated series, two hundred files) in its own short transaction and
+marks what has gone missing only when the scan completes. The "all or nothing" guarantee was
+never what the person wanted; "what I read is kept" was.
+
+Two more things the 20,000-file folder taught:
+
+- **Progress updates are not free.** Reporting every file, including the ones skipped as
+  unchanged, drew 20,000 Streamlit updates at a few milliseconds each: a minute of drawing
+  for a rescan that read nothing. Files that aren't opened are now counted and reported every
+  half second.
+- **Measure before optimising, and the hot spot moves.** Profiling showed the database writes
+  (the suspected cause) at a few percent; the time went to turning numeric columns into text
+  for value counts, to `csv.Sniffer`, and to counting lines in files that never needed
+  opening. Sampling by date took most of the time away by not reading at all; the per-file
+  fixes halved what was left.

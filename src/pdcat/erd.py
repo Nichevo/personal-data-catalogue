@@ -221,7 +221,10 @@ def _key_cols(cat: Catalogue, key: str, attrs: dict, rels: list[dict]) -> tuple[
     return pk, fk
 
 
-def erd_elements(cat: Catalogue, db_key: str, area_uid: str | None = None, *, fields: bool = False) -> list[dict[str, Any]]:
+def erd_elements(cat: Catalogue, db_key: str, area_uid: str | None = None, *,
+                 fields: bool | set[str] = False) -> list[dict[str, Any]]:
+    """Nodes and edges for the diagram. `fields` lists every column on every table (True) or only on the
+    tables whose keys are given (a set); otherwise tables show just their keys."""
     items = tables(cat, db_key)
     all_areas = ensure_areas(cat, db_key)
     chosen = [a for a in all_areas if area_uid in (None, a["uid"])]
@@ -240,13 +243,14 @@ def erd_elements(cat: Catalogue, db_key: str, area_uid: str | None = None, *, fi
             continue
         nodes.append({"data": {"id": gid, "label": a["name"], "kind": "group", "count": len(inside), "open": True}})
         for m in inside:
-            nodes.append(_table_node(cat, m["key"], items[m["key"]], rels, gid, m["shared"], fields))
+            nodes.append(_table_node(cat, m["key"], items[m["key"]], rels, gid, m["shared"], _wanted(fields, m["key"])))
             placed.add(m["key"])
     others = keys - placed
     if others:
         nodes.append({"data": {"id": "grp:area:other", "label": "In other areas", "kind": "group",
                                "count": len(others)}})
-        nodes += [_table_node(cat, k, items[k], rels, "grp:area:other", False, fields) for k in sorted(others)]
+        nodes += [_table_node(cat, k, items[k], rels, "grp:area:other", False, _wanted(fields, k))
+                  for k in sorted(others)]
     edges = [{"data": {"id": f"r{i}", "source": r["src_key"], "target": r["dst_key"],
                        "relation": r["state"], "label": f"{r['src_columns']} = {r['dst_columns']}"}}
              for i, r in enumerate(rels) if r["src_key"] in keys and r["dst_key"] in keys]
@@ -254,6 +258,10 @@ def erd_elements(cat: Catalogue, db_key: str, area_uid: str | None = None, *, fi
 
 
 MAX_FIELDS = 25
+
+
+def _wanted(fields: bool | set[str], key: str) -> bool:
+    return fields is True or (isinstance(fields, set) and key in fields)
 
 
 def _table_node(cat: Catalogue, key: str, t: dict, rels: list[dict], parent: str, shared: bool,

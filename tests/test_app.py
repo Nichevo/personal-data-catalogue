@@ -343,3 +343,56 @@ def test_scan_log_page_lists_scans(app, catalogue, tmp_path):
     goto(app, "Scan log")
     assert not app.exception
     assert any("extracts" in df.value.to_string() for df in app.dataframe)
+
+
+def test_whats_new_page_renders_with_notes_and_recent_views(app, catalogue):
+    catalogue.add_note(SALES, "Daily sales, one row per store per day", "me", "note")
+    app.query_params["asset"] = SALES
+    app.run()  # a visit, so "Recently viewed" has something to show in the sidebar
+    app.query_params.clear()
+    goto(app, "Recent notes")
+    assert not app.exception
+    assert any("one row per store" in m.value for m in app.markdown)
+    goto(app, "Recent changes")
+    assert not app.exception
+
+
+def test_review_table_offers_to_open_the_ticked_item(app):
+    app.run()
+    goto(app, "To review")
+    assert not app.exception
+    [open_] = [b for b in app.button if b.label == "↗ Open"]
+    assert open_.disabled  # nothing ticked yet
+
+
+def test_measures_across_reports_page(app, catalogue, tmp_path):
+    from test_v214_scans import _pbit
+
+    from pdcat.scan_files import scan_folder
+    folder = tmp_path / "reports"
+    _pbit(folder / "Sales.pbit", [("Total Units", "SUM(Sales[Units])")])
+    _pbit(folder / "Stock.pbit", [("Total Units", "SUMX(Sales, Sales[Units])")])
+    scan_folder(catalogue, "reports", folder)
+    app.run()
+    goto(app, "Measures across reports")
+    assert not app.exception
+    assert any("Total Units" in e.label for e in app.expander)
+
+
+def test_database_diagram_page_lets_you_pick_tables_to_show_fields_for(app):
+    app.run()
+    goto(app, "Database diagrams")
+    assert not app.exception
+    [picker] = [m for m in app.multiselect if m.key and m.key.startswith("erd-fields-")]
+    picker.set_value([SALES]).run()
+    assert not app.exception
+
+
+def test_settings_page_saves_scan_pace(app, catalogue):
+    app.run()
+    goto(app, "Settings")
+    assert not app.exception
+    [save] = [b for b in app.button if b.label == "Save scan settings"]
+    save.click().run()
+    assert not app.exception
+    assert catalogue.setting("sample_over_files") == 2000 and catalogue.setting("recent_scan_minutes") == 60

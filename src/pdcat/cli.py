@@ -59,8 +59,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
         jobs += [(r["name"], lambda r=r: scan_folder(cat, r["name"], r["path"], bool(r["recursive"]), report=report))
                  for r in app_folders]
         jobs += [(p.name, lambda p=p: scan_project(cat, p, report)) for p in [*app_libraries, *cfg.python]]  # last, so file links can match
+        from .scan_files import scanned_recently
         for name, run in jobs:
             if wanted and name not in wanted:
+                continue
+            ago = None if args.force else scanned_recently(cat, name)
+            if ago:
+                print(f"Skipping {name}: scanned {ago} (use --force to scan it anyway)")
                 continue
             print(f"Scanning {name} ...", flush=True)
             try:
@@ -281,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--source", action="append", metavar="NAME", help="only scan this source (repeatable)")
     s.add_argument("--database", action="append", metavar="DB", help="only this SQL Server database (repeatable)")
     s.add_argument("--plan", action="store_true", help="print the SQL Server queries that would run, without connecting")
+    s.add_argument("--force", action="store_true", help="scan sources even if they were scanned in the last hour")
 
     pr = command("profile", "measure value ranges, nulls and common values of SQL tables (read-only, paced)",
                  "  pdcat profile dbo.SalesDaily dbo.Stores\n"

@@ -133,6 +133,18 @@ class Steps:
         self.report, self.total, self.verb, self.done = report, total, verb, 0
         self.slow: list[tuple[str, float]] = []  # (file, seconds) for every file over SLOW, for the scan log
         self.seconds = 0.0
+        self.skipped = 0
+        self._last_skip = float("-inf")
+
+    def skip(self, what: str, why: str) -> None:
+        """A file that needn't be opened (unchanged since the last scan, or listed without being read): counted
+        for the progress bar, but reported only now and then. A folder of 20,000 files would otherwise spend
+        longer drawing progress updates than checking files."""
+        self.done += 1
+        self.skipped += 1
+        if time.monotonic() - self._last_skip >= 0.5 or self.done == self.total:
+            self._last_skip = time.monotonic()
+            self.report(f"Checking {what}: {self.done:,} of {self.total:,} ({why})", self.done, self.total)
 
     @contextmanager
     def __call__(self, what: str, rel: str):
@@ -177,6 +189,10 @@ class Reads:
             self._done[(fn.__name__, path)] = (True, fn(path, *args))
         except Exception as e:  # kept, and raised again where the scan would have hit it
             self._done[(fn.__name__, path)] = (False, e)
+
+    def paths(self) -> set[Path]:
+        """The files read so far."""
+        return {path for _, path in self._done}
 
     def get(self, fn: Callable, path: Path, *args):
         hit = self._done.pop((fn.__name__, path), None)

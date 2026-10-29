@@ -54,6 +54,8 @@ GUIDE = {
                     "the reports that load nothing catalogued.",
     "Database diagrams": "Tables and how they join, grouped into subject areas, with their fields if you like.",
     "Packages": "Third-party packages your code imports (lightgbm, pandas...), kept apart from your own code.",
+    "Measures across reports": "Power BI measures that recur across reports: the same DAX under different names, "
+                               "and the same name worked out differently.",
     "Sources": "Paste SQL, add data folders, and choose which SQL tables to measure and how gently.",
     "Schedules": "Import a list of scheduled jobs so scripts show when they run.",
     "Conda environments": "The conda environments on this machine and which projects use them.",
