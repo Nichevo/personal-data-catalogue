@@ -25,6 +25,11 @@ GUIDE = {
     "Menu guide": "This page.",
     "Search": "Find tables, columns, scripts, files, reports and notes by any word, as a table you can sort, filter "
               "by kind and group by script, family, folder or business project.",
+    "Tables and datasets": "Every database table and view, and every data file and file series, as one list to "
+                           "filter and sort. One click to open any of them.",
+    "Python": "Every Python project, script and notebook, grouped by folder. One click to open any of them.",
+    "Power BI": "Every report, model table, Power Query query and measure, each as a list to filter. One click "
+                "to open any of them.",
     "SQL queries": "Every SQL query found in code, workbooks, reports and documents, with where it's used, the "
                    "tables it touches and likely mistakes.",
     "Knowledge": "Business rules, definitions, how-tos and quirks, linked to the tables and scripts they're about. "
