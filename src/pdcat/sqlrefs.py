@@ -24,6 +24,7 @@ _WRITE_PATTERNS = [
     rf"\bdrop\s+table\s+(?:if\s+exists\s+)?(?P<t>{_IDENT})",
 ]
 _READ_PATTERN = rf"\b(?:from|join)\s+(?P<t>{_IDENT})"
+_MERGE_SOURCE = rf"\bmerge\b[^;]*?\busing\s+(?P<t>{_IDENT})"
 _CALL_PATTERN = rf"\bexec(?:ute)?\s+(?P<t>{_IDENT})"
 _CTE_PATTERN = r"(?:\bwith|,)\s*(\w+)\s*(?:\([^)]*\))?\s+as\s*\("
 _ALIAS_PATTERN = rf"\b(?:from|join|update|into)\s+(?P<t>{_IDENT})\s+(?:as\s+)?(?P<a>\w+)"
@@ -50,6 +51,38 @@ class SqlRef:
 
 def looks_like_sql(text: str) -> bool:
     return bool(_SQL_SHAPE.search(text))
+
+
+# Templates around SQL: dbt/Jinja ({{ ref('sales') }}, {% if %}), SQLCMD ($(Db)) and ${var} substitutions.
+_JINJA_COMMENT = re.compile(r"\{#[\s\S]*?#\}")
+_JINJA_BLOCK = re.compile(r"\{%-?[\s\S]*?-?%\}")
+_JINJA_REF = re.compile(r"""\{\{-?\s*ref\s*\(\s*(?:['"][^'"]*['"]\s*,\s*)?['"](?P<t>[^'"]+)['"]\s*\)\s*-?\}\}""", re.I)
+_JINJA_SOURCE = re.compile(
+    r"""\{\{-?\s*source\s*\(\s*['"](?P<s>[^'"]+)['"]\s*,\s*['"](?P<t>[^'"]+)['"]\s*\)\s*-?\}\}""", re.I)
+_JINJA_EXPR = re.compile(r"\{\{[\s\S]*?\}\}")
+_SUBST_VAR = re.compile(r"\$\(\s*\w+\s*\)|\$\{\s*[\w.]+\s*\}")
+_FORMAT_FIELD = re.compile(r"\{[\w.!:\[\]]*\}")  # "{schema}", "{0}", "{}" from str.format
+# Cursor steps name the cursor, not a table: FETCH NEXT FROM c INTO @id
+_CURSOR_FETCH = re.compile(r"\bfetch\s+(?:(?:next|prior|first|last|absolute\s+\S+|relative\s+\S+)\s+)?"
+                           r"(?:from\s+)?(?:global\s+)?[@\w]+", re.I)
+
+
+def expand_templates(sql: str) -> tuple[str, bool]:
+    """Fill in what templates can tell (dbt `{{ ref('sales') }}` -> sales, `{{ source('erp', 'orders') }}` ->
+    erp.orders), drop template logic (`{% if %}`), and turn every other substitution (`{{ var }}`, `$(Db)`,
+    `${env}`, `{schema}`) into "{}". Returns the text and whether it held template variables (not counting
+    plain "{}", which stays as strict as before)."""
+    if "{" not in sql and "$" not in sql:
+        return sql, False
+    text = _JINJA_COMMENT.sub(" ", sql)
+    text = _JINJA_BLOCK.sub(" ", text)
+    text = _JINJA_REF.sub(lambda m: m["t"], text)
+    text = _JINJA_SOURCE.sub(lambda m: f"{m['s']}.{m['t']}", text)
+    templated = text != sql
+    text, n = _JINJA_EXPR.subn("{}", text)
+    text, m = _SUBST_VAR.subn("{}", text)
+    text = _FORMAT_FIELD.sub("{}", text)
+    return text, bool(templated or n or m)
 
 
 def strip_comments(sql: str) -> str:
@@ -84,7 +117,9 @@ def normalise(ident: str, dynamic: bool = False) -> str | None:
 
 def extract_refs(sql: str, dynamic: bool = False) -> list[SqlRef]:
     """Return the distinct tables read, written and procedures called by a piece of SQL. dynamic: see normalise."""
-    sql = strip_comments(sql)
+    sql, templated = expand_templates(sql)
+    dynamic = dynamic or templated  # a template variable is a name filled in later, like a Python variable
+    sql = _CURSOR_FETCH.sub(" ", strip_comments(sql))
     ctes = {m.group(1).lower() for m in re.finditer(_CTE_PATTERN, sql, re.IGNORECASE)}
     # "UPDATE f SET ... FROM dbo.Forecast f" writes to dbo.Forecast, so map aliases back to tables.
     aliases = {}
@@ -109,6 +144,8 @@ def extract_refs(sql: str, dynamic: bool = False) -> list[SqlRef]:
     for m in re.finditer(_READ_PATTERN, sql, re.IGNORECASE):
         if m.start("t") not in write_spans:
             add("reads", m.group("t"))
+    for m in re.finditer(_MERGE_SOURCE, sql, re.IGNORECASE):
+        add("reads", m.group("t"))
     for m in re.finditer(_CALL_PATTERN, sql, re.IGNORECASE):
         add("calls", m.group("t"))
     return [SqlRef(rel, name) for rel, name in refs]

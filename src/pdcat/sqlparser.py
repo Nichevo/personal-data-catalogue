@@ -4,58 +4,216 @@ each, the exact fields it joins on, and the columns it renames (`Units AS qty`).
 Uses sqlglot when it is installed (`pip install sqlglot`), which understands T-SQL properly.
 Without it, a regex pass gives the same fields less precisely, so nothing breaks: the app says
 "install sqlglot for more exact SQL reading" where it matters.
+
+Before sqlglot sees the SQL, `sqlclean.prepare` tidies a copy: placeholders and template variables
+become plain names, script-only lines (TRY/CATCH, cursors, PRINT) go, and GO batches are read one at a
+time. Whatever sqlglot still can't read (a statement it would turn into a generic "Command") is read by
+the regex pass instead, so its tables are still found. Each batch has a time limit, so one odd query
+can't hold up a scan; sqlglot's warnings are kept out of the console and counted instead.
 """
 from __future__ import annotations
 
+import logging
 import re
+import threading
+import time
 from functools import lru_cache
 from typing import Any
 
-from .sqlrefs import _IDENT, _KEYWORDS, extract_refs, normalise, strip_comments
+from .sqlclean import MARK, prepare, split_statements, unmark
+from .sqlrefs import _IDENT, _KEYWORDS, expand_templates, extract_refs, looks_like_sql, normalise, strip_comments
 
 try:  # optional
     import sqlglot
     from sqlglot import exp
+    logging.getLogger("sqlglot").setLevel(logging.ERROR)  # "falling back to parsing as a 'Command'" is counted
 except Exception:  # pragma: no cover - depends on what is installed
     sqlglot = None
     exp = None
 
 
-VERSION = 2  # bump when the reading changes, so saved analyses are read again
+VERSION = 3  # bump when the reading changes, so saved analyses are read again
+PARSE_SECONDS = 5.0     # sqlglot's time for one query, across its batches; the rest is read by the regex pass
+MAX_EXACT_CHARS = 200_000  # longer SQL is read by the regex pass straight away
+_DML = re.compile(r"\b(?:select|insert|update|delete|merge|with)\b", re.I)
 
 
 def available() -> bool:
     return sqlglot is not None
 
 
-def analyse(sql: str) -> dict[str, Any]:
+def analyse(sql: str, exact: bool = True) -> dict[str, Any]:
     """{"tables": [{"name", "alias", "relation"}], "joins": [{"left_table", "left_column", "right_table",
     "right_column", "kind"}], "columns": {table: [columns]}, "renames": [{"table", "column", "alias"}],
-    "select_star": bool, "parser": "sqlglot" | "regex", "error": str | None}. Never raises."""
-    return dict(_analyse(sql or ""))
+    "select_star": bool, "parser": "sqlglot" | "mixed" | "regex", "error": str | None,
+    "fallbacks": pieces read by the regex pass, "commands": statements sqlglot could only read as a generic
+    Command, "timed_out": bool, "cleaned": what was tidied first}. exact=False skips sqlglot. Never raises."""
+    return dict(_analyse(sql or "", exact))
 
 
 @lru_cache(maxsize=2048)
-def _analyse(sql: str) -> tuple:
+def _analyse(sql: str, exact: bool) -> tuple:
+    try:
+        cleaned = prepare(sql)
+    except Exception:  # tidying is a help, never a reason to read nothing
+        cleaned = None
+    text = cleaned.text if cleaned else strip_comments(sql)
+    rel = {r.name: r.relation for r in extract_refs(text, dynamic=True)}
     out = None
-    if sqlglot is not None:
+    if sqlglot is not None and exact and cleaned and len(sql) <= MAX_EXACT_CHARS:
         try:
-            out = _with_sqlglot(sql)
+            out = _with_sqlglot(cleaned, rel)
         except Exception as e:  # sqlglot can't read every dialect quirk; fall back
-            out = {**_with_regex(sql), "error": f"{type(e).__name__}: {str(e)[:200]}"}
+            out = {**_with_regex(text, rel), "fallbacks": 1, "error": f"{type(e).__name__}: {str(e)[:200]}"}
     if out is None:
-        out = _with_regex(sql)
+        out = _with_regex(text, rel)
+    for inner in (cleaned.strings if cleaned else [])[:20]:  # dynamic SQL: SET @sql = 'SELECT ... FROM ...'
+        found = _with_regex(expand_templates(inner)[0], {r.name: r.relation for r in extract_refs(inner, True)})
+        out = _merge(out, found, keep_parser=True)
+    out.setdefault("fallbacks", 0)
+    out.setdefault("commands", 0)
+    out.setdefault("timed_out", False)
+    out["cleaned"] = cleaned.notes if cleaned else []
     return tuple(out.items())
 
 
+def _timed(fn, seconds: float):
+    """fn() if it finishes within `seconds`; TimeoutError if not (the reading is then left to finish on its own,
+    in the background, and its result is ignored)."""
+    box: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            box["value"] = fn()
+        except BaseException as e:  # handed back to the caller below
+            box["error"] = e
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(max(seconds, 0.01))
+    if t.is_alive():
+        raise TimeoutError(f"took over {seconds:.0f}s")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
+def _parse(text: str) -> list:
+    return [s for s in sqlglot.parse(text, read="tsql") if s is not None]
+
+
+def _rescue(command) -> list | None:
+    """A statement sqlglot read only as a Command: read again from its first SELECT/INSERT/... onwards."""
+    text = command.sql(dialect="tsql")
+    m = _DML.search(text)
+    if not m or m.start() == 0:
+        return None
+    piece = text[m.start():].rstrip(" ;")
+    while piece.endswith(")") and piece.count(")") > piece.count("("):
+        piece = piece[:-1].rstrip()
+    try:
+        got = _parse(piece)
+    except Exception:
+        return None
+    return None if not got or any(isinstance(g, exp.Command) for g in got) else got
+
+
+def _with_sqlglot(cleaned, rel: dict[str, str]) -> dict[str, Any]:
+    deadline = time.monotonic() + PARSE_SECONDS
+    statements: list = []
+    leftovers: list[str] = []  # pieces for the regex pass
+    commands = 0
+    timed_out = False
+    error = None
+    for batch in cleaned.batches:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            timed_out = True
+            leftovers.append(batch)
+            continue
+        try:
+            got = _timed(lambda b=batch: _parse(b), left)
+        except TimeoutError:
+            timed_out = True
+            leftovers.append(batch)
+            continue
+        except Exception as e:  # read the batch statement by statement instead
+            error = error or f"{type(e).__name__}: {str(e)[:200]}"
+            got = []
+            for piece in split_statements(batch):
+                try:
+                    got += _timed(lambda p=piece: _parse(p), max(deadline - time.monotonic(), 0.01))
+                except TimeoutError:
+                    timed_out = True
+                    leftovers.append(piece)
+                except Exception:
+                    leftovers.append(piece)
+        for st in got:
+            if isinstance(st, exp.Command):
+                commands += 1
+                again = _rescue(st)
+                if again:
+                    statements += again
+                elif _DML.search(st.sql(dialect="tsql")):
+                    leftovers.append(st.sql(dialect="tsql"))
+            else:
+                statements.append(st)
+    out = _read_statements(statements, rel)
+    if leftovers:
+        out = _merge(out, _with_regex(unmark(";\n".join(leftovers)), rel))
+        out["parser"] = "mixed" if statements else "regex"
+    out.update({"fallbacks": len(leftovers), "commands": commands, "timed_out": timed_out, "error": error})
+    return out
+
+
+def _merge(a: dict[str, Any], b: dict[str, Any], keep_parser: bool = False) -> dict[str, Any]:
+    """Two readings of parts of the same SQL, as one."""
+    tables = {t["name"]: t for t in a["tables"]}
+    for t in b["tables"]:
+        tables.setdefault(t["name"], t)
+    columns = {k: set(v) for k, v in a["columns"].items()}
+    for k, v in b["columns"].items():
+        columns.setdefault(k, set()).update(v)
+    out = {**a, "tables": list(tables.values()), "joins": _dedupe(a["joins"] + b["joins"]),
+           "columns": {k: sorted(v, key=str.lower) for k, v in columns.items()},
+           "renames": a["renames"] + [r for r in b["renames"] if r not in a["renames"]],
+           "select_star": a["select_star"] or b["select_star"]}
+    if not keep_parser and a.get("parser") != b.get("parser"):
+        out["parser"] = "mixed"
+    return out
+
+
 def _name(t) -> str | None:
+    this = t.this
+    if isinstance(this, exp.Parameter) or (isinstance(this, exp.Identifier) and (
+            this.args.get("temporary") or this.args.get("global_") or this.args.get("global"))):
+        return None  # @table variables, #temp and ##global temp tables
+    if isinstance(t.parent, exp.Use):
+        return None  # USE MyDb names a database
     parts = [p for p in (t.catalog, t.db, t.name) if p]
-    return normalise(".".join(parts)) if parts else None
+    if not parts:
+        return None
+    name = ".".join(parts)
+    if looks_like_sql(name):
+        return None  # EXEC ('INSERT INTO ...'): the SQL in the string is read on its own
+    if MARK in name:  # {schema}.Sales: the known part of the name, as for SQL built from variables
+        name = normalise(unmark(name), dynamic=True)
+        return None if not name or "{" in name else name
+    return normalise(name)
 
 
-def _with_sqlglot(sql: str) -> dict[str, Any]:
-    statements = [s for s in sqlglot.parse(strip_comments(sql), read="tsql") if s is not None]
-    rel = {(r.name): r.relation for r in extract_refs(sql)}
+def _created(st) -> set[str]:
+    """The procedure, function or view a CREATE/ALTER statement makes: not a table it uses."""
+    out: set[str] = set()
+    for c in st.find_all(exp.Create):
+        if str(c.args.get("kind") or "").upper() in ("PROCEDURE", "PROC", "FUNCTION", "VIEW") and c.this is not None:
+            t = c.this if isinstance(c.this, exp.Table) else c.this.find(exp.Table)
+            if t is not None and (name := _name(t)):
+                out.add(name)
+    return out
+
+
+def _read_statements(statements: list, rel: dict[str, str]) -> dict[str, Any]:
     ctes: set[str] = set()
     tables: dict[str, dict[str, Any]] = {}
     alias_to: dict[str, str] = {}
@@ -64,6 +222,7 @@ def _with_sqlglot(sql: str) -> dict[str, Any]:
     renames: list[dict[str, Any]] = []
     select_star = False
     for st in statements:
+        ctes |= _created(st)
         for cte in st.find_all(exp.CTE):
             ctes.add(cte.alias_or_name.lower())
         for t in st.find_all(exp.Table):
@@ -106,7 +265,7 @@ def _with_sqlglot(sql: str) -> dict[str, Any]:
     for st in statements:
         for c in st.find_all(exp.Column):
             t = table_of(c)
-            if t and c.name:
+            if t and c.name and not c.name.startswith(MARK):
                 columns.setdefault(t, set()).add(c.name)
         for j in st.find_all(exp.Join):
             on = j.args.get("on")
@@ -131,9 +290,10 @@ _DOTTED = re.compile(r"(?<![\w\].])(?P<a>\[?\w+\]?)\.(?P<c>\[?\w+\]?)(?![\w(])")
 _RENAME = re.compile(r"(?:(?P<a>\[?\w+\]?)\.)?(?P<c>\[?\w+\]?)\s+as\s+(?P<n>\[?\w+\]?)", re.I)
 
 
-def _with_regex(sql: str) -> dict[str, Any]:
+def _with_regex(sql: str, rel: dict[str, str] | None = None) -> dict[str, Any]:
     text = strip_comments(sql)
-    rel = {r.name: r.relation for r in extract_refs(sql)}
+    if rel is None:
+        rel = {r.name: r.relation for r in extract_refs(sql)}
     tables: dict[str, dict[str, Any]] = {}
     alias_to: dict[str, str] = {}
     for m in _TABLE_ALIAS.finditer(text):

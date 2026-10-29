@@ -28,12 +28,16 @@ def queries_page(cat: Catalogue) -> None:
             sqllibrary.build_library(cat)
             st.rerun()
         return
-    c1, c2, c3 = st.columns([2, 2, 1])
+    c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
     text = c1.text_input("Find", placeholder="name or SQL text", key="sqlq-text")
     tables = sorted({t["name"] for q in rows for t in q["tables"]})
     table = c2.selectbox("Using table", ["(any)", *tables], key="sqlq-table")
     missing = c3.checkbox("Show missing", help="Queries not found on the latest scan", key="sqlq-missing")
+    partly = c4.checkbox("Not read exactly", key="sqlq-partly",
+                         help="Queries that sqlglot couldn't read in full, so the simple reader found (some of) their "
+                              "tables")
     shown = [q for q in rows if (missing or q["status"] == "active")
+             and (not partly or sqllibrary.read_label(q.get("analysis")) in ("partly", "simply"))
              and (table == "(any)" or any(t["name"] == table for t in q["tables"]))
              and (not text or text.lower() in q["name"].lower() or text.lower() in q["sql"].lower())]
     st.caption(f"{len(shown)} of {len(rows)} queries · checks: ❗ may give wrong results, ⚠️ risky, 🐢 may be slow")
@@ -45,7 +49,7 @@ def queries_page(cat: Catalogue) -> None:
     df = pd.DataFrame([{"query": q["name"], "tables": ", ".join(t["name"] for t in q["tables"][:6])
                         + (" …" if len(q["tables"]) > 6 else ""), "tables used": len(q["tables"]),
                         "places": q["places"], "status": q["status"],
-                        "checks": checks(q["sql"]),
+                        "checks": checks(q["sql"]), "read": sqllibrary.read_label(q.get("analysis")),
                         "named by": "you" if q["named_by"] == "you" else "auto"} for q in shown])
     if df.empty:
         st.info("Nothing matches.")
@@ -57,6 +61,33 @@ def queries_page(cat: Catalogue) -> None:
         go(f"query://{shown[sel[0]]['uid']}")
         st.rerun()
     st.download_button("⬇️ Download the list (CSV)", df.to_csv(index=False), "sql-queries.csv", "text/csv")
+
+
+CLEANED_WORDS = {"variables": "placeholders and variables", "templates": "template code ({{ }}, \\$(…), :setvar)",
+                 "control flow": "script-only lines (TRY/CATCH, cursors, PRINT, GOTO)", "GO batches": "GO batches",
+                 "SQL in strings": "SQL held in strings (dynamic SQL)"}
+
+
+def reading_note(analysis: dict) -> str:
+    """How this query was read, in a line: exactly, partly or simply, and what was tidied first."""
+    from pdcat.sqlparser import available
+    parser = analysis.get("parser")
+    if parser == "regex" and not available():
+        text = "Read with a simple pass. Install sqlglot (`pip install sqlglot`) for more exact SQL reading."
+    elif parser == "regex":
+        text = "sqlglot couldn't read this SQL, so its tables were found with a simple pass."
+    elif parser == "mixed":
+        n = analysis.get("fallbacks") or 0
+        text = (f"Read by sqlglot, except {n} statement{'s' if n != 1 else ''} it couldn't read, whose tables were "
+                "found with a simple pass.")
+    else:
+        text = "Read exactly by sqlglot."
+    if analysis.get("timed_out"):
+        text += " Reading took too long, so part of it was read simply."
+    cleaned = [CLEANED_WORDS.get(c, c) for c in analysis.get("cleaned") or []]
+    if cleaned:
+        text += " Tidied first: " + ", ".join(cleaned) + "."
+    return text
 
 
 def query_page(cat: Catalogue, key: str) -> None:
@@ -83,11 +114,7 @@ def query_page(cat: Catalogue, key: str) -> None:
     if reasons:
         st.caption("✅ Looks in use: " + ", ".join(reasons))
     st.code(q["sql"], language="sql")
-    parser = q["analysis"].get("parser")
-    if parser == "regex":
-        from pdcat.sqlparser import available
-        if not available():
-            st.caption("Read with a simple pass. Install sqlglot (`pip install sqlglot`) for more exact SQL reading.")
+    st.caption(reading_note(q["analysis"]))
 
     st.subheader("Where it's found")
     for i, p in enumerate(q["places"]):
