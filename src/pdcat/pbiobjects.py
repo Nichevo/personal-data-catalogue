@@ -199,3 +199,28 @@ def table_view(cat: Catalogue, key: str) -> dict[str, Any] | None:
             "measures": sorted(measures, key=lambda m: m["name"].lower()), "relationships": rels,
             "query": {"name": query["name"], "key": query_key(report_key, query["name"])} if query else None,
             "lineage": upstream(cat, report_key, attrs, name) if query else [], "used_on": used_on}
+
+
+def all_objects(cat: Catalogue, what: str) -> list[dict[str, Any]]:
+    """Every model table ("tables") or Power Query query ("queries") in the scanned reports (and, for queries,
+    workbooks), one row each, for the Power BI browse list."""
+    kinds = ("report",) if what == "tables" else ("report", "workbook")
+    out = []
+    for r in cat.conn.execute(f"SELECT key, name, kind, source, attrs FROM assets WHERE status = 'active' AND kind IN "
+                              f"({','.join('?' * len(kinds))}) ORDER BY name", kinds):
+        attrs = json.loads(r["attrs"] or "{}")
+        if what == "tables":
+            homes: dict[str, int] = {}
+            for m in attrs.get("measures") or []:
+                homes[m.get("table")] = homes.get(m.get("table"), 0) + 1
+            for t in attrs.get("tables") or []:
+                out.append({"key": table_key(r["key"], t["name"]), "name": t["name"], "in": r["name"],
+                            "where": r["source"], "columns": len(t.get("columns", [])),
+                            "measures": homes.get(t["name"], 0), "calculated": "yes" if t.get("calculated") else ""})
+        else:
+            for q in attrs.get("queries") or []:
+                reads = q.get("tables", []) + q.get("files", []) + q.get("folders", []) + q.get("web", [])
+                out.append({"key": query_key(r["key"], q["name"]), "name": q["name"], "in": r["name"],
+                            "where": r["source"], "type": "parameter" if "parameter" in q else "query",
+                            "reads": ", ".join(reads), "builds on": ", ".join(q.get("uses", []))})
+    return out

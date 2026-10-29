@@ -68,7 +68,7 @@ TABLE_COLUMNS = ["kind", "name", "where", "description", "matched on", "rows", "
                  "trust", "used by", "made by"]
 
 
-def results_table(cat: Catalogue, rows: list[dict], group_by: str) -> None:
+def results_table(cat: Catalogue, rows: list[dict], group_by: str, key: str = "search-table") -> None:
     """Results as sortable tables, one per group. Picking a row opens it (a file family opens to its members)."""
     from pdcat import searchview as SV
     groups = SV.grouped(rows, group_by)
@@ -83,7 +83,7 @@ def results_table(cat: Catalogue, rows: list[dict], group_by: str) -> None:
         df = df[[c for c in TABLE_COLUMNS if c in ("kind", "name") or df[c].astype(str).str.strip().replace(
             {"0": "", "None": "", "nan": ""}).any()]]
         event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
-                             key=f"search-table-{gi}", column_config={
+                             key=f"{key}-{gi}", column_config={
                                  "rows": st.column_config.NumberColumn(format="%d"),
                                  "description": st.column_config.TextColumn(width="large")})
         sel = event.selection.rows if event and hasattr(event, "selection") else []

@@ -178,6 +178,9 @@ one at a time, and every query is logged:
   needed.
 - **From a visual or a measure to its table.** Picking a visual on a report page shows buttons for
   the tables it uses, and a measure's page links to its home table.
+- **Find menu: Tables and datasets, Python, Power BI.** One click opens a list of every table,
+  view, data file and file series; every Python project, script and notebook; or every Power BI
+  report, model table, query and measure. Each has a filter box, and a row opens its page.
 - **Measures in search show their report.** "Where" now names the report a measure is in, not
   just the scan group, and a measure with no description shows its DAX instead.
 
