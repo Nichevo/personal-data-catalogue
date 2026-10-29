@@ -20,11 +20,13 @@ KIND_ICONS = {"table": "🗃️", "view": "👁️", "procedure": "⚙️", "dat
               "data_file": "📄", "folder": "🗂️", "file_series": "🗓️", "package": "📦", "report": "📊",
               "workbook": "📗", "model": "🧠", "measure": "🧮", "bproject": "🧭", "knowledge": "💡",
               "question": "❓", "metric": "📏", "feature": "🧬", "key": "🔑", "group": "👪", "query": "🧾",
-              "environment": "🐍", "access_db": "🗄️", "document": "📑"}
+              "environment": "🐍", "access_db": "🗄️", "document": "📑",
+              "data_source": "🔌"}
 KIND_LABELS = {"data_file": "data file", "sql_snippet": "pasted SQL", "sql_script": "SQL file",
                "file_series": "file series", "bproject": "business project", "workbook": "Excel workbook",
                "report": "Power BI report", "model": "ML model", "access_db": "Access database",
-               "query": "SQL query", "environment": "conda environment"}
+               "query": "SQL query", "environment": "conda environment",
+               "data_source": "data source"}
 NOTE_ICONS = {"note": "📝", "issue": "⚠️", "example": "🔢"}
 RELATION_LABELS = {"reads": "Reads", "writes": "Writes", "calls": "Calls", "imports": "Imports", "runs": "Runs"}
 LIFECYCLE_BADGES = {"experimental": "🧪 experimental", "deprecated": "⛔ deprecated", "retired": "🪦 retired"}

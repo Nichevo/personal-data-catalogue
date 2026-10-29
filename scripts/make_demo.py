@@ -314,6 +314,28 @@ def main(out: Path) -> None:
         def report(engine):
             return store_lookup(engine).merge(latest_extract("extracts"))
     '''))
+    (project / "src" / "weather.py").write_text(textwrap.dedent('''
+        """Daily weather forecast per region, from the weather service."""
+        import pandas as pd
+        import requests
+
+        BASE_URL = "https://api.weather.example.com/v2"
+
+        def pull(engine, region):
+            r = requests.get(f"{BASE_URL}/daily?region={region}&key=DEMO", timeout=30)
+            pd.DataFrame(r.json()["days"]).to_sql("WeatherDaily", engine, schema="ml", if_exists="append")
+    '''))
+    (project / "src" / "competitor_promos.py").write_text(textwrap.dedent('''
+        """Competitor promotions, scraped from their weekly offers page."""
+        import pandas as pd
+        import requests
+        from bs4 import BeautifulSoup
+
+        def scrape():
+            html = requests.get("https://www.competitor.example.com/offers").text
+            rows = [{"item": t.text} for t in BeautifulSoup(html, "html.parser").select(".offer")]
+            pd.DataFrame(rows).to_csv("outputs/competitor_promos.csv", index=False)
+    '''))
     for rel, text in LIB_FILES.items():
         path = out / rel
         path.parent.mkdir(parents=True, exist_ok=True)

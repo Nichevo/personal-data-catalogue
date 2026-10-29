@@ -48,6 +48,10 @@ GUIDE = {
     "Bulk edit": "Describe a column once for everywhere it appears, or edit many items at once like a spreadsheet.",
     "Code map": "How your projects and home-built libraries connect, and which tables and files they read and "
                 "write.",
+    "Data flow": "Where your data comes from (APIs, scraped web sites, databases, files, cloud storage, SAP) and "
+                 "the path it follows through scripts and reports to the tables and files they make.",
+    "Power BI map": "Every Power BI report sized by its pages, visuals and measures, with the data behind it, and "
+                    "the reports that load nothing catalogued.",
     "Database diagrams": "Tables and how they join, grouped into subject areas, with their fields if you like.",
     "Packages": "Third-party packages your code imports (lightgbm, pandas...), kept apart from your own code.",
     "Measures across reports": "Power BI measures that recur across reports: the same DAX under different names, "

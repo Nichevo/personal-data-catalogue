@@ -116,6 +116,9 @@ def detail(cat: Catalogue, key: str) -> None:
     if any(facts):
         st.caption(" · ".join(f for f in facts if f))
 
+    if asset["kind"] == "data_source":
+        data_source_facts(attrs)
+
     from .extras import item_extras_top
     item_extras_top(cat, key, asset)
     from .documents_page import in_documents_box
@@ -175,6 +178,10 @@ def detail(cat: Catalogue, key: str) -> None:
     if asset["kind"] == "access_db":
         from .sources_extra import access_section
         access_section(cat, key, asset)
+    if asset["kind"] in ("script", "notebook", "sql_script"):
+        with st.expander("Data flow: where this script's data comes from and where it goes", expanded=True):
+            from .dataflow_page import flow_block
+            flow_block(cat, None, f"scriptflow-{key}", focus=key)
     if asset["kind"] in ("script", "notebook") and attrs.get("function_info"):
         from .code import functions_section
         functions_section(cat, key, asset)
@@ -189,6 +196,9 @@ def detail(cat: Catalogue, key: str) -> None:
         project_env_box(cat, key)
         with st.expander("Code map: how this connects to your libraries and data"):
             diagram_block(cat, asset["source"], f"proj-{key}")
+        with st.expander("Data flow: where this project's data comes from and where it goes"):
+            from .dataflow_page import flow_block
+            flow_block(cat, asset["source"], f"projflow-{key}")
 
     children = [c for c in cat.children(key) if c["kind"] != "series_file"]
     if children:
@@ -634,3 +644,16 @@ def notes_section(cat: Catalogue, key: str, column_names: list[str]) -> None:
                 st.rerun()
             else:
                 st.warning("Write something first.")
+
+
+def data_source_facts(attrs: dict) -> None:
+    """What a data source is: its type, engine, the addresses the code uses and (for SAP) what it calls."""
+    bits = [attrs.get("type_label", ""), attrs.get("engine", ""), attrs.get("detail", "")]
+    st.caption(" · ".join(dict.fromkeys(b for b in bits if b)))
+    if attrs.get("addresses"):
+        st.markdown("**Addresses used:**\n" + "\n".join(f"- `{a}`" for a in attrs["addresses"]))
+    if attrs.get("expression"):
+        st.caption(f"The address is worked out when the code runs, from `{attrs['expression']}`. "
+                   "Add a note saying where it points.")
+    if attrs.get("calls"):
+        st.markdown("**SAP functions called:** " + ", ".join(f"`{c}`" for c in attrs["calls"]))
