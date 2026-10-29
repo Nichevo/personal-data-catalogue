@@ -201,13 +201,18 @@ def table_view(cat: Catalogue, key: str) -> dict[str, Any] | None:
             "lineage": upstream(cat, report_key, attrs, name) if query else [], "used_on": used_on}
 
 
-def all_objects(cat: Catalogue, what: str) -> list[dict[str, Any]]:
+def all_objects(cat: Catalogue, what: str, old_versions: bool = False) -> list[dict[str, Any]]:
     """Every model table ("tables") or Power Query query ("queries") in the scanned reports (and, for queries,
-    workbooks), one row each, for the Power BI browse list."""
+    workbooks), one row each, for the Power BI browse list. Older versions of a report are left out unless
+    `old_versions`."""
+    from .groups import older_versions
     kinds = ("report",) if what == "tables" else ("report", "workbook")
+    skip = set() if old_versions else older_versions(cat)
     out = []
     for r in cat.conn.execute(f"SELECT key, name, kind, source, attrs FROM assets WHERE status = 'active' AND kind IN "
                               f"({','.join('?' * len(kinds))}) ORDER BY name", kinds):
+        if r["key"] in skip:
+            continue
         attrs = json.loads(r["attrs"] or "{}")
         if what == "tables":
             homes: dict[str, int] = {}

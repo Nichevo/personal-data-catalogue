@@ -310,7 +310,9 @@ def measures_across_page(cat: Catalogue) -> None:
                "calculation under different names (agree on one name, or put it in the glossary), and the same name "
                "with different calculations (two reports showing different numbers under one label). Earlier versions "
                "of a report are left out.")
-    found = across_reports(cat)
+    old = st.checkbox("Show older versions", key="mx-old",
+                      help="Include the measures in older versions of a report too.")
+    found = across_reports(cat, old_versions=old)
     if not found["same_dax"] and not found["same_name"]:
         st.info("No measure recurs across the scanned reports yet. Scan more .pbix or .pbit files to compare them.")
         return
