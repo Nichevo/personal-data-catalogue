@@ -186,6 +186,26 @@ one at a time, and every query is logged:
   and filters; the Find lists keep their filter too.
 - **No rescan needed.** The search index is rebuilt once, the first time 2.19 opens your catalogue.
 
+## New in version 2.17
+
+- **Versions of a report are grouped for you.** Reports in the same folder whose names start the
+  same ("Sales report", "Sales report v2", "Sales report 2023-04 FINAL", "Sales report - copy",
+  "Sales report March") are grouped as versions of one report after each scan, with no yes needed.
+  The newest one that isn't named or filed as old is the current one. Excel workbooks are grouped
+  the same way. Names have to share a meaningful start: two real words ("Weekly KPI pack" and
+  "Weekly KPI pack Bob"), not just "report" or "dashboard". When the names share less, or go
+  different ways after the start ("Sales report North", "Sales report South"), they are grouped
+  only if the reports also hold mostly the same pages, measures and sources. Reports in different
+  folders, or matched by content alone, are still only suggested, as before.
+- **Only the current version shows.** Search, the Find › Power BI lists (reports, model tables,
+  queries and measures), the Power BI map and Measures across reports show the current report with
+  "+3 older" next to it. Each has a **Show older versions** switch that lists them all, marked
+  "older version". The measures inside older versions are left out of search too.
+- **Undo is one click.** On the group's page, make another report current (later scans keep your
+  choice), take one out, or break the group up; what you take out isn't grouped again until you
+  press **Allow again** on its page. Settings has a switch to turn the grouping off, which unfolds
+  everything. Catalogues scanned before 2.17 are grouped the first time you open the app.
+
 ## New in version 2.16
 
 - **Power BI model tables and queries open pages of their own.** On a report's page, pick a row

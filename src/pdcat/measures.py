@@ -128,15 +128,15 @@ def _dax_key(expression: str) -> str:
     return re.sub(r"\s+", "", text).lower()
 
 
-def across_reports(cat: Catalogue) -> dict[str, list[dict[str, Any]]]:
+def across_reports(cat: Catalogue, old_versions: bool = False) -> dict[str, list[dict[str, Any]]]:
     """Measures that recur across Power BI reports.
 
     "same_dax": one entry per expression found in more than one report, with every name it goes by and
     where; names that differ are worth agreeing on. "same_name": one entry per measure name that is worked
     out differently in different reports; those are the ones to check, because the same label on two
     reports then means two different numbers. Old versions of a report (the Versions groups) are left out,
-    so a measure in a report and its earlier copies counts once."""
-    old = {r[0] for r in cat.conn.execute(
+    so a measure in a report and its earlier copies counts once, unless `old_versions`."""
+    old = set() if old_versions else {r[0] for r in cat.conn.execute(
         "SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid "
         "WHERE g.type = 'versions' AND m.asset_key != g.main_key")}
     reports = {r["key"]: r["name"] for r in cat.conn.execute(

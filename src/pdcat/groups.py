@@ -1,8 +1,9 @@
 """Items that belong together while each stays its own item:
 
   * family:   the same data at different grains (SOH_D, SOH_W, SOH_M)
-  * versions: copies of one script (forecast_v2.py, forecast_v3.py); only the main one shows on
-              the code map, in search and in lineage
+  * versions: copies of one script (forecast_v2.py, forecast_v3.py) or report ("Sales v2.pbix"); only the
+              main one shows on the code map, in search and in lineage. Report versions in one folder are
+              grouped automatically (reportgroups.py)
   * backup:   a main table and its copy elsewhere (SQL Server and an Azure backup with more history)
   * outputs:  the files one script writes from one pattern (f"out/sales_{run}.csv"), made automatically
 
@@ -98,29 +99,44 @@ def remove_member(cat: Catalogue, uid: str, key: str) -> None:
         if g and g["main_key"] == key:
             cat.conn.execute("UPDATE item_groups SET main_key = NULL WHERE uid = ?", (uid,))
         _drop_empty(cat)
-    if g and g["attrs"].get("suggestion"):
-        excluded = cat.setting("group_excluded", [])
-        cat.set_setting("group_excluded", [*excluded, [g["type"], key]], quiet=True)
+    if g and (g["attrs"].get("suggestion") or g["attrs"].get("auto")):
+        _exclude(cat, g["type"], [key])
     cat.changed()
 
 
 def delete(cat: Catalogue, uid: str) -> None:
+    """Break a group up. A suggested group isn't suggested again; the items of a group made automatically
+    (report versions) aren't grouped again until you allow it on their pages."""
     g = get(cat, uid)
     with cat.conn:
         cat.conn.execute("DELETE FROM group_members WHERE group_uid = ?", (uid,))
         cat.conn.execute("DELETE FROM item_groups WHERE uid = ?", (uid,))
     if g and g["attrs"].get("suggestion"):
         suggestions._set_state(cat, g["attrs"]["suggestion"], "rejected")
+    if g and g["attrs"].get("auto"):
+        _exclude(cat, g["type"], [m["asset_key"] for m in g["members"]])
     cat.changed()
 
 
+def _exclude(cat: Catalogue, type_: str, keys: list[str]) -> None:
+    have = excluded(cat, type_)
+    new = [[type_, k] for k in keys if k not in have]
+    if new:
+        cat.set_setting("group_excluded", [*cat.setting("group_excluded", []), *new], quiet=True)
+
+
 def excluded(cat: Catalogue, type_: str) -> set[str]:
-    """Items you took out of a suggested group of this type, so finders leave them alone."""
+    """Items you took out of a suggested or automatic group of this type, so finders leave them alone."""
     return {k for t, k in cat.setting("group_excluded", []) if t == type_}
 
 
+def allow_again(cat: Catalogue, type_: str, key: str) -> None:
+    """Undo taking an item out: finders may group it again (on the next scan)."""
+    cat.set_setting("group_excluded", [[t, k] for t, k in cat.setting("group_excluded", []) if [t, k] != [type_, key]])
+
+
 def older_versions(cat: Catalogue) -> set[str]:
-    """Scripts that are older versions of another: hidden from the code map, search and lineage."""
+    """Scripts and reports that are older versions of another: hidden from the code map, search and lineage."""
     out = set()
     for r in cat.conn.execute("SELECT m.asset_key, g.main_key FROM group_members m JOIN item_groups g "
                               "ON g.uid = m.group_uid WHERE g.type = 'versions' AND g.main_key IS NOT NULL"):

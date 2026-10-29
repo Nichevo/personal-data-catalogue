@@ -51,14 +51,17 @@ def item_actions(cat: Catalogue, key: str, info: dict | None = None) -> None:
 
 
 def groups_box(cat: Catalogue, key: str) -> None:
+    grouped = False
     for g in groups.for_item(cat, key):
         if g is None:
             continue
         me = next((m for m in g["members"] if m["asset_key"] == key), {})
         others = [m for m in g["members"] if m["asset_key"] != key]
         if g["type"] == "versions":
+            grouped = True
             if g["main_key"] == key:
-                text = f"🗂️ Current version of **{g['name']}**. {len(others)} older version(s) are hidden from the code map."
+                text = (f"🗂️ Current version of **{g['name']}**. {len(others)} older version(s) are folded under it "
+                        "in search, lists and maps.")
             elif g["main_key"]:
                 text = (f"🗂️ An **older version** of **{g['name']}**; the current one is "
                         f"**{next((m['name'] for m in others if m['asset_key'] == g['main_key']), '?')}**.")
@@ -73,6 +76,12 @@ def groups_box(cat: Catalogue, key: str) -> None:
         c1, c2 = st.columns([5, 1])
         c1.markdown(text)
         c2.button("Open", key=f"grp-{key}-{g['uid']}", on_click=go, args=(f"group://{g['uid']}",))
+    if not grouped and key in groups.excluded(cat, "versions"):
+        c1, c2 = st.columns([5, 1])
+        c1.caption("🗂️ You took this out of a versions group, so it isn't grouped with its other versions.")
+        if c2.button("Allow again", key=f"grp-allow-{key}", help="It may be grouped again on the next scan"):
+            groups.allow_again(cat, "versions", key)
+            st.rerun()
 
 
 def suggestions_box(cat: Catalogue, key: str) -> None:
