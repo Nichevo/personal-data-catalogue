@@ -586,7 +586,7 @@ def test_questions(cat: Any, limit: int = MAX_TESTS) -> list[dict[str, str]]:
 
     picks: dict[str, list[tuple[str, str]]] = {k: [] for k in
                                                ("writes", "metric", "replace", "grain", "join", "column", "sap", "rule",
-                                                "question")}
+                                                "question", "sqlscript")}
     for r in cat.conn.execute(
             "SELECT l.dst_key, group_concat(DISTINCT a.name) FROM links l JOIN assets a ON a.key = l.src_key "
             "JOIN assets d ON d.key = l.dst_key AND d.status = 'active' WHERE l.relation = 'writes' "
@@ -622,6 +622,21 @@ def test_questions(cat: Any, limit: int = MAX_TESTS) -> list[dict[str, str]]:
     for q in list_questions(cat)[:10]:
         if q["answer"] or q["sql"]:
             picks["question"].append((q["question"], q["answer"] or q["sql"]))
+    # SQL scripts and pasted SQL: a good agent answers from the tables the script touches, not from guesswork.
+    for r in cat.conn.execute(
+            "SELECT a.key, a.name, a.description, "
+            "group_concat(DISTINCT CASE WHEN l.relation = 'reads' THEN COALESCE(l.dst_key, l.dst_ref) END) AS reads, "
+            "group_concat(DISTINCT CASE WHEN l.relation = 'writes' THEN COALESCE(l.dst_key, l.dst_ref) END) AS writes "
+            "FROM assets a JOIN links l ON l.src_key = a.key WHERE a.kind IN ('sql_script', 'sql_snippet') "
+            "AND a.status = 'active' GROUP BY a.key LIMIT 10"):
+        bits = []
+        for label, keys in (("reads", r["reads"]), ("writes", r["writes"])):
+            names = [p.name(k) if k in p.names else k.removeprefix("table:") for k in (keys or "").split(",") if k]
+            if names:
+                bits.append(f"{label} {', '.join(sorted(set(names)))}")
+        if bits:
+            answer = f"{r['name']} {'; '.join(bits)}." + (f" {r['description']}" if r["description"] else "")
+            picks["sqlscript"].append((f"What does the SQL script {r['name']} read and write?", answer))
     # take one of each kind in turn so the list covers different things
     while len(out) < limit and any(picks.values()):
         for kind, items in picks.items():

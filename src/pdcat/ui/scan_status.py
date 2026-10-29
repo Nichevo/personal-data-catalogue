@@ -24,7 +24,8 @@ class ScanStatus:
         self.line = self.box.empty()
         self.bar = self.box.progress(0.0)
         self.box.button("⏹️ Stop", key=f"stop-scan-{time.monotonic_ns()}",
-                        help="Stops the scan. A folder or project being read is left as it was before this scan.")
+                        help="Stops the scan. Folder scans save as they go, so the reports, workbooks and files "
+                             "already read are kept and the next scan carries on from there.")
         self.box.caption("Each file shows here as it is read. A big Power BI report or workbook can take a minute "
                          "or two on its own, especially on a network drive.")
         self.started = self.phase_started = time.monotonic()

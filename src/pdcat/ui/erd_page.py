@@ -24,9 +24,17 @@ def erd_page(cat: Catalogue) -> None:
     names = {a["uid"]: f"{a['name']} ({len(a['members'])})" for a in areas}
     pick = st.selectbox("Subject area", ["all", *names], format_func=lambda u: "All areas" if u == "all" else names[u])
     area = None if pick == "all" else pick
-    fields = st.toggle("Show fields", help="List every column in each table, not just the keys")
+    c1, c2 = st.columns([1, 3], vertical_alignment="bottom")
+    all_fields = c1.toggle("Show fields", help="List every column in every table, not just the keys")
+    tables = {t["key"]: t["name"] for t in erd.tables(cat, db).values()}
+    chosen = [] if all_fields else c2.multiselect(
+        "Show fields for", list(tables), format_func=tables.get, placeholder="Pick tables to list their columns…",
+        label_visibility="collapsed", key=f"erd-fields-{db}",
+        help="Only these tables list their columns; the rest show their keys.")
+    fields: bool | set[str] = True if all_fields else set(chosen)
+    tag = "-f" if all_fields else ("-" + str(abs(hash(tuple(sorted(chosen)))))[:8] if chosen else "")
     elements = erd.erd_elements(cat, db, area, fields=fields)
-    graph_view(cat, elements, key=f"erd-{db}-{pick}{'-f' if fields else ''}", direction="DOWN", name=f"erd-{db.rsplit('/', 1)[-1]}",
+    graph_view(cat, elements, key=f"erd-{db}-{pick}{tag}", direction="DOWN", name=f"erd-{db.rsplit('/', 1)[-1]}",
                packed=True)
     c1, c2 = st.columns(2)
     stem = db.rsplit("/", 1)[-1] + ("" if area is None else "-" + names[area].split(" (")[0])
@@ -36,7 +44,6 @@ def erd_page(cat: Catalogue) -> None:
         st.code(erd.to_mermaid(cat, db, area, columns=False), language=None)
 
     with st.expander("✏️ Edit subject areas"):
-        tables = {t["key"]: t["name"] for t in erd.tables(cat, db).values()}
         with st.form(f"erd-move-{db}"):
             moving = st.multiselect("Move tables", list(tables), format_func=tables.get)
             target = st.selectbox("to area", list(names), format_func=names.get)

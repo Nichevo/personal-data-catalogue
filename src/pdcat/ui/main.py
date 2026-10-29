@@ -44,6 +44,7 @@ def sections() -> dict[str, dict[str, Page]]:
         lists,
         menu_guide,
         ml_pages,
+        office_pages,
         scan_log,
         scanning,
         setup_page,
@@ -72,7 +73,7 @@ def sections() -> dict[str, dict[str, Page]]:
                 "Edit many items": curation_pages.bulk_edit_page}),
         },
         "🗺️ Map": {"Code map": code.code_map_page, "Database diagrams": erd_page.erd_page,
-                   "Packages": code.packages_page},
+                   "Packages": code.packages_page, "Measures across reports": office_pages.measures_across_page},
         "➕ Add": {
             "Sources": combined("Sources", "Where the catalogue reads from: SQL you paste, folders of data and code, "
                                            "and SQL Server databases.", {
@@ -133,7 +134,7 @@ def recently_viewed(cat: Catalogue) -> None:
     if rows:
         with st.expander("🕘 Recently viewed", expanded=False):
             for i, r in enumerate(rows):
-                st.button(f"{icon(kind_of(r['item'], r['kind']))} {r['name']}", key=f"recent-{i}", on_click=go,
+                st.button(f"{icon(kind_of(r['item'], r['kind']))} {r['name']}", key=f"recent-viewed-{i}", on_click=go,
                           args=(r["item"],), type="tertiary")
 
 
