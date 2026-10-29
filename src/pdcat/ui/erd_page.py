@@ -19,10 +19,15 @@ def erd_page(cat: Catalogue) -> None:
         st.info("No SQL Server databases scanned yet.")
         return
     labels = {d["key"]: f"{d['name']} ({d['tables']} tables)" for d in dbs}
-    db = st.selectbox("Database", list(labels), format_func=labels.get)
+    if st.session_state.get("erd-db") not in labels:  # opened from a table page of a database not listed
+        st.session_state.pop("erd-db", None)
+    db = st.selectbox("Database", list(labels), format_func=labels.get, key="erd-db")
     areas = erd.ensure_areas(cat, db)
     names = {a["uid"]: f"{a['name']} ({len(a['members'])})" for a in areas}
-    pick = st.selectbox("Subject area", ["all", *names], format_func=lambda u: "All areas" if u == "all" else names[u])
+    if st.session_state.get(f"erd-area-{db}") not in ("all", *names):
+        st.session_state.pop(f"erd-area-{db}", None)
+    pick = st.selectbox("Subject area", ["all", *names], format_func=lambda u: "All areas" if u == "all" else names[u],
+                        key=f"erd-area-{db}")
     area = None if pick == "all" else pick
     c1, c2 = st.columns([1, 3], vertical_alignment="bottom")
     all_fields = c1.toggle("Show fields", help="List every column in every table, not just the keys")

@@ -10,15 +10,30 @@ Three kinds of evidence, strongest first:
 
 Declared keys are drawn solid; the others are suggestions, drawn dashed until
 you confirm them. Rejected suggestions stay hidden through rescans.
+
+Reading every view and procedure is the slow part on a big database, so what
+each one joins is saved (table relationship_reads) with a fingerprint of its
+SQL. A rescan only reads the ones that changed, the joins found are saved every
+few objects (stopping keeps them), and a run stops reading after READ_BUDGET
+seconds; the rest are read next time. Name matching only looks at key-like
+columns, and skips pairs whose types can't join (a text code against a number).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import time
 from collections import defaultdict
 from typing import Any
 
-from .store import Catalogue
+from .scanprogress import Report, quiet
+from .store import Catalogue, now
+
+READ_BUDGET = 120  # seconds of reading SQL per run; what's left is read on the next run
+SAVE_EVERY = 2.0  # seconds between saves of what has been read, so stopping keeps it
+READER_VERSION = "1"  # change when joins_in_sql changes, so everything is read again
+KEY_LIKE = re.compile(r"(id|key|code|no)$", re.I)
 
 JOIN_ON = re.compile(
     r"\bjoin\s+(?P<table>[\w\[\].\"]+)(?:\s+(?:as\s+)?(?P<alias>(?!on\b)\w+))?\s+on\s+(?P<cond>.+?)"
@@ -108,9 +123,115 @@ def joins_in_sql(sql: str) -> list[tuple[str, str, str, str]]:
     return out
 
 
-def find_suggestions(cat: Catalogue) -> int:
+SQL_KINDS = ("view", "procedure", "sql_snippet", "sql_script", "script", "notebook")
+
+
+def _texts(attrs: dict[str, Any]) -> list[str]:
+    texts = [attrs.get("definition") or "", attrs.get("sql") or "", *attrs.get("queries", [])]
+    return [t for t in texts if isinstance(t, str) and t and "join" in t.lower()]
+
+
+def _fingerprint(texts: list[str]) -> str:
+    h = hashlib.sha1(READER_VERSION.encode())
+    for t in texts:
+        h.update(t.encode("utf-8", "replace"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def read_joins(cat: Catalogue, report: Report = quiet, budget: float | None = None) -> dict[str, Any]:
+    """Find the joins in every view, procedure and query, reading only what changed since last time.
+    Returns {"joins": {asset key: [(table a, column a, table b, column b), …]}, "names": {key: name},
+    "hints": {key: database}, "read": n, "reused": n, "left": n}."""
+    budget = READ_BUDGET if budget is None else budget
+    cached = {r["asset_key"]: (r["text_hash"], r["joins"])
+              for r in cat.conn.execute("SELECT asset_key, text_hash, joins FROM relationship_reads")}
+    # Only rows that mention a join are loaded; LIKE ignores case for plain letters.
+    marks = ",".join("?" * len(SQL_KINDS))
+    rows = cat.conn.execute(f"SELECT key, name, attrs FROM assets WHERE kind IN ({marks}) AND status = 'active' "
+                            "AND attrs LIKE '%join%'", SQL_KINDS).fetchall()
+    joins: dict[str, list[tuple[str, str, str, str]]] = {}
+    names: dict[str, str] = {}
+    hints: dict[str, str | None] = {}
+    todo: list[tuple[str, str, list[str]]] = []
+    reused = 0
+    for r in rows:
+        attrs = json.loads(r["attrs"])
+        texts = _texts(attrs)
+        if not texts:
+            continue
+        names[r["key"]] = r["name"]
+        hints[r["key"]] = (attrs.get("database") or "").split("/")[-1] or None
+        fp = _fingerprint(texts)
+        old = cached.get(r["key"])
+        if old and old[0] == fp:
+            joins[r["key"]] = [tuple(j) for j in json.loads(old[1])]
+            reused += 1
+        else:
+            if old:  # changed: keep last time's joins unless it is read again in this run
+                joins[r["key"]] = [tuple(j) for j in json.loads(old[1])]
+            todo.append((r["key"], fp, texts))
+    began = last_save = last_report = time.monotonic()
+    pending: list[tuple[str, str, str, str]] = []
+    read = 0
+
+    def save() -> None:
+        if pending:
+            with cat.conn:
+                cat.conn.executemany("INSERT OR REPLACE INTO relationship_reads (asset_key, text_hash, joins, read_at) "
+                                     "VALUES (?, ?, ?, ?)", pending)
+            pending.clear()
+
+    for i, (key, fp, texts) in enumerate(todo):
+        t = time.monotonic()
+        if t - began > budget:
+            break
+        if t - last_report >= 0.5 or i == 0:
+            report(f"reading the SQL of {names[key]} ({i + 1} of {len(todo)} changed since last time)", i, len(todo))
+            last_report = t
+        found = [j for text in texts for j in joins_in_sql(text)]
+        joins[key] = found
+        pending.append((key, fp, json.dumps(found), now()))
+        read += 1
+        if time.monotonic() - last_save >= SAVE_EVERY:
+            save()
+            last_save = time.monotonic()
+    save()
+    gone = set(cached) - {r["key"] for r in rows}
+    if gone:
+        with cat.conn:
+            cat.conn.executemany("DELETE FROM relationship_reads WHERE asset_key = ?", [(k,) for k in gone])
+    return {"joins": joins, "names": names, "hints": hints, "read": read, "reused": reused,
+            "left": len(todo) - read}
+
+
+def _type_family(data_type: str | None) -> str | None:
+    """Rough family of a column type, to skip name matches that can't join. None when unknown."""
+    t = (data_type or "").lower()
+    if not t:
+        return None
+    if re.match(r"(big|small|tiny)?int|bit\b", t) or re.match(r"(decimal|numeric)\(\d+,\s*0\)", t):
+        return "whole"
+    if re.match(r"(decimal|numeric|float|real|money|smallmoney)", t):
+        return "number"
+    if re.match(r"n?(var)?char|text|ntext|string|object|sysname", t):
+        return "text"
+    if re.match(r"(date|time|smalldatetime|datetime)", t):
+        return "date"
+    if t == "uniqueidentifier":
+        return "guid"
+    return None
+
+
+def _can_join(a: str | None, b: str | None) -> bool:
+    fa, fb = _type_family(a), _type_family(b)
+    return fa is None or fb is None or fa == fb
+
+
+def find_suggestions(cat: Catalogue, report: Report = quiet, budget: float | None = None) -> int:
     """Suggest relationships from joins in SQL and from matching key names. Keeps your confirmations
-    and rejections. Returns how many suggestions there are now."""
+    and rejections. Returns how many suggestions there are now. `report(text, done, total)` hears how far
+    the reading of SQL has got."""
     by_name, tables = _table_index(cat)
     found: dict[tuple[str, str, str, str], tuple[str, str]] = {}
 
@@ -126,48 +247,67 @@ def find_suggestions(cat: Catalogue) -> int:
             return
         found[ident] = (how, evidence)
 
-    for r in cat.conn.execute("SELECT key, kind, name, attrs FROM assets WHERE status = 'active' AND kind IN "
-                              "('view', 'procedure', 'sql_snippet', 'sql_script', 'script', 'notebook')"):
-        attrs = json.loads(r["attrs"])
-        texts = [attrs.get("definition") or "", attrs.get("sql") or "", *attrs.get("queries", [])]
-        hint = (attrs.get("database") or "").split("/")[-1] or None
-        for text in texts:
-            if not text or "join" not in text.lower():
-                continue
-            for a, ac, b, bc in joins_in_sql(text):
-                ka, kb = _resolve(a, by_name, tables, hint), _resolve(b, by_name, tables, hint)
-                if ka and kb:
-                    add(ka, ac, kb, bc, "join", f"joined in {r['name']}")
+    read = read_joins(cat, report, budget)
+    resolved: dict[tuple[str, str | None], str | None] = {}
 
-    # Matching names: a column named like another table's single-column primary key.
+    def resolve(name: str, hint: str | None) -> str | None:
+        if (name, hint) not in resolved:
+            resolved[(name, hint)] = _resolve(name, by_name, tables, hint)
+        return resolved[(name, hint)]
+
+    for key, pairs in read["joins"].items():
+        hint = read["hints"].get(key)
+        for a, ac, b, bc in pairs:
+            ka, kb = resolve(a, hint), resolve(b, hint)
+            if ka and kb:
+                add(ka, ac, kb, bc, "join", f"joined in {read['names'].get(key, key)}")
+    report("matching key names across tables", None, None)
+
+    # Matching names: a key-like column named like another table's single-column primary key, of a type
+    # that can join it. Only key-like columns of active tables and views are loaded.
     pk_owner: dict[tuple[str, str, str], str] = {}
     for k, t in tables.items():
-        if len(t["pk"]) == 1 and re.search(r"(id|key|code|no)$", t["pk"][0], re.I):
+        if len(t["pk"]) == 1 and KEY_LIKE.search(t["pk"][0]):
             pk_owner[(t["source"], t["database"], t["pk"][0].lower())] = k
-    for c in cat.conn.execute("SELECT asset_key, name FROM columns"):
-        t = tables.get(c["asset_key"])
-        if not t:
-            continue
-        owner = pk_owner.get((t["source"], t["database"], c["name"].lower()))
-        if owner and owner != c["asset_key"] and t["pk"] != [c["name"]]:
-            add(c["asset_key"], c["name"], owner, tables[owner]["pk"][0], "name",
-                f"{c['name']} matches the primary key of {tables[owner]['name']}")
+    if pk_owner:
+        wanted = {name for (_, _, name) in pk_owner}
+        cols = {(r["asset_key"], r["name"].lower()): (r["name"], r["data_type"]) for r in cat.conn.execute(
+            "SELECT c.asset_key, c.name, c.data_type FROM columns c JOIN assets a ON a.key = c.asset_key "
+            "WHERE a.kind IN ('table', 'view') AND a.status = 'active'") if r["name"].lower() in wanted}
+        for (asset_key, low), (name, data_type) in cols.items():
+            t = tables.get(asset_key)
+            if not t:
+                continue
+            owner = pk_owner.get((t["source"], t["database"], low))
+            if not owner or owner == asset_key or [c.lower() for c in t["pk"]] == [low]:
+                continue
+            pk_col = tables[owner]["pk"][0]
+            if not _can_join(data_type, cols.get((owner, low), (None, None))[1]):
+                continue
+            add(asset_key, name, owner, pk_col, "name", f"{name} matches the primary key of {tables[owner]['name']}")
 
     declared = {(r["src_key"], r["src_columns"].lower(), r["dst_key"], r["dst_columns"].lower())
                 for r in cat.conn.execute("SELECT * FROM relationships WHERE how = 'fk'")}
     decided = {(r["src_key"], r["src_columns"].lower(), r["dst_key"], r["dst_columns"].lower()): r["state"]
                for r in cat.conn.execute("SELECT * FROM relationships WHERE how != 'fk' AND state IN "
                                          "('confirmed', 'rejected')")}
+    rows = []
+    for (a, ac, b, bc), (how, ev) in found.items():
+        low = (a, ac.lower(), b, bc.lower())
+        if low in declared or (b, bc.lower(), a, ac.lower()) in declared:
+            continue
+        if low in decided or (b, bc.lower(), a, ac.lower()) in decided:
+            continue
+        rows.append((a, ac, b, bc, how, ev))
     with cat.conn:
         cat.conn.execute("DELETE FROM relationships WHERE how != 'fk' AND state = 'suggested'")
-        for (a, ac, b, bc), (how, ev) in found.items():
-            low = (a, ac.lower(), b, bc.lower())
-            if low in declared or (b, bc.lower(), a, ac.lower()) in declared:
-                continue
-            if low in decided or (b, bc.lower(), a, ac.lower()) in decided:
-                continue
-            cat.conn.execute("INSERT OR IGNORE INTO relationships (src_key, src_columns, dst_key, dst_columns, how, "
-                             "state, evidence) VALUES (?, ?, ?, ?, ?, 'suggested', ?)", (a, ac, b, bc, how, ev))
+        cat.conn.executemany("INSERT OR IGNORE INTO relationships (src_key, src_columns, dst_key, dst_columns, how, "
+                             "state, evidence) VALUES (?, ?, ?, ?, ?, 'suggested', ?)", rows)
+    cat.set_setting("relationship_reading", {"read": read["read"], "reused": read["reused"], "left": read["left"],
+                                             "at": now()}, quiet=True)
+    if read["left"]:
+        report(f"  relationship suggestions: {read['left']} changed views or procedures left to read next time "
+               f"(stopped after {READ_BUDGET if budget is None else budget:.0f}s)", None, None)
     cat.changed()
     return len(found)
 
