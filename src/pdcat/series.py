@@ -31,7 +31,10 @@ _Y = r"(?P<y>(?:19|20)\d{2})"
 _SEP = r"[-_. ]?"
 # Most specific first. Each pattern must not touch other digits (no 7-digit runs).
 PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("ymd", re.compile(rf"(?<!\d){_Y}{_SEP}(?P<m>0[1-9]|1[0-2]){_SEP}(?P<d>0[1-9]|[12]\d|3[01])(?!\d)")),
+    # A time can follow the day (TOPIC_202304201901500.csv, sales_2023-04-20_190150.csv): it is part of the date
+    # placeholder, so files from the same day with different times still belong to one daily series.
+    ("ymd", re.compile(rf"(?<!\d){_Y}{_SEP}(?P<m>0[1-9]|1[0-2]){_SEP}(?P<d>0[1-9]|[12]\d|3[01])"
+                       rf"(?P<t>[-_T. ]?\d{{4,9}})?(?!\d)")),
     ("dmy", re.compile(rf"(?<!\d)(?P<d>0[1-9]|[12]\d|3[01])[-_.](?P<m>0[1-9]|1[0-2])[-_.]{_Y}(?!\d)")),
     ("yq", re.compile(rf"(?<!\d){_Y}{_SEP}q(?P<q>[1-4])(?!\d)", re.I)),
     ("qy", re.compile(rf"(?<![a-z\d])q(?P<q>[1-4]){_SEP}{_Y}(?!\d)", re.I)),
@@ -86,7 +89,7 @@ def _find(part: str) -> tuple[str, dict[str, int]] | None:
                 date(found["y"], found["m"], found["d"])
             except ValueError:
                 continue
-        template = part[:m.start()] + PLACEHOLDER[name] + part[m.end():]
+        template = part[:m.start()] + PLACEHOLDER[name] + ("{time}" if g.get("t") else "") + part[m.end():]
         return template, found
     return None
 

@@ -260,7 +260,7 @@ def recent_notes_page(cat: Catalogue) -> None:
     if not notes:
         st.info("No notes yet. Open any table or script to add one.")
     for i, n in enumerate(notes):
-        _note_card(n, f"recent-{i}")
+        _note_card(n, f"recent-note-{i}")
 
 
 def _note_card(n, key: str) -> None:

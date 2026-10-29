@@ -359,12 +359,14 @@ def packages_page(cat: Catalogue) -> None:
 
 def package_page(cat: Catalogue, key: str) -> None:
     from pdcat import curation
-    from pdcat.libclass import package_detail
+    from pdcat.libclass import docs_url, package_detail
 
     from .detail import about_form, notes_section
     d = package_detail(cat, key)
     st.title(f"📦 {d['package']}")
-    st.caption(" · ".join(b for b in ("third-party package", d["purpose"], f"imported by {len(d['files'])} file(s)") if b)
+    docs = docs_url(d["package"])
+    st.caption(" · ".join(b for b in ("third-party package", d["purpose"], f"imported by {len(d['files'])} file(s)",
+                                      f"[{'documentation' if 'pypi.org' not in docs else 'on PyPI'}]({docs})") if b)
                + f"  \n`{key}`")
     about_form(cat, key, None, curation.item_info(cat, key))
     if d["versions"]:

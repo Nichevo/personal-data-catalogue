@@ -47,11 +47,18 @@ def test_folder_scan_reports_each_file_and_honours_ignored_folders(tmp_path):
     assert cat.get_asset("files://data/scratch/junk.csv") is None
     texts = [t for t, _, _ in heard]
     assert texts[0].startswith("Looking for files") and "Found 3 file(s)" in texts[1]
-    assert any("Reading data file 1 of 3: sales.csv" in t for t in texts)
-    assert any("Reading Power BI report 2 of 3: Sales.pbix" in t for t in texts)
-    assert any("Reading Excel workbook 3 of 3: Sales.xlsm" in t for t in texts)
-    assert any("Saving data file 1 of 3: sales.csv" in t for t in texts)
+    # Reports and workbooks first (saved as each batch is read), data files last.
+    assert any("Reading Power BI report 1 of 3: Sales.pbix" in t for t in texts)
+    assert any("Reading Excel workbook 2 of 3: Sales.xlsm" in t for t in texts)
+    assert any("Reading data file 3 of 3: sales.csv" in t for t in texts)
     assert heard[-1] == ("Updating links and search …", 3, 3)
+    [entry] = cat.scan_log()
+    assert entry["summary"]["files_read"] == 3 and entry["summary"]["unchanged_or_listed"] == 0
+    heard.clear()
+    scan_folder(cat, "data", folder, report=lambda text, done=None, total=None: heard.append((text, done, total)))
+    assert not any(t.startswith("Reading") for t, _, _ in heard)  # nothing changed: nothing is opened
+    assert any("unchanged files are skipped" in t for t, _, _ in heard)
+    assert cat.scan_log()[0]["summary"]["unchanged_or_listed"] == 3
 
 
 def test_files_are_read_before_the_catalogue_is_locked(tmp_path):

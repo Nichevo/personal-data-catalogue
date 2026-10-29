@@ -783,6 +783,59 @@ class Catalogue:
         apply_manual_links(self)
         self.rebuild_search()
 
+    def begin_scan(self, source: str) -> dict[str, Any]:
+        """Start a scan that saves as it goes (folder scans): remember when it started and what the source held,
+        for `finish_scan`. Nothing is marked missing yet, so a stopped scan leaves the catalogue consistent."""
+        from .history import snapshot
+        self._seen = set()  # every key upserted until finish_scan; what the source had that isn't here is missing
+        return {"source": source, "started": now(), "before": snapshot(self, source)}
+
+    def finish_scan(self, token: dict[str, Any], summary: dict[str, Any] | None = None) -> None:
+        """Close a scan begun with `begin_scan`: whatever the source held that this scan didn't see again is
+        marked missing (with its columns and links dropped), the changes since the last scan are recorded, and
+        the scan goes in the log. Then references are matched, as after any scan."""
+        source, started = token["source"], token["started"]
+        seen, self._seen = self._seen or set(), None
+        from .history import record_changes, snapshot
+        with self.conn:
+            gone = [r[0] for r in self.conn.execute(
+                "SELECT key FROM assets WHERE source = ? AND status = 'active'", (source,)) if r[0] not in seen]
+            if gone:
+                marks = ",".join("?" * len(gone))
+                self.conn.execute(f"UPDATE assets SET status = 'missing' WHERE key IN ({marks})", gone)
+                self.conn.execute(f"DELETE FROM links WHERE source = ? AND src_key IN ({marks})", (source, *gone))
+                self.conn.execute(f"DELETE FROM columns WHERE asset_key IN ({marks})", gone)
+            record_changes(self, token["before"], snapshot(self, source), first_scan=not token["before"])
+            counts = dict(self.conn.execute(
+                "SELECT kind, COUNT(*) FROM assets WHERE source = ? AND status = 'active' GROUP BY kind",
+                (source,)).fetchall())
+            self.conn.execute("INSERT INTO scans (source, started_at, finished_at, summary) VALUES (?, ?, ?, ?)",
+                              (source, started, now(), json.dumps({**counts, **(summary or {})}, default=str)))
+        self.resolve_refs()
+        from .codemap import resolve_imports
+        resolve_imports(self)
+        from .links import apply_manual_links
+        apply_manual_links(self)
+        self.rebuild_search()
+
+    def note_stopped_scan(self, token: dict[str, Any], summary: dict[str, Any]) -> None:
+        """A scan begun with `begin_scan` that was stopped or failed: logged, with what it had saved, so the
+        scan log shows it. Nothing is marked missing; the next scan carries on from what was saved."""
+        self._seen = None
+        with self.conn:
+            self.conn.execute("INSERT INTO scans (source, started_at, finished_at, summary) VALUES (?, ?, ?, ?)",
+                              (token["source"], token["started"], now(),
+                               json.dumps({"stopped": True, **summary}, default=str)))
+
+    def last_finished_scan(self, source: str) -> str | None:
+        """When this source's last complete scan finished (ISO time), or None."""
+        for r in self.conn.execute("SELECT finished_at, summary FROM scans WHERE source = ? ORDER BY id DESC LIMIT 20",
+                                   (source,)):
+            summary = json.loads(r["summary"]) if r["summary"] else {}
+            if r["finished_at"] and not summary.get("stopped"):
+                return r["finished_at"]
+        return None
+
     def annotate_scan(self, source: str, extra: dict[str, Any]) -> None:
         """Add timing and size details to the latest scan of a source (for the scan log)."""
         row = self.conn.execute("SELECT id, summary FROM scans WHERE source = ? ORDER BY id DESC LIMIT 1",
@@ -806,6 +859,8 @@ class Catalogue:
                      description: str | None = None, attrs: dict[str, Any] | None = None) -> None:
         ts = now()
         attrs = dict(attrs or {})
+        if getattr(self, "_seen", None) is not None:
+            self._seen.add(key)
         old = self.conn.execute("SELECT attrs FROM assets WHERE key = ?", (key,)).fetchone()
         if old:
             # Remember when the object itself changed (SQL modify_date, file modified time),

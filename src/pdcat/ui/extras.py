@@ -56,7 +56,13 @@ def series_section(cat: Catalogue, key: str, asset: dict) -> None:
         st.caption(f"⚠️ {m['file']}: {m['detail']}")
     for c in a.get("layout_changes", []):
         st.warning(f"Layout differs in {c['file']}: {c['detail']}")
-    st.caption("Columns and values below are from the newest file. Older files only had their rows and header read.")
+    if a.get("files_not_read"):
+        st.caption(f"Columns and values below are from the newest file. This folder is sampled by date, so only the "
+                   f"newest {a['file_count'] - a['files_not_read']} files were opened; the other {a['files_not_read']} "
+                   "are listed from the file system (no row counts). \"Read every file\" on the folder's card "
+                   "changes that.")
+    else:
+        st.caption("Columns and values below are from the newest file. Older files only had their rows and header read.")
     with st.expander(f"Files in this series ({a['file_count']})"):
         st.dataframe(pd.DataFrame([{"period": f["period"], "file": f["rel"], "rows": f["rows"],
                                     "size": size_label(f["size"]) if f.get("size") is not None else "",

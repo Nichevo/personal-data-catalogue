@@ -779,8 +779,10 @@ def _expr_value(node: ast.AST, env: dict[str, ast.AST], depth: int = 0) -> tuple
             if isinstance(v, ast.Constant):
                 out.append(str(v.value))
             elif isinstance(v, ast.FormattedValue):
-                val, _ = _expr_value(v.value, env, depth + 1) if isinstance(v.value, (ast.Name, ast.Subscript)) \
-                    else (None, "")
+                # {name}, {cfg["out"]}, {self.topic}, {Path(folder)}: followed like any other expression; a date or
+                # anything else that is only known when the script runs becomes {}.
+                val, _ = _expr_value(v.value, env, depth + 1) \
+                    if isinstance(v.value, (ast.Name, ast.Subscript, ast.Attribute, ast.Call, ast.BinOp)) else (None, "")
                 out.append(val if val is not None and "{}" not in val else "{}")
         text = "".join(out)
         return text, "f-string pattern" if "{}" in text else how

@@ -41,19 +41,28 @@ def profile_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
                 if pd.api.types.is_numeric_dtype(s):
                     p["mean"] = float(non_null.mean())
             else:
-                as_text = non_null.astype(str)
-                p["min"], p["max"] = as_text.min(), as_text.max()
-            try:
-                counts = non_null.astype(str).value_counts().head(TOP_N)
-                p["top"] = [[v, int(c)] for v, c in counts.items()]
-            except TypeError:
-                p["top"] = []
+                try:  # text columns compare as they are; mixed values (numbers and text) are compared as text
+                    p["min"], p["max"] = str(non_null.min()), str(non_null.max())
+                except TypeError:
+                    as_text = non_null.astype(str)
+                    p["min"], p["max"] = as_text.min(), as_text.max()
+            p["top"] = top_values(non_null)
             p.update(ranges(s))
             hints = type_hints(s)
             if hints:
                 p["hints"] = hints
         out.append(p)
     return out
+
+
+def top_values(non_null: pd.Series) -> list[list]:
+    """The most common values as text. Counted on the values themselves: turning a whole numeric column into
+    text first (the old way) was the slowest part of profiling a folder of files."""
+    try:
+        counts = non_null.value_counts().head(TOP_N)
+    except TypeError:  # unhashable values such as lists in parquet
+        return []
+    return [[str(v), int(c)] for v, c in counts.items()]
 
 
 # ---- range charts ------------------------------------------------------------
@@ -244,6 +253,16 @@ def _read_csv(path: Path, nrows: int) -> pd.DataFrame:
 
 
 def _sniff_delimiter(head: str) -> str:
+    """The delimiter of a CSV file, from the first few lines. A character that appears the same number of
+    times (at least once) on every line is it; csv.Sniffer only runs when that isn't clear, because it is
+    slow enough to show across thousands of files."""
+    lines = [ln for ln in head.splitlines()[:5] if ln.strip()]
+    if lines:
+        steady = [d for d in ",;\t|" if len({ln.count(d) for ln in lines}) == 1 and lines[0].count(d) > 0]
+        if len(steady) == 1:
+            return steady[0]
+        if steady:  # e.g. "a;b,c" with both on every line: the one that splits the lines into most fields
+            return max(steady, key=lambda d: lines[0].count(d))
     try:
         return csv.Sniffer().sniff(head, delimiters=",;\t|").delimiter
     except csv.Error:

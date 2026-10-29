@@ -1,6 +1,7 @@
 """Adding things by hand: pasted SQL and folders of data files."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -20,7 +21,7 @@ def add_sql_page(cat: Catalogue) -> None:
 
 
 def folders_page(cat: Catalogue) -> None:
-    from pdcat.scan_files import scan_folder
+    from pdcat.scan_files import scan_folder, scanned_recently
 
     page_title("Data folders")
     if st.session_state.get("last-folder-scan"):
@@ -39,8 +40,16 @@ def folders_page(cat: Catalogue) -> None:
                         "single": " · a single project"}.get(mode_of(cat, f["path"]) or "", "")
                 st.caption(f"`{f['path']}`" + (" · includes subfolders" if f["recursive"] else "") + kind)
             if c2.button("Re-scan", key=f"rescan-{i}"):
-                _run_folder_scan(cat, scan_folder, f["name"], f["path"], bool(f["recursive"]),
-                                 ScanStatus(f"Scanning {f['name']} …"))
+                ago = scanned_recently(cat, f["name"])
+                asked = st.session_state.get(f"rescan-anyway-{f['name']}", 0)
+                if ago and time.monotonic() - asked > 300:  # a second press within 5 minutes goes ahead
+                    st.session_state[f"rescan-anyway-{f['name']}"] = time.monotonic()
+                    st.warning(f"{f['name']} was scanned {ago}, and a re-scan only reads files that have changed "
+                               "since. Press Re-scan again to scan it anyway.", icon="⏱️")
+                else:
+                    st.session_state.pop(f"rescan-anyway-{f['name']}", None)
+                    _run_folder_scan(cat, scan_folder, f["name"], f["path"], bool(f["recursive"]),
+                                     ScanStatus(f"Scanning {f['name']} …"))
             if c3.button("Remove", key=f"remove-{i}", help="Forget this folder and its files (notes are kept)"):
                 for lib in cat.libraries():
                     if lib["from_folder"] == f["name"]:
@@ -50,6 +59,7 @@ def folders_page(cat: Catalogue) -> None:
             code = [lib for lib in cat.libraries() if lib["from_folder"] == f["name"]]
             if code:
                 st.caption("🐍 Code catalogued as " + ", ".join(f"**{lib['name']}**" for lib in code))
+            sampling_note(cat, f["name"], i)
             roles_editor(cat, f["path"], f["name"])
 
     st.subheader("Add a folder")
@@ -86,6 +96,28 @@ def folders_page(cat: Catalogue) -> None:
             if with_code:
                 add_code_projects(cat, name, path, found, status)
             _run_folder_scan(cat, scan_folder, name, path, recursive, status)
+
+
+def sampling_note(cat: Catalogue, name: str, i: int) -> None:
+    """How the last scan of a big folder sampled it, with a switch to read every file (or sample again)."""
+    last = next((e for e in cat.scan_log(50) if e["source"] == name), None)
+    read_all = cat.setting("read_all_sources", [])
+    if name in read_all:
+        c1, c2 = st.columns([4, 1])
+        c1.caption("📅 Every data file in this folder is read, however many there are.")
+        if c2.button("Sample by date", key=f"sample-{i}", help="Big folders: read only the newest files of each "
+                     "dated series and the newest stand-alone files; list the rest without opening them."):
+            cat.set_setting("read_all_sources", [n for n in read_all if n != name], quiet=True)
+            st.rerun()
+    elif last and last["summary"].get("sampled"):
+        s = last["summary"]
+        c1, c2 = st.columns([4, 1])
+        c1.caption(f"📅 Sampled by date: {s.get('files_read', 0):,} of {s.get('files_found', 0):,} files were opened; "
+                   f"{s.get('listed', 0):,} older files in dated series are listed without being read.")
+        if c2.button("Read every file", key=f"readall-{i}",
+                     help="From the next scan, open every file in this folder (slow for thousands of files)."):
+            cat.set_setting("read_all_sources", [*read_all, name], quiet=True)
+            st.rerun()
 
 
 @st.cache_data(ttl=300, show_spinner="Looking at the folder …")
@@ -220,8 +252,12 @@ def _run_folder_scan(cat: Catalogue, scan_folder, name: str, path: str, recursiv
         counts = scan_folder(cat, name, path, recursive, report=status)
     except Exception as e:
         status.done("Scan failed", ok=False)
-        st.error(f"Scan failed: {type(e).__name__}: {e}")
+        st.error(f"Scan failed: {type(e).__name__}: {e}. What had been read before that is saved.")
         return
+    except BaseException:  # the Stop button: what was read so far is saved, the page redraws
+        st.session_state["last-folder-scan"] = (f"{name}: scan stopped after {status.took()}. The reports, workbooks "
+                                                "and files read before that are saved; re-scan to carry on.")
+        raise
     msg = f"Scanned {counts['files']} file(s)" + (f" ({counts['series']} dated series)" if counts.get("series") else "") \
         + (f", {counts['reports']} Power BI report(s)" if counts.get("reports") else "") \
         + (f", {counts['workbooks']} Excel workbook(s)" if counts.get("workbooks") else "") \
