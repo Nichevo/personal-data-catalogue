@@ -90,10 +90,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 print(f"Home-built library '{lib['name']}' (used by {lib['used_by']} file(s)) isn't catalogued. "
                       f"It looks like it lives in {lib['path']} ({lib['how']}). Add it on the Code map page "
                       "or as a [[python]] block with role = \"library\".")
-        unresolved = cat.unresolved_refs()
+        unresolved = cat.unmatched_reasons()
         if unresolved:
-            print(f"{len(unresolved)} table name(s) in code did not match a scanned table "
-                  "(see 'Unmatched tables' in the UI).")
+            from collections import Counter
+            why = Counter("in a database or server not scanned" if r["why"].endswith("not scanned") else r["why"]
+                          for r in unresolved)
+            print(f"{len(unresolved)} table name(s) in code did not match a scanned table: "
+                  + ", ".join(f"{n} {label}" for label, n in why.most_common())
+                  + " (see 'Unmatched tables' in the UI).")
         print(f"Catalogue: {cfg.db_path}")
     return 1 if failures else 0
 

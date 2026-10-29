@@ -292,12 +292,24 @@ def _note_card(n, key: str) -> None:
 def unmatched_page(cat: Catalogue) -> None:
     page_title("Unmatched tables")
     st.caption("Table names found in your code that don't match any scanned table. They may live on a server "
-               "you haven't added, be built dynamically, or be a false positive from the SQL detector.")
-    rows = cat.unresolved_refs()
+               "or in a database you haven't added, be built while the code runs, or be a false positive from the "
+               "SQL detector. A rescan after an upgrade re-reads your SQL with the latest detector.")
+    rows = cat.unmatched_reasons()
     if rows:
-        st.dataframe(pd.DataFrame([{"table": r["dst_ref"][6:], "used by files": r["used_by"],
+        why = pd.Series([_why_group(r["why"]) for r in rows]).value_counts()
+        st.markdown(" · ".join(f"**{n}** {label}" for label, n in why.items()))
+        st.dataframe(pd.DataFrame([{"table": r["table"], "likely why": r["why"], "used by files": r["used_by"],
                                     "example": r["example"]} for r in rows]),
                      hide_index=True, width="stretch")
     else:
         st.success("Every table name in your code matched a scanned table.")
+
+
+def _why_group(why: str) -> str:
+    """'in database SalesDB, not scanned' -> 'in databases not scanned', for the summary line."""
+    if why.startswith("in database"):
+        return "in databases not scanned"
+    if why.startswith("on server"):
+        return "on servers not scanned"
+    return why
 

@@ -258,6 +258,46 @@ def erd_elements(cat: Catalogue, db_key: str, area_uid: str | None = None, *,
 
 
 MAX_FIELDS = 25
+MAX_AROUND = 40  # tables drawn around one table on its own page; the rest are left to the full diagram
+
+
+def item_elements(cat: Catalogue, key: str, *, fields: bool = False) -> tuple[list[dict[str, Any]], int]:
+    """A small diagram for one table or view's page: the item in the middle and the tables it joins to
+    directly (foreign keys, confirmed and suggested joins). Returns (elements, how many were left out)."""
+    from .relationships import relationships
+    rels = [r for r in relationships(cat) if key in (r["src_key"], r["dst_key"]) and r["src_key"] != r["dst_key"]]
+    order = {"declared": 0, "confirmed": 1, "manual": 1}
+    rels.sort(key=lambda r: order.get(r["state"], 2))
+    others: list[str] = []
+    for r in rels:
+        other = r["dst_key"] if r["src_key"] == key else r["src_key"]
+        if other not in others:
+            others.append(other)
+    left_out = max(0, len(others) - MAX_AROUND)
+    keep = {key, *others[:MAX_AROUND]}
+    rels = [r for r in rels if r["src_key"] in keep and r["dst_key"] in keep]
+    nodes = []
+    for k in [key, *others[:MAX_AROUND]]:
+        a = cat.get_asset(k)
+        if not a:
+            continue
+        t = {"name": a["name"], "kind": a["kind"], "attrs": a["attrs"]}
+        node = _table_node(cat, k, t, rels, "", False, fields)
+        node["data"].pop("parent")
+        if k == key:
+            node["data"]["focus"] = True
+        nodes.append(node)
+    shown = {n["data"]["id"] for n in nodes}
+    edges = [{"data": {"id": f"r{i}", "source": r["src_key"], "target": r["dst_key"], "relation": r["state"],
+                       "label": f"{r['src_columns']} = {r['dst_columns']}"}}
+             for i, r in enumerate(rels) if r["src_key"] in shown and r["dst_key"] in shown]
+    return nodes + edges, left_out
+
+
+def area_of(cat: Catalogue, key: str) -> str | None:
+    """The subject area a table is in, if areas have been worked out."""
+    row = cat.conn.execute("SELECT area_uid FROM area_members WHERE asset_key = ? ORDER BY shared LIMIT 1", (key,)).fetchone()
+    return row[0] if row else None
 
 
 def _wanted(fields: bool | set[str], key: str) -> bool:

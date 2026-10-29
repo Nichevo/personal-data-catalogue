@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS assets (
     last_seen   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_assets_source ON assets(source);
+CREATE INDEX IF NOT EXISTS ix_assets_kind ON assets(kind, status);
 CREATE INDEX IF NOT EXISTS ix_assets_parent ON assets(parent);
 
 CREATE TABLE IF NOT EXISTS columns (
@@ -333,6 +334,15 @@ CREATE TABLE IF NOT EXISTS relationships (
     state       TEXT NOT NULL,     -- declared | suggested | confirmed | rejected
     evidence    TEXT,
     PRIMARY KEY (src_key, src_columns, dst_key, dst_columns)
+);
+
+-- What each view, procedure or query joins, with a fingerprint of its SQL, so relationship suggestions
+-- only read SQL that changed since the last run.
+CREATE TABLE IF NOT EXISTS relationship_reads (
+    asset_key TEXT PRIMARY KEY,
+    text_hash TEXT NOT NULL,
+    joins     TEXT NOT NULL,       -- JSON list of [table a, column a, table b, column b]
+    read_at   TEXT
 );
 
 -- Subject areas: groups of related tables for ERDs, worked out automatically and editable by hand.
@@ -1346,11 +1356,43 @@ class Catalogue:
         ).fetchall()
 
     def unresolved_refs(self) -> list[sqlite3.Row]:
-        return self.conn.execute(
+        """Table names in code that match no scanned table. SQL Server's own views (sys.objects,
+        information_schema.columns) are left out: they are never catalogued."""
+        from .sqlrefs import is_system
+        return [r for r in self.conn.execute(
             """SELECT dst_ref, COUNT(DISTINCT src_key) AS used_by, MIN(evidence) AS example
                FROM links WHERE dst_key IS NULL AND dst_ref LIKE 'table:%'
                GROUP BY dst_ref ORDER BY used_by DESC, dst_ref"""
-        ).fetchall()
+        ).fetchall() if not is_system(r["dst_ref"][len("table:"):])]
+
+    def unmatched_reasons(self) -> list[dict[str, Any]]:
+        """`unresolved_refs` with a likely reason for each: a database or server you haven't scanned, a name built
+        while the code runs, several tables with that name, or simply not found in what you've scanned."""
+        databases = {(json.loads(r["attrs"]).get("database") or "").lower() for r in self.conn.execute(
+            "SELECT attrs FROM assets WHERE kind = 'database' AND status = 'active'")}
+        servers = {r[0].lower() for r in self.conn.execute(
+            "SELECT DISTINCT source FROM assets WHERE kind = 'database'")} | {
+            (json.loads(r["attrs"]).get("server") or "").lower() for r in self.conn.execute(
+                "SELECT attrs FROM assets WHERE kind = 'database'")}
+        notes = {r["dst_ref"]: r["match_note"] for r in self.conn.execute(
+            "SELECT dst_ref, MAX(match_note) AS match_note FROM links WHERE dst_key IS NULL AND match_note IS NOT NULL "
+            "AND dst_ref LIKE 'table:%' GROUP BY dst_ref")}
+        out = []
+        for r in self.unresolved_refs():
+            name = r["dst_ref"][len("table:"):]
+            parts = name.split(".")
+            if notes.get(r["dst_ref"]):
+                why = "several tables have this name"
+            elif "{}" in name:
+                why = "name built while the code runs"
+            elif len(parts) >= 4 and parts[-4] not in servers:
+                why = f"on server {parts[-4]}, not scanned"
+            elif len(parts) >= 3 and parts[-3] not in databases:
+                why = f"in database {parts[-3]}, not scanned"
+            else:
+                why = "not in the databases you've scanned"
+            out.append({**dict(r), "table": name, "why": why})
+        return out
 
     def stats(self) -> dict[str, Any]:
         kinds = dict(self.conn.execute(
