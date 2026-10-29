@@ -542,6 +542,8 @@ def link_queries(cat, key: str, source: str, queries: list[dict[str, Any]]) -> N
             cat.add_link(key, "reads", ref, source, hint=hint, how=how)
         for f in q.get("files", []):
             cat.add_link(key, "reads", f"file:{f}", source, how=how)
+    from .datasources import office_sources, record_sources
+    record_sources(cat, key, source, office_sources(queries))
 
 
 if __name__ == "__main__":  # python -m pdcat.scan_powerbi report.pbix: the model as JSON, for _model_in_own_process

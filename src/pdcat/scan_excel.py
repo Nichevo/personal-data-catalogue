@@ -369,6 +369,8 @@ def ingest_workbook(cat, path: Path, key: str, name: str, source: str, parent: s
                  for h in s.get("header", [])]
     cat.set_columns(key, list({c["name"]: c for c in cols}.values()))
     link_queries(cat, key, source, info["queries"])
+    from .datasources import office_sources, record_sources
+    record_sources(cat, key, source, office_sources([], info["connections"]))
     for c in info["connections"]:
         if c.get("command") and looks_like_sql(c["command"]):
             for r in extract_refs(c["command"]):
