@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import re
 import zipfile
 from collections import defaultdict
@@ -34,6 +35,8 @@ from .store import Catalogue, now
 TABLE_KINDS = ("table", "view", "data_file", "file_series", "workbook")
 CODE_KINDS = ("script", "notebook", "sql_script", "procedure")
 MAX_FILE_CHARS = 400_000  # split bigger files so each stays easy for Copilot to index
+
+log = logging.getLogger(__name__)
 
 
 class Pack:
@@ -48,13 +51,27 @@ class Pack:
         for r in cat.conn.execute("SELECT * FROM column_info"):
             self.col_info[r["asset_key"]][r["column_name"]] = dict(r)
         self.names = {r["key"]: r["name"] for r in cat.conn.execute("SELECT key, name FROM assets")}
+        self.problems: list[str] = []  # parts left out because something in them couldn't be read
+
+    def safely(self, what: str, fn, *args, default: Any = None) -> Any:
+        """Run one part of the pack; if it fails, note it and carry on so the rest of the pack is still made."""
+        try:
+            return fn(*args)
+        except Exception as e:  # one odd item must never stop the whole export
+            log.warning("Copilot pack: %s left out", what, exc_info=True)
+            self.problems.append(f"{what}: {type(e).__name__}: {e}")
+            return default
 
     # -- helpers --
     def loc(self, text: str | None) -> str:
         """A server name or path, or nothing when locations are hidden."""
         return "" if self.hide or not text else str(text)
 
-    def name(self, key: str) -> str:
+    def name(self, key: Any) -> str:
+        if isinstance(key, dict):  # a table entry from the SQL library: {"name", "key", ...}
+            return self.name(key["key"]) if key.get("key") else str(key.get("name") or "")
+        if not isinstance(key, str):
+            return "" if key is None else str(key)
         a = self.names.get(key)
         if a is None:
             return key
@@ -221,8 +238,10 @@ def _item(p: Pack, a: dict[str, Any]) -> list[str]:
         facts.append(f"database {attrs['database']}")
     if attrs.get("server") and p.loc(attrs["server"]):
         facts.append(f"server {attrs['server']}")
-    if attrs.get("row_count") is not None:
+    if isinstance(attrs.get("row_count"), (int, float)):
         facts.append(f"{attrs['row_count']:,} rows")
+    elif attrs.get("row_count"):
+        facts.append(f"{attrs['row_count']} rows")
     if a["kind"] == "file_series":
         facts.append(f"{attrs.get('frequency', '')} files {attrs.get('first', '')} to {attrs.get('last', '')}".strip())
     if attrs.get("path") and p.loc(attrs["path"]):
@@ -308,7 +327,7 @@ def data_files(p: Pack) -> dict[str, str]:
         text = [f"# {group}", "", f"{len(items)} items.", ""]
         body: list[str] = []
         for a in items:
-            body += _item(p, a)
+            body += p.safely(f"{a['name']} ({a['kind']})", _item, p, a, default=[])
         doc = "\n".join(text + body)
         if len(doc) <= MAX_FILE_CHARS:
             out[f"data/{slug}.md"] = doc
@@ -318,11 +337,16 @@ def data_files(p: Pack) -> dict[str, str]:
         for a in items:
             attrs = json.loads(a["attrs"])
             part = attrs.get("schema") or (a["name"].split("/")[0] if "/" in a["name"] else "other")
-            parts[part] += _item(p, a)
+            parts[str(part)] += p.safely(f"{a['name']} ({a['kind']})", _item, p, a, default=[])
         for part, lines in parts.items():
             out[f"data/{slug}-{re.sub(r'[^a-z0-9]+', '-', part.lower())}.md"] = "\n".join(
                 [f"# {group}: {part}", ""] + lines)
     return out
+
+
+def _page(pg: dict[str, Any]) -> str:
+    visuals = [str(v.get("title") or v.get("type") or "visual") for v in pg.get("visuals") or [] if isinstance(v, dict)]
+    return f"{pg.get('name') or ''} ({', '.join(visuals)})"
 
 
 def reports(p: Pack) -> str:
@@ -340,8 +364,7 @@ def reports(p: Pack) -> str:
         if info.get("purpose"):
             out += [f"Purpose: {info['purpose']}", ""]
         if a.get("pages"):
-            out += ["Pages: " + "; ".join(f"{pg['name']} ({', '.join(v['title'] or v['type'] for v in pg['visuals'])})"
-                                          for pg in a["pages"]), ""]
+            out += ["Pages: " + "; ".join(_page(pg) for pg in a["pages"] if isinstance(pg, dict)), ""]
         reads = sorted({p.name(l["dst_key"]) for l in cat.links_from(r["key"]) if l["dst_key"]})
         if reads:
             out += ["Loads: " + ", ".join(reads) + ".", ""]
@@ -353,9 +376,9 @@ def reports(p: Pack) -> str:
             if m["description"]:
                 out += [m["description"], ""]
             if ma.get("expression"):
-                out += ["```", ma["expression"], "```", ""]
+                out += ["```", str(ma["expression"]), "```", ""]
             if ma.get("used_on"):
-                out += ["Shown on: " + ", ".join(ma["used_on"]) + ".", ""]
+                out += ["Shown on: " + ", ".join(str(u) for u in ma["used_on"]) + ".", ""]
     return "\n".join(out)
 
 
@@ -448,12 +471,17 @@ def build(cat: Catalogue, *, hide_locations: bool = False, include_values: bool 
         parts.append(("reference-documents.md", documents))
     parts.append(("test-questions.md", test_file))
     for name, fn in parts:
-        text = fn(p)
+        text = p.safely(name, fn, p, default="")
         if text.strip():
             files[name] = text
-    files.update(data_files(p))
+    files.update(p.safely("data files", data_files, p, default={}))
     files["agent-instructions.md"] = agent_instructions(p)
-    files = {"00-start-here.md": start_here(p, ["00-start-here.md", *files]), **files}
+    start = p.safely("00-start-here.md", start_here, p, ["00-start-here.md", *files],
+                     default="# Data catalogue: start here\n")
+    if p.problems:
+        start += ("\n## Left out of this pack\n\nThese couldn't be read when the pack was made, so they are "
+                  "missing. Everything else is complete.\n\n" + "\n".join(f"- {x}" for x in p.problems) + "\n")
+    files = {"00-start-here.md": start, **files}
     return files
 
 
@@ -552,9 +580,10 @@ def sql_queries(p: Pack) -> str:
     for r in rows:
         tables = json.loads(r["tables"] or "[]")
         out += [f"## {r['name']}", ""]
-        if tables:
-            out += ["Uses: " + ", ".join(p.name(t) for t in tables) + ".", ""]
-        out += ["```sql", r["sql"].strip()[:4000], "```", ""]
+        names = [n for n in dict.fromkeys(p.name(t) for t in tables) if n]
+        if names:
+            out += ["Uses: " + ", ".join(names) + ".", ""]
+        out += ["```sql", str(r["sql"] or "").strip()[:4000], "```", ""]
     return "\n".join(out)
 
 

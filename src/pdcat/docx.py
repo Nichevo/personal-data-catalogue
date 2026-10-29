@@ -47,6 +47,9 @@ STYLES = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles {W}
           + '</w:styles>')
 
 
+_BAD_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
 def _runs(text: str) -> str:
     """Inline **bold** and `code`."""
     out = []
@@ -88,6 +91,7 @@ def _table(lines: list[str]) -> str:
 
 
 def markdown_to_docx(md: str) -> bytes:
+    md = _BAD_XML.sub("", md)  # control characters (from pasted SQL or DAX) would make Word refuse the file
     body = []
     lines = md.splitlines()
     i = 0
