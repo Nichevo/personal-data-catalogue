@@ -19,6 +19,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .searchwords import SETTING as SEARCH_WORDS_SETTING
+from .searchwords import STARTER, alternatives, fts_term, phrase_matches, split_name, squash, words
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS assets (
     key         TEXT PRIMARY KEY,
@@ -583,6 +586,8 @@ CREATE TABLE IF NOT EXISTS document_versions (
 """
 
 SCHEMA_VERSION = 3  # 3 = version 2.1
+INSIDE_MIN = 3  # typed words this long or longer also match inside names
+SEARCH_INDEX_VERSION = 2  # 2 = version 2.19: names indexed by their CamelCase parts too
 LOCK_WAIT = 60  # seconds
 
 # Columns added to v1 tables. Added in place by the upgrade; nothing is dropped.
@@ -625,6 +630,7 @@ class Catalogue:
         # with "database is locked" after the default five seconds.
         self.conn = sqlite3.connect(str(path), timeout=LOCK_WAIT)
         self.conn.row_factory = sqlite3.Row
+        self.conn.create_function("pdcat_squash", 1, squash, deterministic=True)
         if self.conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
             self.conn.execute("PRAGMA journal_mode=WAL")
         self.upgrade_backup: Path | None = None
@@ -646,6 +652,7 @@ class Catalogue:
                     "catalogue file to keep using the old version.") from e
             raise
         self.fts = self._create_search_index()
+        self._upgrade_search_index()
 
     def close(self) -> None:
         self.conn.close()
@@ -739,6 +746,27 @@ class Catalogue:
                 "CREATE TABLE IF NOT EXISTS search_idx (key TEXT, kind TEXT, source TEXT, name TEXT, body TEXT)"
             )
             return False
+
+    def _upgrade_search_index(self) -> None:
+        """Catalogues indexed by an older version are re-indexed once, so names match by their parts (version
+        2.19) without a rescan. If another writer holds the catalogue, it's tried again next time."""
+        if int(self.setting("search_index_version", 1)) >= SEARCH_INDEX_VERSION:
+            return
+        try:
+            if self.conn.execute("SELECT 1 FROM assets LIMIT 1").fetchone() or \
+                    self.conn.execute("SELECT 1 FROM search_idx LIMIT 1").fetchone():
+                self.rebuild_search()
+            self.set_setting("search_index_version", SEARCH_INDEX_VERSION, quiet=True)
+        except sqlite3.OperationalError:
+            pass
+
+    def abbreviations(self) -> dict[str, str]:
+        """Short forms and what they stand for, used by search (SOH = Stock on hand)."""
+        saved = self.setting(SEARCH_WORDS_SETTING)
+        return dict(STARTER) if saved is None else dict(saved)
+
+    def set_abbreviations(self, abbrevs: dict[str, str]) -> None:
+        self.set_setting(SEARCH_WORDS_SETTING, dict(abbrevs))
 
     # ---- scanning -------------------------------------------------------
 
@@ -1117,49 +1145,90 @@ class Catalogue:
                limit: int = 100, include_hidden: bool = False, kinds: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
         """Ranked matches. Each row has a "snippet" showing where the words matched (with **bold** hits).
         Deprecated and retired items sink to the bottom. Items marked not relevant and older versions of
-        scripts are left out unless `include_hidden`. `kinds` limits the results to several kinds."""
-        tokens = re.findall(r"\w+", text or "")
+        scripts are left out unless `include_hidden`. `kinds` limits the results to several kinds.
+
+        Each word matches the start of any word or name part ("stock" finds "Stock_Levels" and the "Stock" in
+        "OfficeStockonHand"), and anywhere inside a name ("Overstock"). Abbreviations count both ways. Names
+        that are exactly what was typed come first, then names that start with it, then names with it inside,
+        then the rest by relevance."""
+        tokens = words(text)
         if not tokens:
             return self.list_assets(kind=kind, source=source, limit=limit, include_hidden=include_hidden, kinds=kinds)
+        abbrevs = self.abbreviations()
+        groups = [alternatives(t, abbrevs) for t in tokens]
+        phrases = phrase_matches(text, abbrevs)
         filters, params = [], []
         if not include_hidden:
             filters.append(f"s.key NOT IN ({HIDDEN_KEYS})")
         if kinds:
             filters.append(f"s.kind IN ({', '.join('?' * len(kinds))})")
             params += list(kinds)
-        if self.fts:
-            filters.append("search_idx MATCH ?")
-            params.append(" ".join(f'"{t}"*' for t in tokens))
-            order = "bm25(search_idx, 0, 0, 0, 10.0, 1.0)"
-            snippet = "snippet(search_idx, 4, '**', '**', '…', 14)"
-        else:
-            for t in tokens:
-                filters.append("(s.name LIKE ? OR s.body LIKE ?)")
-                params += [f"%{t}%", f"%{t}%"]
-            order = "s.name"
-            snippet = "''"
         if kind:
             filters.append("s.kind = ?")
             params.append(kind)
         if source:
             filters.append("s.source = ?")
             params.append(source)
-        sql = f"""
+        select = f"""
             SELECT s.key, s.kind, s.source, COALESCE(a.name, {_KNOWLEDGE_NAME}, s.key) AS name, a.description, a.status,
-                   {snippet} AS snippet, i.lifecycle, i.trust, i.sensitive, i.purpose,
-                   (SELECT COUNT(*) FROM notes n WHERE n.asset_key = s.key OR n.asset_key LIKE s.key || '#%') AS note_count
+                   {{snippet}} AS snippet, i.lifecycle, i.trust, i.sensitive, i.purpose,
+                   (SELECT COUNT(*) FROM notes n WHERE n.asset_key = s.key OR n.asset_key LIKE s.key || '#%') AS note_count,
+                   {{score}} AS _score
             FROM search_idx s LEFT JOIN assets a ON a.key = s.key LEFT JOIN item_info i ON i.asset_key = s.key
-            WHERE {' AND '.join(filters)}
-            ORDER BY CASE WHEN i.lifecycle IN ('deprecated', 'retired') OR i.trust = 'do not use' THEN 1 ELSE 0 END,
-                     {order} LIMIT ?
-        """
-        return self.conn.execute(sql, (*params, limit)).fetchall()
+            WHERE {{where}} ORDER BY {{order}} LIMIT ?"""
+        found: dict[str, sqlite3.Row] = {}
+        # 1. Names with each word (or what it stands for) anywhere inside, separators ignored. Words shorter than
+        # three letters would be inside almost every name, so those only match the start of words (2.).
+        if all(len(squash(a)) >= INSIDE_MIN for g in groups for a in g[:1]):
+            found.update(self._search_inside_names(select, filters, params, groups, phrases, limit))
+        if len(tokens) > 1:  # "stock on hand" is also "StockonHand" written as one
+            found.update(self._search_inside_names(select, filters, params, [], [text, *phrases], limit))
+        # 2. Words at the start of any word or name part, in names, descriptions, columns, notes and code.
+        if self.fts:
+            match = " AND ".join("(" + " OR ".join(fts_term(a) for a in g) + ")" for g in groups)
+            if phrases:
+                match = f"({match}) OR " + " OR ".join(fts_term(p) for p in phrases)
+            sql = select.format(snippet="snippet(search_idx, 4, '**', '**', '…', 14)",
+                                score="bm25(search_idx, 0, 0, 0, 10.0, 1.0)", order="_score",
+                                where=" AND ".join([*filters, "search_idx MATCH ?"]))
+            rows = self.conn.execute(sql, (*params, match, limit * 3))
+        else:
+            body = " AND ".join("(" + " OR ".join(["s.name LIKE ? OR s.body LIKE ?"] * len(g)) + ")" for g in groups)
+            sql = select.format(snippet="''", score="0", order="s.name", where=" AND ".join([*filters, body]))
+            rows = self.conn.execute(sql, (*params, *[f"%{a}%" for g in groups for a in g for _ in "nb"], limit * 3))
+        for r in rows:
+            if r["key"] not in found or r["snippet"]:
+                found[r["key"]] = r
+        whole = [squash(text), *(squash(p) for p in phrases)]
+        if len(groups) == 1:
+            whole += [squash(a) for a in groups[0]]
+        ranked = sorted(found.values(), key=lambda r: _rank(r, whole, groups))
+        return ranked[:limit]
+
+    def _search_inside_names(self, select: str, filters: list[str], params: list, groups: list[list[str]],
+                             phrases: list[str], limit: int) -> dict[str, sqlite3.Row]:
+        groups = [[a for a in g if len(squash(a)) >= INSIDE_MIN] for g in groups]
+        phrases = [p for p in phrases if len(squash(p)) >= INSIDE_MIN]
+        clauses = ["(" + " AND ".join("(" + " OR ".join(["pdcat_squash(s.name) LIKE ?"] * len(g)) + ")"
+                                      for g in groups) + ")"] if groups else []
+        clauses += ["pdcat_squash(s.name) LIKE ?"] * len(phrases)
+        if not clauses:
+            return {}
+        name_like = "(" + " OR ".join(clauses) + ")"
+        like_params = [f"%{squash(a)}%" for g in groups for a in g] + [f"%{squash(p)}%" for p in phrases]
+        sql = select.format(snippet="''", score="0", order="length(s.name)",
+                            where=" AND ".join([*filters, name_like]))
+        return {r["key"]: r for r in self.conn.execute(sql, (*params, *like_params, limit * 3))}
 
     def matching_columns(self, key: str, text: str) -> list[dict[str, Any]]:
         """Columns of one item whose name or description matches the search words, with their profile."""
-        tokens = [t.lower() for t in re.findall(r"\w+", text or "")]
-        if not tokens:
+        groups = [alternatives(t, self.abbreviations()) for t in words(text)]
+        if not groups:
             return []
+
+        def hit(alt: str, name: str, hay: list[str]) -> bool:
+            a = squash(alt)
+            return any(w.startswith(a) for w in hay) or (len(a) >= INSIDE_MIN and a in squash(name))
         out = []
         prof = {p["column_name"].lower(): dict(p) for p in self.profile(key)}
         mine = {r["column_name"].lower(): r for r in self.conn.execute(
@@ -1171,19 +1240,20 @@ class Catalogue:
             m = mine.get(low)
             desc = (m["description"] if m and m["description"] else None) or c.get("description") or ""
             hay = f"{_searchable(c['name'])} {desc}".lower()
-            if all(any(w.startswith(t) for w in re.findall(r"\w+", hay)) for t in tokens):
+            hay_words = [squash(w) for w in re.findall(r"\w+", hay)]
+            if all(any(hit(a, c["name"], hay_words) for a in g) for g in groups):
                 out.append({**c, "description": desc, "profile": prof.get(low),
                             "sensitive": bool(m and m["sensitive"])})
         return out
 
     def search_columns(self, text: str, limit: int = 300) -> list[dict[str, Any]]:
         """Every column, in any table or file, whose name or description matches the words."""
-        tokens = [t.lower() for t in re.findall(r"\w+", text or "")]
-        if not tokens:
+        groups = [alternatives(t, self.abbreviations()) for t in words(text)]
+        if not groups:
             return []
-        clauses = " AND ".join(["(lower(c.name) LIKE ? OR lower(COALESCE(ci.description, c.description, '')) LIKE ?)"]
-                               * len(tokens))
-        params = [p for t in tokens for p in (f"%{t}%", f"%{t}%")]
+        one = "(pdcat_squash(c.name) LIKE ? OR lower(COALESCE(ci.description, c.description, '')) LIKE ?)"
+        clauses = " AND ".join("(" + " OR ".join([one] * len(g)) + ")" for g in groups)
+        params = [p for g in groups for a in g for p in (f"%{squash(a)}%", f"%{a}%")]
         rows = self.conn.execute(
             f"""SELECT c.asset_key, a.name AS item, a.kind, a.source, c.name AS column_name, c.data_type,
                        COALESCE(ci.description, c.description) AS description, COALESCE(ci.sensitive, 0) AS sensitive,
@@ -1575,5 +1645,28 @@ _KNOWLEDGE_NAME = """CASE s.kind
 
 
 def _searchable(text: str) -> str:
-    """Make snake_case and dotted names searchable by their parts: 'dbo.sales_daily' also matches 'daily'."""
-    return f"{text} {re.sub(r'[_.:/#-]+', ' ', text)}"
+    """Make names searchable by their parts: 'dbo.sales_daily' also matches 'daily', and 'OfficeStockonHand'
+    matches 'stock' and 'hand'."""
+    return f"{text} {split_name(text)}"
+
+
+def _rank(r: sqlite3.Row, whole: list[str], groups: list[list[str]]) -> tuple:
+    """Search order: items to avoid last; then names that are exactly what was typed, that start with it, that
+    have it as a whole part, that have it inside; then the rest by relevance."""
+    sink = 1 if r["lifecycle"] in ("deprecated", "retired") or r["trust"] == "do not use" else 0
+    name = r["name"] or ""
+    last = re.split(r"[./\\]", name)[-1]
+    full, base = squash(name), squash(last)
+    parts = {squash(p) for p in split_name(name).split()}
+    if base in whole or full in whole:
+        tier = 0
+    elif any(base.startswith(w) for w in whole):
+        tier = 1
+    elif all(any(p.startswith(squash(a)) for a in g for p in parts) for g in groups):
+        tier = 2
+    elif all(any(squash(a) in full for a in g) for g in groups) or \
+            any(w in full for w in whole if len(w) >= INSIDE_MIN):
+        tier = 3
+    else:
+        tier = 4
+    return sink, tier, r["_score"] if tier == 4 else 0, len(last), name.lower()

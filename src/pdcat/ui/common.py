@@ -79,6 +79,21 @@ def page_title(text: str) -> None:
         st.title(text)
 
 
+def restore(key: str, options: list | None = None) -> None:
+    """Put back a widget's last value before drawing it. Streamlit forgets a widget's value when you visit another
+    page, so the search words were gone on coming back to Search. `options`: only put back a value still offered."""
+    saved = st.session_state.get(f"_kept-{key}")
+    if key not in st.session_state and saved is not None and (options is None or saved in options):
+        st.session_state[key] = saved
+
+
+def keep(*keys: str) -> None:
+    """Remember widgets' values after drawing them, for `restore`."""
+    for key in keys:
+        if key in st.session_state:
+            st.session_state[f"_kept-{key}"] = st.session_state[key]
+
+
 def go_page(name: str) -> None:
     """Open a menu page by name (use as a button's on_click). Old page names open their new home."""
     from .main import ALIASES, sections
