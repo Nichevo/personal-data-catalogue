@@ -18,6 +18,8 @@ import re
 from typing import Any
 from urllib.parse import unquote_plus, urlsplit
 
+from .textclean import as_text
+
 # type -> (icon, label)
 SOURCE_TYPES = {
     "api": ("🌐", "API or web service"),
@@ -301,7 +303,7 @@ def parse_connection(text: str) -> dict[str, str]:
     name or password: "DRIVER={ODBC Driver 17 for SQL Server};SERVER=x;DATABASE=y",
     "mssql+pyodbc://user:pw@x/y?driver=...", "mssql+pyodbc:///?odbc_connect=...", "host=x dbname=y",
     "jdbc:sqlserver://x:1433;databaseName=y", "x:1521/service"."""
-    text = (text or "").strip()
+    text = as_text(text).strip()
     out: dict[str, str] = {}
     if not text:
         return out

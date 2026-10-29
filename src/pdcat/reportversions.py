@@ -17,6 +17,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from .store import Catalogue, now
+from .textclean import as_text
 
 VERSIONED_KINDS = ("report", "workbook")
 SIMILAR = 0.6       # share of pages, measures, tables and sources two reports must have in common
@@ -39,7 +40,7 @@ def facets(attrs: dict[str, Any], kind: str) -> dict[str, dict[str, str]]:
         out["pages"] = {p.get("name", ""): f"{len(p.get('visuals', []))} visuals" for p in attrs.get("pages", [])}
         out["visuals"] = {f"{p.get('name', '')} › {v.get('title') or v.get('type', '')}": v.get("type", "")
                           for p in attrs.get("pages", []) for v in p.get("visuals", [])}
-        out["measures"] = {f"{m.get('table', '')}[{m.get('name', '')}]": (m.get("expression") or "").strip()
+        out["measures"] = {f"{m.get('table', '')}[{m.get('name', '')}]": as_text(m.get("expression")).strip()
                            for m in attrs.get("measures", [])}
         out["tables"] = {t.get("name", ""): ", ".join(c.get("name", "") for c in t.get("columns", []))
                          for t in attrs.get("tables", [])}
@@ -47,8 +48,8 @@ def facets(attrs: dict[str, Any], kind: str) -> dict[str, dict[str, str]]:
                           for ref in [*q.get("tables", []), *q.get("files", []), *q.get("folders", [])]}
     else:
         out["sheets"] = {s.get("name", ""): ", ".join(s.get("header", [])) for s in attrs.get("sheets", [])}
-        out["queries"] = {q.get("name", ""): (q.get("expression") or "").strip() for q in attrs.get("queries", [])}
-        out["connections"] = {c.get("name", ""): (c.get("command") or "").strip()
+        out["queries"] = {q.get("name", ""): as_text(q.get("expression")).strip() for q in attrs.get("queries", [])}
+        out["connections"] = {c.get("name", ""): as_text(c.get("command")).strip()
                               for c in attrs.get("connections", []) if c.get("type") != "Power Query"}
         out["pivots"] = {p.get("name") or f"pivot {i + 1}": ", ".join(p.get("fields", []))
                          for i, p in enumerate(attrs.get("pivots", []))}

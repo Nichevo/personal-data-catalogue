@@ -86,15 +86,25 @@ BIG_FOLDER = 2 * 1024 ** 3      # ...and so does a folder with this much to read
 MANY_FILES = 2000
 
 
-def size_up(paths: Iterable[Path]) -> dict:
-    """{"files", "bytes", "big": [(name, bytes)]} for a list of files, to warn before a long scan."""
-    files = total = 0
-    big: list[tuple[str, int]] = []
+def stat_files(paths: Iterable[Path]) -> dict[Path, os.stat_result]:
+    """One stat per file, kept for the whole scan: on a network drive each stat costs a round trip, and a
+    folder of 20,000 files would otherwise be stat'ed three times over."""
+    out: dict[Path, os.stat_result] = {}
     for p in paths:
         try:
-            n = p.stat().st_size
+            out[p] = p.stat()
         except OSError:
             continue
+    return out
+
+
+def size_up(paths: Iterable[Path], stats: dict[Path, os.stat_result] | None = None) -> dict:
+    """{"files", "bytes", "big": [(name, bytes)]} for a list of files, to warn before a long scan."""
+    stats = stat_files(paths) if stats is None else stats
+    files = total = 0
+    big: list[tuple[str, int]] = []
+    for p, st in stats.items():
+        n = st.st_size
         files += 1
         total += n
         if n >= BIG_FILE:
@@ -144,7 +154,8 @@ class Steps:
         self.skipped += 1
         if time.monotonic() - self._last_skip >= 0.5 or self.done == self.total:
             self._last_skip = time.monotonic()
-            self.report(f"Checking {what}: {self.done:,} of {self.total:,} ({why})", self.done, self.total)
+            verb = "Listing" if why.startswith("not opened") else "Checking"
+            self.report(f"{verb} {what}: {self.done:,} of {self.total:,} ({why})", self.done, self.total)
 
     @contextmanager
     def __call__(self, what: str, rel: str):

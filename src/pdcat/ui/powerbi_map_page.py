@@ -13,7 +13,7 @@ from .common import go
 def powerbi_map_page(cat: Catalogue) -> None:
     from pdcat.codemap import to_dot, to_mermaid
     from pdcat.dataflow import flow_elements
-    from pdcat.powerbimap import report_map, reports
+    from pdcat.powerbimap import pick_reports, report_map, reports
 
     from .graphview import graph_view
     st.title("Power BI map")
@@ -23,11 +23,23 @@ def powerbi_map_page(cat: Catalogue) -> None:
     workbooks = c1.checkbox("Include Excel workbooks", value=False, key="pbimap-wb")
     show_old = c2.checkbox("Show old items", value=False, key="pbimap-old",
                            help="Older versions of a report are always folded into the current one.")
-    rows = reports(cat, workbooks=workbooks, show_old=show_old)
-    if not rows:
+    every = reports(cat, workbooks=workbooks, show_old=show_old)
+    if not every:
         st.info("No Power BI reports catalogued yet. Add the folder that holds them under ➕ Add → Sources → "
                 "Data folders and scan it.")
         return
+    f1, f2, f3 = st.columns([3, 1.4, 1.2], vertical_alignment="bottom")
+    text = f1.text_input("Only reports whose name or folder contains", key="pbimap-text",
+                         placeholder="e.g. sales, or a folder name", help="Several words: each must match.")
+    flagged_only = f2.checkbox("Only those that need a look", key="pbimap-flagged")
+    limit = int(f3.number_input("Show at most", 1, 1000, min(25, max(1, len(every))), key="pbimap-limit",
+                                help="The biggest reports first. Raise it to see everything."))
+    rows = pick_reports(every, text=text, flagged_only=flagged_only, limit=limit)
+    if not rows:
+        st.info(f"None of the {len(every)} reports match. Clear the filter to see them all.")
+        return
+    if len(rows) < len(every):
+        st.caption(f"Showing {len(rows)} of {len(every)} reports.")
     flagged = [r for r in rows if r["flag"]]
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Reports", len(rows))
@@ -36,8 +48,9 @@ def powerbi_map_page(cat: Catalogue) -> None:
     m4.metric("Need a look", len(flagged), help="Reports that load nothing catalogued, have no sources found, "
                                                   "or couldn't be read.")
 
-    g = report_map(cat, workbooks=workbooks, show_old=show_old)
-    graph_view(cat, flow_elements(g), key=f"pbimap-{workbooks}-{show_old}", name="powerbi-map")
+    g = report_map(cat, workbooks=workbooks, show_old=show_old, rows=rows)
+    tag = f"{workbooks}-{show_old}-{limit}-{flagged_only}-{abs(hash(text))}"
+    graph_view(cat, flow_elements(g), key=f"pbimap-{tag}", name="powerbi-map")
     st.caption("Reports are on the right, bigger text for bigger reports; a red dashed border means it needs a "
                "look. To their left are the tables and files they load, the scripts that write those, and the "
                "APIs, databases and files those scripts read. Click a box to open it.")
