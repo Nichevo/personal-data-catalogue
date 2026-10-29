@@ -192,6 +192,14 @@ def session_start(cat: Catalogue) -> None:
     st.session_state["_session_started"] = True
     st.session_state["_last_visit"] = cat.setting("last_visit")
     cat.set_setting("last_visit", now(), quiet=True)
+    if cat.setting("report_groups_run") is None:
+        # Catalogues scanned before 2.17: group report versions once now, rather than waiting for the next scan.
+        from pdcat.reportgroups import sync
+        try:
+            sync(cat)
+        except Exception as e:  # a grouping problem must not stop the app
+            st.session_state["_group_error"] = f"{type(e).__name__}: {e}"
+        cat.set_setting("report_groups_run", now(), quiet=True)
     from pdcat.backup import maybe_backup
     try:
         made = maybe_backup(cat)
@@ -214,6 +222,8 @@ def main() -> None:
             st.button("OK", on_click=lambda: st.session_state.pop("_upgraded", None))
         if st.session_state.get("_backup_error"):
             st.warning(f"Couldn't make the scheduled backup: {st.session_state.pop('_backup_error')}")
+        if st.session_state.get("_group_error"):
+            st.warning(f"Couldn't group report versions: {st.session_state.pop('_group_error')}. A scan tries again.")
         key = st.query_params.get("asset")
         with timed("sidebar"):
             name, page = sidebar(cat)
