@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from .store import Catalogue
+from .textclean import as_text
 
 _REF = re.compile(r"(?:'((?:[^']|'')+)'|([A-Za-z_][\w ]*?))?\[([^\]]+)\]")
 
@@ -18,7 +19,7 @@ _REF = re.compile(r"(?:'((?:[^']|'')+)'|([A-Za-z_][\w ]*?))?\[([^\]]+)\]")
 def dax_refs(expression: str, measures: dict[str, str]) -> tuple[list[str], list[str]]:
     """(measures used, columns used) by a DAX expression. `measures` maps a measure's name (lower case) to
     its "Table[Name]" label. A bare [Name] is a measure when one has that name, else a column."""
-    text = re.sub(r"//[^\n]*|--[^\n]*|/\*[\s\S]*?\*/", " ", expression or "")
+    text = re.sub(r"//[^\n]*|--[^\n]*|/\*[\s\S]*?\*/", " ", as_text(expression))
     text = re.sub(r'"(?:[^"]|"")*"', '""', text)
     used_m, used_c = [], []
     for m in _REF.finditer(text):
@@ -59,7 +60,7 @@ def measure_rows(cat: Catalogue, report_key: str) -> list[dict[str, Any]]:
     glossary = {m.get("from_measure") for m in list_metrics(cat) if m.get("from_measure")}
     uses: dict[str, list[str]] = {}
     for lab, r in by_label.items():
-        um, uc = dax_refs(r["attrs"].get("expression") or "", names)
+        um, uc = dax_refs(as_text(r["attrs"].get("expression")), names)
         uses[lab] = [x for x in um if x != lab]
         r["_columns"] = uc
     # used: shown by a visual, or built on by a used measure (every step)
@@ -123,7 +124,7 @@ def _type_label(t: str) -> str:
 
 def _dax_key(expression: str) -> str:
     """A DAX expression with comments, spacing and case taken out, so two copies compare equal."""
-    text = re.sub(r"//[^\n]*|--[^\n]*|/\*[\s\S]*?\*/", " ", expression or "")
+    text = re.sub(r"//[^\n]*|--[^\n]*|/\*[\s\S]*?\*/", " ", as_text(expression))
     return re.sub(r"\s+", "", text).lower()
 
 
@@ -146,10 +147,11 @@ def across_reports(cat: Catalogue) -> dict[str, list[dict[str, Any]]]:
         if r["parent"] not in reports:
             continue
         a = json.loads(r["attrs"] or "{}")
-        expr = (a.get("expression") or "").strip()
+        expr = as_text(a.get("expression")).strip()
         if not expr:
             continue
-        row = {"key": r["key"], "measure": r["name"], "name": (a.get("name") or r["name"]).strip(), "expression": expr,
+        row = {"key": r["key"], "measure": r["name"], "name": (as_text(a.get("name")) or r["name"]).strip(),
+               "expression": expr,
                "report": reports[r["parent"]], "report_key": r["parent"], "dax": _dax_key(expr)}
         by_dax.setdefault(row["dax"], []).append(row)
         by_name.setdefault(row["name"].lower(), []).append(row)

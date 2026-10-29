@@ -15,7 +15,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .profiling import DATA_SUFFIXES, DEFAULT_MAX_ROWS, file_info, profile_file
-from .scanprogress import MANY_FILES, Reads, Report, Steps, find_files, pick, quiet, size_up, size_warning
+from .scanprogress import (
+    MANY_FILES,
+    Reads,
+    Report,
+    Steps,
+    find_files,
+    pick,
+    quiet,
+    size_up,
+    size_warning,
+    stat_files,
+)
 from .store import Catalogue
 
 SAMPLE_OVER = MANY_FILES  # a folder with this many data files is sampled by date (Settings: sample_over_files)
@@ -27,13 +38,13 @@ RECENT_MINUTES = 60       # a source scanned less than this long ago isn't scann
 
 def ingest_data_file(cat: Catalogue, path: Path, key: str, name: str, source: str, parent: str,
                      max_rows: int = DEFAULT_MAX_ROWS, kind: str = "data_file", reads: Reads | None = None,
-                     listed: bool = False) -> str | None:
+                     listed: bool = False, st=None) -> str | None:
     """Catalogue one data file. Unchanged files (same size and modified time) reuse their last profile.
     A `listed` file (in a folder sampled by date) is recorded from the file system without being opened,
     unless it was read in an earlier scan and hasn't changed since.
     Returns an error message if the file could not be read."""
     reads = reads or Reads()
-    st = path.stat()
+    st = st or path.stat()  # the folder scan passes the stat it already has
     previous = cat.get_asset(key)
     if previous and previous["attrs"].get("size_bytes") == st.st_size \
             and previous["attrs"].get("mtime") == st.st_mtime and cat.profile(key):
@@ -45,7 +56,7 @@ def ingest_data_file(cat: Catalogue, path: Path, key: str, name: str, source: st
                               for p in cat.profile(key)])
         return previous["attrs"].get("read_error")
     if listed:
-        attrs = {**file_info(path), "mtime": st.st_mtime, "format": path.suffix.lower().lstrip("."), "not_read": True}
+        attrs = {**file_info(path, st), "mtime": st.st_mtime, "format": path.suffix.lower().lstrip("."), "not_read": True}
         if kind == "series_file":
             attrs["in_series"] = parent
         cat.upsert_asset(key, kind, name, source, parent=parent, attrs=attrs)
@@ -108,13 +119,14 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
     data = pick(found, DATA_SUFFIXES)
     all_paths = data + pick(found, office_suffixes)
     total = len(all_paths)
-    size = size_up(all_paths)
+    stats = stat_files(all_paths)
+    size = size_up(all_paths, stats)
     report(f"Found {total:,} file(s) to read" + (f" (skipped {skipped:,} tool, environment or ignored folders)"
                                                  if skipped else ""), 0, total)
     warning = size_warning(size)
     if warning:
         report(f"  This may take a while: {warning}. Files are read one by one; unchanged files are skipped.")
-    plan = plan_reads(cat, root, data, folder_key, name)
+    plan = plan_reads(cat, root, data, folder_key, name, stats)
     if plan.sampled:
         report(f"  {plan.note}")
     step = Steps(report, total)
@@ -162,11 +174,19 @@ class Plan:
     listed: set[Path] = field(default_factory=set)
     sampled: bool = False
     note: str = ""
+    stats: dict = field(default_factory=dict)  # path -> os.stat_result, from one pass over the files
+
+    def stat(self, path: Path):
+        st = self.stats.get(path)
+        if st is None:
+            st = self.stats[path] = path.stat()
+        return st
 
 
-def plan_reads(cat: Catalogue, root: Path, data: list[Path], parent_key: str, source: str) -> Plan:
+def plan_reads(cat: Catalogue, root: Path, data: list[Path], parent_key: str, source: str,
+               stats: dict | None = None) -> Plan:
     groups, alone = plan_series(cat, root, data, parent_key, source)
-    plan = Plan(groups, alone)
+    plan = Plan(groups, alone, stats=stats if stats is not None else {})
     over = int(cat.setting("sample_over_files", SAMPLE_OVER) or 0)
     newest = max(1, int(cat.setting("sample_newest", SAMPLE_NEWEST) or SAMPLE_NEWEST))
     if not (0 < over <= len(data)) or source in cat.setting("read_all_sources", []):
@@ -175,7 +195,7 @@ def plan_reads(cat: Catalogue, root: Path, data: list[Path], parent_key: str, so
     for g in groups:
         plan.listed |= {root / m.rel for m in g.sorted()[:-newest]}
     if len(alone) > over:
-        by_age = sorted(alone, key=lambda rel: _mtime(root / rel), reverse=True)
+        by_age = sorted(alone, key=lambda rel: _mtime(plan, root / rel), reverse=True)
         plan.listed |= {root / rel for rel in by_age[over:]}
     read = len(data) - len(plan.listed)
     plan.note = (f"{len(data):,} data files, so this folder is sampled by date: the newest {newest} files of each "
@@ -185,18 +205,19 @@ def plan_reads(cat: Catalogue, root: Path, data: list[Path], parent_key: str, so
     return plan
 
 
-def _mtime(path: Path) -> float:
+def _mtime(plan: Plan, path: Path) -> float:
     try:
-        return path.stat().st_mtime
+        return plan.stat(path).st_mtime
     except OSError:
         return 0.0
 
 
-def _changed(cat: Catalogue, parent_key: str, root: Path, path: Path, reader: int | None = None) -> bool:
+def _changed(cat: Catalogue, parent_key: str, root: Path, path: Path, reader: int | None = None,
+             plan: Plan | None = None) -> bool:
     """Has this file changed since the catalogue last saw it (size, modified time, or the reader got better)?"""
     prev = cat.get_asset(f"{parent_key}/{path.relative_to(root).as_posix()}")
     try:
-        st = path.stat()
+        st = plan.stat(path) if plan is not None else path.stat()
     except OSError:
         return False
     return not prev or prev["attrs"].get("not_read") is True or prev["attrs"].get("size_bytes") != st.st_size \
@@ -260,8 +281,8 @@ def scan_data(cat: Catalogue, root: Path, parent_key: str, source: str, plan: Pl
         reads = Reads()
         for path in chunk:
             if path in plan.listed:
-                step.skip("data files", "files listed without being opened")
-            elif not _changed(cat, parent_key, root, path):
+                step.skip("data files", "not opened: listed from the file system")
+            elif not _changed(cat, parent_key, root, path, plan=plan):
                 step.skip("data files", "unchanged files are skipped")
             else:
                 with step("data file", by_rel[path]):
@@ -272,7 +293,7 @@ def scan_data(cat: Catalogue, root: Path, parent_key: str, source: str, plan: Pl
             for path in chunk:
                 rel = by_rel[path]
                 error = ingest_data_file(cat, path, f"{parent_key}/{rel}", rel, source, parent_key, max_rows,
-                                         reads=reads, listed=path in plan.listed)
+                                         reads=reads, listed=path in plan.listed, st=plan.stats.get(path))
                 counts["files"] += 1
                 counts["errors"] += bool(error)
         yield counts
@@ -283,8 +304,8 @@ def scan_data(cat: Catalogue, root: Path, parent_key: str, source: str, plan: Pl
         for m in ordered:
             path = members[m.rel]
             if path in plan.listed:
-                step.skip("data files", "older files in dated series are listed without being opened")
-            elif not _changed(cat, parent_key, root, path):
+                step.skip("data files", "not opened: older files in dated series are listed from the file system")
+            elif not _changed(cat, parent_key, root, path, plan=plan):
                 step.skip("data files", "unchanged files are skipped")
             else:
                 with step("data file in a dated series", m.rel):
@@ -294,7 +315,8 @@ def scan_data(cat: Catalogue, root: Path, parent_key: str, source: str, plan: Pl
                         reads.load(quick_info, path)
                     reads.load(_fingerprint, path)
         with cat.conn:
-            errors = ingest_series(cat, g, members, parent_key, source, max_rows, reads=reads, listed=plan.listed)
+            errors = ingest_series(cat, g, members, parent_key, source, max_rows, reads=reads, listed=plan.listed,
+                                   stats=plan.stats)
         yield {"files": len(g.members), "series": 1, "errors": errors}
 
 
@@ -391,7 +413,8 @@ def ingest_files(cat: Catalogue, root: Path, paths: list[Path], parent_key: str,
 
 
 def ingest_series(cat: Catalogue, g, by_rel: dict[str, Path], parent_key: str, source: str, max_rows: int,
-                  step: Steps | None = None, reads: Reads | None = None, listed: set[Path] | None = None) -> int:
+                  step: Steps | None = None, reads: Reads | None = None, listed: set[Path] | None = None,
+                  stats: dict | None = None) -> int:
     """One entry for the whole series. The newest file is profiled in full; the rest only have their
     rows and header read (and are skipped entirely when unchanged since the last scan). Files in `listed`
     (a folder sampled by date) are recorded without being opened."""
@@ -400,6 +423,7 @@ def ingest_series(cat: Catalogue, g, by_rel: dict[str, Path], parent_key: str, s
     step = step or Steps()
     reads = reads or Reads()
     listed = listed or set()
+    stats = stats if stats is not None else {}
     skey = S.series_key(parent_key, g.template)
     ordered = g.sorted()
     newest = ordered[-1]
@@ -408,11 +432,11 @@ def ingest_series(cat: Catalogue, g, by_rel: dict[str, Path], parent_key: str, s
         with step("data file in a dated series", m.rel):
             path = by_rel[m.rel]
             key = f"{parent_key}/{m.rel}"
-            st = path.stat()
+            st = stats.get(path) or path.stat()
             prev = cat.get_asset(key)
             if m is newest:
                 error = ingest_data_file(cat, path, key, m.rel, source, skey, max_rows, kind="series_file",
-                                         reads=reads)
+                                         reads=reads, st=st)
                 info = cat.get_asset(key)["attrs"]
                 cols = [c["name"] for c in cat.columns(key)]
                 errors += bool(error)
@@ -421,7 +445,7 @@ def ingest_series(cat: Catalogue, g, by_rel: dict[str, Path], parent_key: str, s
                 info, cols = prev["attrs"], prev["attrs"].get("header", [])
                 cat.upsert_asset(key, "series_file", m.rel, source, parent=skey, attrs=info)
             elif path in listed:
-                info = {**file_info(path), "mtime": st.st_mtime, "format": path.suffix.lower().lstrip("."),
+                info = {**file_info(path, st), "mtime": st.st_mtime, "format": path.suffix.lower().lstrip("."),
                         "in_series": skey, "not_read": True}
                 cols = []
                 cat.upsert_asset(key, "series_file", m.rel, source, parent=skey, attrs=info)

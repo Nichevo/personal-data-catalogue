@@ -320,18 +320,21 @@ def _model_from_pbixray(path: Path) -> dict[str, Any] | None:
     except ImportError:
         return None
     try:
+        from .textclean import as_text as t  # an empty cell in a pbixray frame is NaN, not ""
         x = PBIXRay(str(path))
         tables: dict[str, dict[str, Any]] = {}
         for _, r in x.schema.iterrows():
-            tables.setdefault(r["TableName"], {"name": r["TableName"], "columns": [], "calculated": False})[
-                "columns"].append({"name": r["ColumnName"], "data_type": str(r.get("PandasDataType", "")),
+            tables.setdefault(t(r["TableName"]), {"name": t(r["TableName"]), "columns": [], "calculated": False})[
+                "columns"].append({"name": t(r["ColumnName"]), "data_type": t(r.get("PandasDataType", "")),
                                    "calculated": False, "expression": ""})
-        measures = [{"table": r["TableName"], "name": r["Name"], "expression": r.get("Expression") or "",
-                     "description": r.get("Description") or "", "format": "", "folder": r.get("DisplayFolder") or ""}
+        measures = [{"table": t(r["TableName"]), "name": t(r["Name"]), "expression": t(r.get("Expression")),
+                     "description": t(r.get("Description")), "format": "", "folder": t(r.get("DisplayFolder"))}
                     for _, r in x.dax_measures.iterrows()]
-        queries = [{"name": r["TableName"], "expression": r["Expression"]} for _, r in x.power_query.iterrows()]
-        rels = [{"from": f"{r['FromTableName']}.{r['FromColumnName']}", "to": f"{r['ToTableName']}.{r['ToColumnName']}",
-                 "active": bool(r.get("IsActive", True))} for _, r in x.relationships.iterrows()]
+        queries = [{"name": t(r["TableName"]), "expression": t(r["Expression"])} for _, r in x.power_query.iterrows()]
+        rels = [{"from": f"{t(r['FromTableName'])}.{t(r['FromColumnName'])}",
+                 "to": f"{t(r['ToTableName'])}.{t(r['ToColumnName'])}",
+                 "active": bool(r.get("IsActive", True)) if r.get("IsActive", True) == r.get("IsActive", True) else True}
+                for _, r in x.relationships.iterrows()]
         return {"tables": [t for n, t in tables.items() if not n.startswith(("LocalDateTable_", "DateTableTemplate_"))],
                 "measures": measures, "relationships": rels, "queries": _analyse_queries(queries)}
     except Exception:  # pbixray is young; a file it can't read must not stop the scan

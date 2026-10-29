@@ -165,6 +165,20 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.14.1
+
+- **Power BI scans no longer fail on a blank value.** pbixray hands back an empty cell (a measure
+  with no expression, a query with no body, a missing description) as NaN rather than text, which
+  ended a scan with `'float' object has no attribute 'strip'`. Blanks are now turned into empty
+  text when the model is read, and the comparisons that run on rescans (report versions, measures
+  across reports, data sources) cope with blanks already stored by earlier versions.
+- **Power BI map filters:** only reports whose name or folder contains some words, only those that
+  need a look, and at most N (the biggest first, 25 by default), so a big estate doesn't draw
+  everything at once.
+- **Big folders list faster.** A folder scan now asks the file system about each file once rather
+  than three times, which matters on a network drive with 20,000 files, and the progress line for
+  files that aren't opened says "Listing … (not opened …)" so it isn't mistaken for reading them.
+
 ## New in version 2.14
 
 Folders with thousands of data files scan in minutes rather than hours, and a stopped scan
