@@ -127,7 +127,8 @@ def test_search_shows_a_measures_report_and_its_dax(catalogue, tmp_path):
     assert rows["Sales[Units vs LY]"]["where"] == "reports › Sales.pbit"
     assert rows["Sales[Units vs LY]"]["description"] == "[Total Units] - [Units LY]"
     assert rows["Sales[Total Units]"]["description"] == "Units sold, net of returns"  # its own description first
-    assert rows["Sales[Total Units]"]["_folder"] == f"🗂️ reports/{folder}"
+    [rep] = rows_for(catalogue, [dict(r) for r in catalogue.search("", kinds=("report",))])
+    assert rows["Sales[Total Units]"]["_folder"] == rep["_folder"]  # grouped with its report
 
 
 def test_all_model_tables_and_queries(catalogue, report):
