@@ -45,9 +45,12 @@ def search_page(cat: Catalogue) -> None:
     if view == "Columns only":
         columns_only(cat, text)
         return
+    old = st.checkbox("Show older versions", key="search-old",
+                      help="Older versions of a report, workbook or script are folded under the current one "
+                           "(\"+2 older\"). Tick to list them too.")
     rows = [dict(r) for r in cat.search(text, kind=None if kind == "Any kind" else kind,
                                         source=None if source == "Any source" else source,
-                                        kinds=kinds, limit=300)]
+                                        kinds=kinds, limit=300, old_versions=old)]
     if not rows:
         st.info("No matches." if text else "Nothing here yet.")
         return

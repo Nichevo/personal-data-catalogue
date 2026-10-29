@@ -26,7 +26,13 @@ def group_page(cat: Catalogue, key: str) -> None:
     st.caption(f"{groups.TYPES[g['type']]} · {len(g['members'])} items · `{key}`")
     from .item_boxes import item_actions
     item_actions(cat, key)
-    if g["type"] == "versions":
+    if g["type"] == "versions" and g["attrs"].get("auto"):
+        from pdcat.reportgroups import describe
+        st.caption("Only the current version shows in search, the Find lists, the maps and measures across reports "
+                   "(each has a \"Show older versions\" switch). The others stay listed here with their notes. "
+                   + describe(g) + " Not right? Make another one current (later scans keep your choice), take one "
+                   "out, or break the group up: those won't be grouped again.")
+    elif g["type"] == "versions":
         st.caption("Only the current version shows on the code map, in search and in lineage. The others stay "
                    "listed here with their notes."
                    + (f" Matched by {g['attrs']['matched_by']}." if g["attrs"].get("matched_by") else ""))

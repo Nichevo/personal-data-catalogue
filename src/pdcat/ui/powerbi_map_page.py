@@ -19,11 +19,14 @@ def powerbi_map_page(cat: Catalogue) -> None:
     st.title("Power BI map")
     st.caption("Every Power BI report, sized by how much is in it (pages, visuals and measures), with the tables "
                "and files it loads, the scripts that make them, and where their data comes from.")
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     workbooks = c1.checkbox("Include Excel workbooks", value=False, key="pbimap-wb")
     show_old = c2.checkbox("Show old items", value=False, key="pbimap-old",
-                           help="Older versions of a report are always folded into the current one.")
-    every = reports(cat, workbooks=workbooks, show_old=show_old)
+                           help="Tables, files and scripts marked old.")
+    old_versions = c3.checkbox("Show older versions", value=False, key="pbimap-versions",
+                               help="Older versions of a report are folded into the current one (\"+2 older\"). "
+                                    "Tick to draw each version as a report of its own.")
+    every = reports(cat, workbooks=workbooks, show_old=show_old, old_versions=old_versions)
     if not every:
         st.info("No Power BI reports catalogued yet. Add the folder that holds them under ➕ Add → Sources → "
                 "Data folders and scan it.")
@@ -49,7 +52,7 @@ def powerbi_map_page(cat: Catalogue) -> None:
                                                   "or couldn't be read.")
 
     g = report_map(cat, workbooks=workbooks, show_old=show_old, rows=rows)
-    tag = f"{workbooks}-{show_old}-{limit}-{flagged_only}-{abs(hash(text))}"
+    tag = f"{workbooks}-{show_old}-{old_versions}-{limit}-{flagged_only}-{abs(hash(text))}"
     graph_view(cat, flow_elements(g), key=f"pbimap-{tag}", name="powerbi-map")
     st.caption("Reports are on the right, bigger text for bigger reports; a red dashed border means it needs a "
                "look. To their left are the tables and files they load, the scripts that write those, and the "
