@@ -165,6 +165,22 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.16
+
+- **Power BI model tables and queries open pages of their own.** On a report's page, pick a row
+  in **Model tables** or **Queries** to open it (parameters have buttons under the queries).
+  A table's page shows its columns, the measures that live in it, its relationships (each other
+  table is a link), the query that loads it, the lineage back to the database tables and files,
+  and the pages and visuals that show it. A query's page shows its M code and any SQL it sends,
+  what it reads (catalogued tables and files open their own page), the queries it builds on and
+  that build on it, and the table it loads. Excel workbook queries open the same way. Both take
+  notes and follow-ups like any other item, and work on reports you already scanned: no rescan
+  needed.
+- **From a visual or a measure to its table.** Picking a visual on a report page shows buttons for
+  the tables it uses, and a measure's page links to its home table.
+- **Measures in search show their report.** "Where" now names the report a measure is in, not
+  just the scan group, and a measure with no description shows its DAX instead.
+
 ## New in version 2.14.1
 
 - **Power BI scans no longer fail on a blank value.** pbixray hands back an empty cell (a measure

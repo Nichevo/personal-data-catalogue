@@ -112,7 +112,10 @@ def result_card(cat: Catalogue, r: dict, text: str, i: int, *, detailed: bool) -
         left, right = st.columns([4, 2])
         with left:
             asset_button(r["key"], r["name"], r["kind"], f"search-{i}")
-        bits = [kind_label(r["kind"])] + ([r["source"]] if r.get("source") else [])
+        measure = cat.get_asset(r["key"]) if r["kind"] == "measure" else None
+        report = cat.get_asset(measure["parent"]) if measure and measure["parent"] else None
+        where = f"{r['source']} › {report['name']}" if report else r.get("source")
+        bits = [kind_label(r["kind"])] + ([where] if where else [])
         if r.get("note_count"):
             bits.append(f"📝 {r['note_count']}")
         if r.get("status") == "missing":
@@ -120,6 +123,9 @@ def result_card(cat: Catalogue, r: dict, text: str, i: int, *, detailed: bool) -
         bits += badges(r)
         right.caption(" · ".join(bits))
         about = r.get("purpose") or first_line(r.get("description"))
+        if not about and measure and measure["attrs"].get("expression"):
+            from pdcat.textclean import as_text
+            about = " ".join(as_text(measure["attrs"]["expression"]).split())[:200]
         if about:
             st.caption(about)
         if not detailed:

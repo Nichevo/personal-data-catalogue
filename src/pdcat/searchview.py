@@ -54,15 +54,24 @@ def rows_for(cat: Catalogue, results: list[dict[str, Any]], *, families_as_one: 
             f"WHERE m.state = 'confirmed' AND m.asset_key IN ({marks})", keys):
         projects[r[0]].append(r[1])
 
+    # A measure lives in a report: show the report, not just the scan group, and find its folder from it.
+    parent_keys = list({a["parent"] for a in assets.values() if a["kind"] == "measure" and a.get("parent")})
+    reports: dict[str, dict[str, Any]] = {}
+    if parent_keys:
+        reports = {p["key"]: {"name": p["name"], "path": json.loads(p["attrs"] or "{}").get("path") or ""}
+                   for p in cat.conn.execute(f"SELECT key, name, attrs FROM assets WHERE key IN "
+                                             f"({','.join('?' * len(parent_keys))})", parent_keys)}
+
     out: list[dict[str, Any]] = []
     family_rows: dict[str, dict[str, Any]] = {}
     for r in results:
         a = assets.get(r["key"]) or {}
         attrs = json.loads(a["attrs"]) if a.get("attrs") else {}
+        report = reports.get(a.get("parent") or "") if r["kind"] == "measure" else None
         row = {
             "key": r["key"], "kind": r["kind"], "name": r["name"],
-            "where": _where(r, a, attrs),
-            "description": (r.get("purpose") or (r.get("description") or "").split("\n", 1)[0])[:200],
+            "where": _where(r, a, attrs, report),
+            "description": _description(r, attrs),
             "matched on": _snippet(r.get("snippet")).replace("**", ""),
             "rows": attrs.get("row_count"),
             "changed": (attrs.get("modified") or a.get("last_seen") or "")[:10],
@@ -74,7 +83,7 @@ def rows_for(cat: Catalogue, results: list[dict[str, Any]], *, families_as_one: 
             "_makers": [k for k, _ in makers.get(r["key"], [])],
             "_family": families.get(r["key"]),
             "_projects": projects.get(r["key"], []),
-            "_folder": _folder(r, a, attrs),
+            "_folder": _folder(r, a, {"path": report["path"]} if report else attrs),
         }
         fam = row["_family"]
         if families_as_one and fam:
@@ -102,7 +111,17 @@ def _grain_labels(cat: Catalogue, uid: str) -> list[str]:
         "SELECT label FROM group_members WHERE group_uid = ? AND coalesce(label, '') != '' ORDER BY label", (uid,))]
 
 
-def _where(r: dict[str, Any], a: dict[str, Any], attrs: dict[str, Any]) -> str:
+def _description(r: dict[str, Any], attrs: dict[str, Any]) -> str:
+    text = r.get("purpose") or (r.get("description") or "").split("\n", 1)[0]
+    if not text and r["kind"] == "measure" and attrs.get("expression"):
+        from .textclean import as_text
+        text = " ".join(as_text(attrs["expression"]).split())  # the DAX on one line
+    return text[:200]
+
+
+def _where(r: dict[str, Any], a: dict[str, Any], attrs: dict[str, Any], report: dict[str, Any] | None = None) -> str:
+    if report:
+        return f"{r.get('source') or ''} › {report['name']}"
     if r["kind"] in ("table", "view", "procedure"):
         return f"{r.get('source') or ''} › {attrs.get('database') or (a.get('parent') or '').rsplit('/', 1)[-1]}"
     path = attrs.get("path") or attrs.get("full_path") or ""
