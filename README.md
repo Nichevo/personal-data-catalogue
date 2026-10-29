@@ -183,6 +183,30 @@ one at a time, and every query is logged:
   report, model table, query and measure. Each has a filter box, and a row opens its page.
 - **Measures in search show their report.** "Where" now names the report a measure is in, not
   just the scan group, and a measure with no description shows its DAX instead.
+## New in version 2.15
+
+- **SQL with variables is read properly.** Much real SQL isn't one clean statement: it comes from
+  Python with placeholders (`{}` where an f-string filled in a variable, `{schema}`, `?`, `%s`,
+  `%(start)s`, `:start`), from dbt or Jinja templates (`{{ ref('sales') }}`, `{% if %}`), from
+  SQLCMD scripts (`$(Db)`, `:setvar`, `GO` between batches) and from stored procedures with
+  `DECLARE`/`SET`, `TRY`/`CATCH`, cursors, `PRINT`, `GOTO` and `MERGE`. sqlglot used to give up on
+  these ("unsupported syntax, falling back to parsing as a Command"), so their tables went missing.
+  Before sqlglot reads a query now, a copy is tidied: placeholders become plain names, template
+  variables are filled in where they name a table (`{{ source('sap', 'ekpo') }}` → `sap.ekpo`),
+  script-only lines are dropped, and each `GO` batch is read on its own, in the T-SQL dialect.
+  SQL held in strings (`SET @sql = 'SELECT … FROM dbo.Sales'; EXEC (@sql)`) is read too. Temp
+  tables, table variables, cursors and `USE db` are no longer mistaken for tables.
+- **Nothing is lost when sqlglot still can't read a statement.** The statements it can't read
+  (or reads only as a generic Command) are read by the simple pass, statement by statement, so
+  their tables and lineage are still found. Each query page says how it was read ("Read by sqlglot,
+  except 1 statement it couldn't read…") and what was tidied first; the SQL queries list has a
+  "read" column and a "Not read exactly" filter.
+- **Scans don't get stuck on one query.** Exact reading has a 5-second limit per query and a
+  5-minute budget per library build; after three time-outs the rest of the build is read simply
+  and read exactly on the next build. Very long SQL (over 200,000 characters) is read simply.
+  sqlglot's warnings no longer fill the console; they are counted instead.
+- **The scan log counts it.** "After each scan" shows how the SQL was read: "412 read exactly,
+  9 partly, 3 simply (1 ran out of time)".
 
 ## New in version 2.14.1
 

@@ -59,8 +59,11 @@ def after_scan(cat: Catalogue, progress=lambda *_: None, report: Report = quiet)
         if took >= SLOW_STEP:
             report(f"  {name} took {took:.0f}s", i + 1, len(steps))
     runs = cat.setting("after_scan_runs", [])
-    runs.append({"at": now(), "seconds": round(time.monotonic() - begun, 1), "failed": failed,
-                 "slowest": sorted(timings, key=lambda t: -t[1])[:5]})
+    run = {"at": now(), "seconds": round(time.monotonic() - begun, 1), "failed": failed,
+           "slowest": sorted(timings, key=lambda t: -t[1])[:5]}
+    if "SQL query library" in out:  # how much SQL sqlglot read, and how much fell back to the simple reader
+        run["sql_reading"] = (cat.setting("sql_library_counts", {}) or {}).get("reading")
+    runs.append(run)
     cat.set_setting("after_scan_runs", runs[-KEEP_RUNS:], quiet=True)
     review = out.pop("review list", None) or {"open": 0, "new": 0, "closed": 0}
     out["relationships"] = out.pop("relationship suggestions", 0)

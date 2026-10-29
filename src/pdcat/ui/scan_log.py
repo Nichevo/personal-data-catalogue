@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from pdcat.scanprogress import gb
+from pdcat.sqllibrary import reading_summary
 from pdcat.store import Catalogue
 
 from .common import page_title
@@ -48,7 +49,13 @@ def scan_log_page(cat: Catalogue) -> None:
         st.dataframe(pd.DataFrame([{
             "at": r["at"][:16].replace("T", " "), "took": _took(r.get("seconds")),
             "slowest steps": ", ".join(f"{n} {t}s" for n, t in r.get("slowest", [])[:3]),
+            "SQL reading": reading_summary(r.get("sql_reading")),
             "failed": ", ".join(r.get("failed", []))} for r in reversed(runs)]), hide_index=True, width="stretch")
+        latest = next((r["sql_reading"] for r in reversed(runs) if r.get("sql_reading")), None)
+        if latest and (latest.get("partly") or latest.get("simple")) and latest.get("sqlglot"):
+            st.caption("**SQL reading**: \"partly\" and \"simply\" mean sqlglot couldn't read some statements (it would "
+                       "have read them as a generic Command), so the simple reader found their tables instead. Open "
+                       "Find → SQL queries to see which ones; each query page says what was tidied first.")
 
 
 def slower_scans(log: list[dict]) -> list[str]:
