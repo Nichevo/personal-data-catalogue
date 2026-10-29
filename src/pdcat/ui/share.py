@@ -83,7 +83,11 @@ def _json(pack: dict) -> str:
 @cached
 def _test_questions(cat: Catalogue) -> list[dict]:
     from pdcat.aipack import test_questions
-    return test_questions(cat)
+    try:
+        return test_questions(cat)
+    except Exception as e:  # never let one odd item stop the Share page
+        st.warning(f"Test questions couldn't be built: {e}")
+        return []
 
 
 @cached
