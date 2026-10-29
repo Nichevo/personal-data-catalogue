@@ -165,6 +165,21 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.20
+
+- **Copilot pack export fixed.** Building the pack stopped with "unhashable type: 'dict'" when the
+  SQL query library had queries in it, because each query's tables are stored with their columns
+  and joins, not as plain names. The SQL queries file now lists each table by its catalogue name
+  (or the name written in the SQL when it isn't catalogued), and the pack copes with any odd value
+  instead of stopping. No rescan needed.
+- **One odd item can't stop the pack any more.** Each part of the pack (and each table, file or
+  workbook in the data files) is built on its own. If one can't be read, it is left out, the rest
+  of the pack is still made, and 00-start-here lists what was left out and why. Other weak spots
+  found in a review are fixed too: row counts stored as text, Power BI visuals with no title or
+  type, odd page lists, and DAX that isn't plain text.
+- **Word packs always open.** Control characters that sometimes sit in pasted SQL or DAX are
+  removed from the Word (.docx) version, so Word no longer refuses the file.
+
 ## New in version 2.19
 
 - **Search finds part of a name.** Typing *Stock* now finds StockonHand, OfficeStockonHand,
