@@ -204,8 +204,8 @@ def _declared_width(declared: str) -> int | None:
     return int(m.group(2)) if m else None
 
 
-def file_info(path: Path) -> dict[str, Any]:
-    st = path.stat()
+def file_info(path: Path, st: os.stat_result | None = None) -> dict[str, Any]:
+    st = st or path.stat()
     return {
         "path": str(path),
         "size_bytes": st.st_size,
