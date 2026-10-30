@@ -148,6 +148,8 @@ def detail(cat: Catalogue, key: str) -> None:
     about_form(cat, key, asset, info)
     columns = cat.columns(key)
     notes_section(cat, key, [c["name"] for c in columns])
+    if asset["kind"] in TABLE_LIKE and columns:
+        suggested_descriptions_box(cat, key, columns)
 
     if columns and not cat.profile(key):
         columns_section(cat, key, columns)
@@ -295,6 +297,23 @@ def about_form(cat: Catalogue, key: str, asset: dict | None, info: dict) -> None
                                        freshness_column=freshness, sensitive=sensitive, sap_name=sap)
                 st.toast("Saved")
                 st.rerun()
+
+
+def suggested_descriptions_box(cat: Catalogue, key: str, columns) -> None:
+    """Descriptions drafted for the undescribed columns, to accept in one go (see describedrafts)."""
+    from pdcat import describedrafts as DD
+    undescribed = [c for c in columns if not c["description"]]
+    if not undescribed:
+        return
+    mine = curation.column_info(cat, key)
+    if all((mine.get(c["name"]) or {}).get("description") for c in undescribed):
+        return
+    rows = DD.column_suggestions(cat, key, undescribed)
+    if not rows:
+        return
+    with st.expander(f"💡 Suggested descriptions for {len(rows)} column(s)"):
+        from .review_pages import suggestions_editor
+        suggestions_editor(cat, key, f"page-{key}")
 
 
 def columns_section(cat: Catalogue, key: str, columns) -> None:

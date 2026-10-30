@@ -27,6 +27,7 @@ def settings_page(cat: Catalogue) -> None:
 
     backups_section(cat)
     schedule_section(cat)
+    review_section(cat)
 
     st.subheader("SQL Server: pace and limits")
     st.caption("Every query the catalogue sends follows these. Lower them if your DBA asks; the query log on the "
@@ -210,6 +211,53 @@ def backups_section(cat: Catalogue) -> None:
                 chosen = next(c for c in copies if c["file"] == pick)
                 safety = backup.restore(cat, chosen["path"])
                 st.success(f"Restored {pick}. What was there before is saved as {safety.name}.")
+
+
+def review_section(cat: Catalogue) -> None:
+    """Which review checks run, and the answers that stick (standard type patterns, placeholder values, servers
+    not catalogued on purpose, column names usually or never sensitive)."""
+    from pdcat import reviewanswers as RA
+    from pdcat.profiling import HINT_TEXT
+    from pdcat.review import RULES
+    st.subheader("Review")
+    st.caption("Checks that make To review items. A check switched off hides its items until you switch it back; "
+               "nothing is deleted.")
+    off = RA.rules_off(cat)
+    cols = st.columns(3)
+    for i, (rule, (label, category, _)) in enumerate(sorted(RULES.items(), key=lambda kv: kv[1][0])):
+        on = cols[i % 3].checkbox(label, value=rule not in off, key=f"rule-{rule}")
+        if on == (rule in off):
+            RA.set_rule(cat, rule, on)
+            st.rerun()
+    with st.expander("Answers that stick"):
+        ok = sorted(RA.hints_ok(cat))
+        st.markdown("**Data type patterns that are our standard** (never raised): "
+                    + (", ".join(HINT_TEXT.get(c, c) for c in ok) if ok else "none yet"))
+        if ok:
+            back = st.selectbox("Raise again", ok, format_func=lambda c: HINT_TEXT.get(c, c), key="hint-back")
+            if st.button("Raise it again", key="hint-back-btn"):
+                RA.mark_hint_standard(cat, back, standard=False)
+                st.rerun()
+        text = st.text_input("Placeholder values (a column holding only one of these isn't odd)",
+                             value=", ".join(RA.placeholders(cat)), key="placeholders")
+        if st.button("Save placeholders", key="placeholders-save"):
+            RA.set_placeholders(cat, text.split(","))
+            st.rerun()
+        ignored = sorted(RA.ignored_prefixes(cat))
+        st.markdown("**Servers and databases not catalogued on purpose:** " + (", ".join(ignored) if ignored else "none"))
+        if ignored:
+            back = st.selectbox("Ask again about", ignored, key="prefix-back")
+            if st.button("Ask again", key="prefix-back-btn"):
+                RA.ignore_prefix(cat, back, ignore=False)
+                st.rerun()
+        yes, no = RA.names_usually(cat, "yes"), RA.names_usually(cat, "no")
+        if yes or no:
+            st.markdown("**Column names answered the same way every time:** "
+                        + (f"sensitive: {', '.join(sorted(yes))}. " if yes else "")
+                        + (f"not sensitive: {', '.join(sorted(no))}." if no else ""))
+            if st.button("Forget these answers", key="sens-forget"):
+                cat.set_setting(RA.SENSITIVE_NAMES, {})
+                st.rerun()
 
 
 def features_section(cat: Catalogue) -> None:

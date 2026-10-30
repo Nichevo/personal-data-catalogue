@@ -51,9 +51,15 @@ def review_tasks(cat: Catalogue, task) -> list:
         lines = "; ".join(f"line {u['line']}: {u['code']}" for u in items[:4]) + (" …" if len(items) > 4 else "")
         out.append(task("unknown_file", key, f"{len(items)} file(s) in {items[0]['script_name']} the scan couldn't name",
                         f"{lines}. Say which file each one is on the script's page.", version=str(len(items))))
+    by_file: dict[str, list] = {}
     for r in cat.conn.execute("SELECT l.src_key, l.dst_ref, l.dst_key, l.match_note, a.name FROM links l "
                               "JOIN assets a ON a.key = l.src_key WHERE l.match_note LIKE 'found in another folder%'"):
-        out.append(task("wrong_folder", r["src_key"], f"{r['name']} names {r['dst_ref'][5:]}, found in another folder",
-                        f"{r['match_note']}. Is it the right file? Remove the link from the script's page if not.",
-                        version=r["dst_ref"]))
+        by_file.setdefault(r["dst_key"] or r["dst_ref"], []).append(dict(r))
+    for key, rows in by_file.items():
+        scripts = sorted({r["name"] for r in rows})
+        out.append(task("wrong_folder", key, f"{rows[0]['dst_ref'][5:]} is named by {len(scripts)} script(s) but found "
+                        "in another folder",
+                        f"{rows[0]['match_note']}. Named by {', '.join(scripts[:5])}{' …' if len(scripts) > 5 else ''}. "
+                        "Is it the right file? If not, remove the link from the script's page.",
+                        version=str(len(scripts))))
     return out
