@@ -205,9 +205,13 @@ def forget_match(cat: Catalogue, reg_key: str) -> None:
 def refresh(cat: Catalogue) -> int:
     """Read the register again: one item per row, matched to the scanned reports, with owners and descriptions
     copied to reports that have none. Returns the number of rows."""
+    had = {r["key"] for r in cat.conn.execute("SELECT key FROM assets WHERE kind = 'report_ref' AND status = 'active'")}
+    if not register_key(cat) and not had:
+        return 0
     rows = read_rows(cat)
     matches = match_rows(cat, rows) if rows else {}
-    with cat.scan(SOURCE):
+    seen = set()
+    with cat.conn:
         for row in rows:
             key = PREFIX + row["uid"]
             m = matches.get(key, {})
@@ -215,6 +219,12 @@ def refresh(cat: Catalogue) -> int:
                      "register": register_key(cat)}
             cat.upsert_asset(key, "report_ref", row["name"], SOURCE, description=row.get("description") or None,
                              attrs=attrs)
+            seen.add(key)
+        gone = sorted(had - seen)
+        if gone:
+            cat.conn.executemany("UPDATE assets SET status = 'missing' WHERE key = ?", [(k,) for k in gone])
+    for key in sorted(seen | had):
+        cat.reindex_search(key)
     _fill_reports(cat, rows, matches)
     cat.conn.commit()
     return len(rows)

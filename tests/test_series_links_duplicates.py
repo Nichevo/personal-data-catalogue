@@ -27,7 +27,7 @@ def test_dated_files_become_one_series(tmp_path):
     _csv(root / "stores.csv", store=[1, 2])
     cat = Catalogue(tmp_path / "c.db")
     counts = scan_folder(cat, "extracts", root)
-    assert counts == {"files": 5, "series": 1, "reports": 0, "workbooks": 0, "access": 0, "errors": 0}
+    assert counts == {"files": 5, "series": 1, "reports": 0, "workbooks": 0, "access": 0, "errors": 0, "documents": 0}
     key = "files://extracts/~series/sales_{yyyy}{mm}.csv"
     s = cat.get_asset(key)
     a = s["attrs"]

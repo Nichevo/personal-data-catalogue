@@ -165,6 +165,74 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.3
+
+- **Power BI impact, from the files alone.** Nothing calls the Power BI service. A *thin report*
+  (a live connection to a published dataset, no model of its own) is matched to the scanned
+  .pbix or .pbip that holds that model by the dataset's name, by the report register's dataset
+  column, or by hand on the report's page. A model's page lists its **connected reports**, and
+  every measure and column is looked up across the model and those reports: which visuals show
+  it, which measures and calculated columns need it (every step), and what would change with it.
+  A measure's page shows the chain both ways. Model table pages and the new **Power BI › Columns**
+  list say what uses each column.
+- **"Not used in scanned files".** Measures, model tables, columns, Power Query queries and
+  database tables and views that nothing scanned reads or shows are hidden behind a
+  **+N not used in scanned files** switch on the lists (the switch is remembered). They are never
+  called unused or safe to delete: a report that wasn't scanned may use them. They stay in the
+  catalogue and in search, and come back to the lists when a later scan finds a use.
+- **Broken visuals as check items.** A visual that asks for a field the model doesn't have (as
+  read from the model file, with its date) becomes one *check* item per report on To review,
+  naming the page, the visual and the field. The field may have been renamed or removed, or the
+  model file you scanned may be older than the published one.
+- **Add many folders at once.** On Sources, paste a list of paths, pick every subfolder of a
+  parent, or load a list file (one path per line, or a CSV with path, name and subfolders
+  columns). A preview shows each folder's name, file count, size, overlaps with folders you
+  already scan and how it will be treated (master folder or single project); untick what you
+  don't want, then one **Add and scan**. The list of your folders can be downloaded as that CSV.
+- **Design documents.** A folder role **design** (suggested for `design/`, `specs/`,
+  `requirements/`): every Word, PowerPoint, Excel and PDF file in it is read as a reference
+  document during the folder scan (Word tables are read as rows, PowerPoint notes too), and a
+  changed file becomes a new version. A single file in any folder can be marked as a design
+  document on the folder's page. A document can say what it **describes** (a business project, a
+  report, a table), and the Design documents box sits at the top of that item's page.
+  Definitions found in documents ("StoreId: identifier of the store") are offered as column and
+  measure descriptions.
+- **Power BI report register.** Keep your list of published reports (one CSV row per report:
+  uniqueID, name, description, owner, audience, tags, statusName, powerBIAppID, webUrl, dataset,
+  datasetId, publishedDateTime, modifiedDateTime; other columns are kept too) in a folder you
+  scan, open the data file and pick **Use as the Power BI report register**. Each row becomes a
+  searchable entry (by owner, audience, app, status), is matched to the scanned .pbix of the same
+  name (change it by hand), and shows at the top of the report's page as key context. The owner
+  and description fill the report's own fields where they are empty. **Power BI › Register**
+  lists every row with filters and the rows nothing matched. The register is read again after
+  every scan (a switch on Settings).
+- **To review, less overwhelming.** The page starts with the counts by check (pick one to see
+  its items), what you did this week, and five to start with. Data type, sensitive, odd value and
+  unmatched table items are now **one per table** (or per server and database prefix) instead of
+  one per column, and what you already dealt with stays dealt with. Answers stick: "this data
+  type is our standard", "these values are placeholders" (0, -1, 9999, N/A…), "names like this are
+  usually sensitive / never sensitive", "this whole table has nothing sensitive", "ignore tables
+  with this prefix". **Changed since last scan** says what changed (columns added or removed,
+  types changed, a view's definition) and a row count or a date alone is no longer an item.
+  **Suggested descriptions** for tables and columns come from the same name elsewhere, design
+  documents, SAP meanings and the name itself, accepted with a tick and applied to every other
+  undescribed column of that name. Noisy checks (naming rules, old items) are off by default;
+  turn them on under Settings › To review.
+- **Summaries** under Find: one row per Power BI file (connected reports, pages, visuals, tables,
+  columns, calculated columns, measures, relationships, queries, data sources), per table (columns,
+  rows, keys, relationships, scripts and reports that use it, described columns) and per Python
+  project (scripts, notebooks, functions, lines, tables and files read and written, imports),
+  grouped by folder, report group, business project, app, owner, workspace, database, schema or
+  project, with totals per group and overall, a split into report pages, and a CSV download.
+- **Scan scope.** Pick on Settings which sources a plain `pdcat scan` covers; `--all` scans
+  everything and `--ask` asks at the start of a run, with the saved scope used after 60 seconds.
+- **Likely values for metrics.** A metric's page shows the values it usually takes, measured from
+  the profile of the column it is built on (one input: its 1st to 99th percentile and median) or
+  estimated from the quartiles of its inputs (a ratio or difference, marked as not measured). Your
+  own **usual range** and a note ("below 0.7 usually means a load failed") win over both, are
+  searchable and go into the Copilot pack.
+- No rescan is needed for any of this; a rescan fills in design documents and the register.
+
 ## New in version 2.20
 
 - **Copilot pack export fixed.** Building the pack stopped with "unhashable type: 'dict'" when the
@@ -502,7 +570,8 @@ Version 2.1 adds the 46 items below. Some things to know first:
   folder* whose subfolders each look like their own project (their own `.git`, README,
   `environment.yml` or requirements, `src/`) becomes one project per subfolder. A
   *single project* keeps its subfolders together, each with a role suggested from its
-  name and contents: code (`code/`, `src/`, `scripts/`, `notebooks/`, `sql/`), raw data
+  name and contents: code (`code/`, `src/`, `scripts/`, `notebooks/`, `sql/`), design (`design/`,
+  `specs/`, since 2.3), raw data
   (`raw_data/`, `raw/`, `input/`: data that comes in from outside), data (`data/`,
   `processed/`), outputs (`output/`, `results/`), docs, archive (`archive/`, `old/`,
   `backup/`: kept but treated as old), or ignore. Roles apply at any depth, so
@@ -775,11 +844,15 @@ Version 2.1 adds the 46 items below. Some things to know first:
 
 ## Ideas for a later version
 
-Asked for while testing 2.1, and kept here to build in the next version:
+Kept here with no version planned:
 
-- **Likely values for metrics**: show the values a metric usually takes (its typical range,
-  from the profiles of the columns it is calculated from) when it is suggested or shown in
-  the Metric glossary.
+- **Power BI template files (.pbit) as a deliverable**: a report template that shows the
+  catalogue's own data.
+- **Reading the Power BI service** (workspaces, published datasets, usage): the app reads
+  .pbix, .pbit and .pbip files only, on purpose.
+- **A no-install build or a .pbix add-on** for colleagues who don't use Python.
+
+Built in 2.3: likely values for metrics.
 
 ## Upgrading from version 1
 
