@@ -109,11 +109,12 @@ def _from_suggestions(cat: Catalogue, key: str) -> dict[str, tuple[str, str]]:
     document definitions)."""
     from .suggestions import open_suggestions
     out = {}
-    for s in open_suggestions(cat, "description", subject=key):
-        p = s.get("payload") or {}
-        if p.get("column") and p.get("text"):
-            where = (s.get("detail") or "").removeprefix("Use ").removesuffix(" as the column's description.")
-            out[p["column"].lower()] = (p["text"], where or "a comment")
+    for kind in ("doc_definition", "description"):  # a document's definition wins over a code comment
+        for s in open_suggestions(cat, kind, subject=key):
+            p = s.get("payload") or {}
+            if p.get("column") and p.get("text") and p["column"].lower() not in out:
+                where = (s.get("detail") or "").removeprefix("Use ").removesuffix(" as the column's description.")
+                out[p["column"].lower()] = (p["text"], where.rstrip(".") or "a comment")
     return out
 
 

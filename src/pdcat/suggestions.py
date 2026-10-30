@@ -21,6 +21,7 @@ KIND_LABELS = {
     "description": "Descriptions", "owner": "Owners", "rename": "Renamed columns", "label": "Report labels",
     "schedule": "Schedule matches", "series": "Files a script writes", "folder_role": "Folder roles",
     "join": "Usual joins", "check": "Checks from rules", "copilot": "From Copilot",
+    "doc_definition": "Definitions in documents",
 }
 
 # For each kind: what the suggestion is, and what Accept changes. Shown above each list and on each card.
@@ -61,6 +62,9 @@ KIND_HELP = {
               "adds the check to the item. It runs when you profile the item and shows failures on To review."),
     "copilot": ("A description or naming rule your Copilot agent drafted from the gaps pack.",
                 "saves the description on the item or column, or turns the rule into checkable naming rules."),
+    "doc_definition": ("A name and its definition found in a design document (a table of fields, or a line like "
+                       "“PlantID: identifier of the plant”), matched to a column or measure with no description.",
+                       "saves that definition as the column's description or the measure's purpose."),
 }
 
 

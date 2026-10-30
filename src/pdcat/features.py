@@ -25,6 +25,7 @@ FEATURES: dict[str, str] = {
     "backups": "Suggest main and backup table pairs",
     "renames": "Follow column renames in code and SQL",
     "comments": "Draft descriptions from comments and docstrings",
+    "doc_definitions": "Offer definitions found in design documents as column and measure descriptions",
     "rule_checks": "Offer rules written in notes as checks to run with each profile",
     "report_labels": "Suggest business names for columns from Power BI report labels",
     "learned_joins": "Learn usual joins from your queries",

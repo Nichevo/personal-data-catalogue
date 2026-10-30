@@ -351,6 +351,7 @@ def _run_folder_scan(cat: Catalogue, scan_folder, name: str, path: str, recursiv
         + (f", {counts['reports']} Power BI report(s)" if counts.get("reports") else "") \
         + (f", {counts['workbooks']} Excel workbook(s)" if counts.get("workbooks") else "") \
         + (f", {counts['access']} Access database(s)" if counts.get("access") else "") \
+        + (f", {counts['documents']} design document(s)" if counts.get("documents") else "") \
         + (f", {counts['errors']} couldn't be read" if counts["errors"] else "")
     after_scan_with_status(cat, status)
     status.done(msg)

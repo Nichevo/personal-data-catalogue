@@ -202,6 +202,9 @@ def detail(cat: Catalogue, key: str) -> None:
             from .dataflow_page import flow_block
             flow_block(cat, asset["source"], f"projflow-{key}")
 
+    if asset["kind"] == "folder":
+        from .documents_page import folder_documents_box
+        folder_documents_box(cat, key, asset)
     children = [c for c in cat.children(key) if c["kind"] != "series_file"]
     if children:
         st.subheader("Contains")
