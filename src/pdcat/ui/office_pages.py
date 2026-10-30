@@ -60,10 +60,11 @@ def queries_block(attrs: dict, key: str) -> None:
 
 def report_section(cat: Catalogue, key: str, asset: dict) -> None:
     a = asset["attrs"]
-    if a.get("live"):
-        st.info(f"Live connection to the published dataset **{a['live'].get('dataset') or '?'}**: its model lives in "
-                "the Power BI service. Scan that dataset's .pbix or .pbip to catalogue its tables and measures.",
-                icon="🔌")
+    from .impact_pages import connected_box, model_box
+    if a.get("live") and not a.get("tables"):
+        model_box(cat, key, asset)
+    elif a.get("tables"):
+        connected_box(cat, key, asset)
     _not_read(a)
     if a.get("read_with"):
         st.caption("Read from: " + ", ".join(a["read_with"]))
@@ -195,7 +196,7 @@ def measures_table(cat: Catalogue, key: str) -> None:
     group = c1.selectbox("Group by", ["(none)", "home table", "display folder"], key=f"mgroup-{key}")
     text = c2.text_input("Filter", placeholder="name or DAX uses", key=f"mfilter-{key}")
     builds = c3.checkbox("Uses another measure", key=f"mbuild-{key}")
-    show_unused = c4.toggle(f"Show {unused} not used in this file", key=f"munused-{key}") if unused else True
+    show_unused = c4.toggle(f"+{unused} not used in scanned files", key=f"munused-{key}") if unused else True
     shown = [r for r in rows if (show_unused or r["used"]) and (not builds or r["uses measures"])
              and (not text or text.lower() in (r["measure"] + " " + r["uses measures"] + " " + r["uses columns"]).lower())]
     if group != "(none)":
@@ -216,8 +217,8 @@ def measures_table(cat: Catalogue, key: str) -> None:
     event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                          key=f"mtable-{key}")
     if unused and not show_unused:
-        st.caption(f"{unused} measure(s) not used in this file are hidden. Reports connected to a published dataset "
-                   "can use measures this file can't see, so they may still be in use elsewhere.")
+        st.caption(f"{unused} measure(s) not used in scanned files are hidden. A report that wasn't scanned can "
+                   "still use them, so they are kept.")
     sel = event.selection.rows if event else []
     if sel:
         from .common import go
@@ -237,6 +238,8 @@ def measure_section(cat: Catalogue, key: str, asset: dict) -> None:
         st.caption(" · ".join(b for b in bits if b))
     if a.get("used_on"):
         st.caption("Shown on pages: " + ", ".join(a["used_on"]))
+    from .impact_pages import measure_chain_box
+    measure_chain_box(cat, key)
     report = cat.get_asset(asset["parent"]) if asset["parent"] else None
     if report:
         asset_button(report["key"], report["name"], "report", f"mrep-{key}")

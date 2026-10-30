@@ -128,7 +128,7 @@ def test_a_stopped_scan_keeps_what_it_had_read_and_the_next_scan_carries_on(tmp_
     assert scanned_recently(cat, "data") is None  # a stopped scan doesn't count as a recent one
     heard = []
     counts = scan_folder(cat, "data", root, report=lambda t, done=None, total=None: heard.append(t))
-    assert counts == {"files": 2, "series": 0, "reports": 1, "workbooks": 0, "access": 0, "errors": 0}
+    assert counts == {"files": 2, "series": 0, "reports": 1, "workbooks": 0, "access": 0, "errors": 0, "documents": 0}
     assert not any("Reading Power BI" in t for t in heard)  # unchanged, so not opened again
     assert cat.get_asset("files://data/sales.csv")["attrs"]["row_count"] == 3
     assert cat.scan_log()[0]["summary"]["stopped"] is None if "stopped" in cat.scan_log()[0]["summary"] else True

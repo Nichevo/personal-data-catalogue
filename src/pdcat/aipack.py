@@ -52,6 +52,8 @@ class Pack:
             self.col_info[r["asset_key"]][r["column_name"]] = dict(r)
         self.names = {r["key"]: r["name"] for r in cat.conn.execute("SELECT key, name FROM assets")}
         self.problems: list[str] = []  # parts left out because something in them couldn't be read
+        from .register import rows_by_report
+        self.register = self.safely("report register", rows_by_report, cat, default={})
 
     def safely(self, what: str, fn, *args, default: Any = None) -> Any:
         """Run one part of the pack; if it fails, note it and carry on so the rest of the pack is still made."""
@@ -165,6 +167,7 @@ def business_rules(p: Pack) -> str:
 def glossary(p: Pack) -> str:
     from .keys import key_columns, list_keys
     from .knowledge import list_metrics
+    from .metricvalues import usual_values
     out = ["# Glossary", ""]
     metrics = list_metrics(p.cat)
     if metrics:
@@ -181,6 +184,12 @@ def glossary(p: Pack) -> str:
                 out += [f"Owner: {m['owner']}.", ""]
             if m["caveats"]:
                 out += [f"Caveats: {m['caveats']}", ""]
+            usual = p.safely(f"usual values of {m['name']}", usual_values, p.cat, m, default=None)
+            if usual:
+                label = {"yours": "Usual values", "measured": "Usual values (from the data)",
+                         "estimated": "Usual values (estimated from the data, not measured)",
+                         "inputs": "Usual values of the inputs"}.get(usual["source"], "Usual values")
+                out += [f"{label}: {usual['text']}." + (f" {usual['note']}" if usual["note"] else ""), ""]
     keys = list_keys(p.cat)
     if keys:
         out += ["## Company-wide keys", "",
@@ -363,6 +372,10 @@ def reports(p: Pack) -> str:
         info = p.info.get(r["key"], {})
         if info.get("purpose"):
             out += [f"Purpose: {info['purpose']}", ""]
+        reg = p.register.get(r["key"]) if p.register else None
+        if reg:
+            from .register import strip_line
+            out += ["Register: " + "; ".join(f"{k} {v}" for k, v in strip_line(reg)), ""]
         if a.get("pages"):
             out += ["Pages: " + "; ".join(_page(pg) for pg in a["pages"] if isinstance(pg, dict)), ""]
         reads = sorted({p.name(l["dst_key"]) for l in cat.links_from(r["key"]) if l["dst_key"]})

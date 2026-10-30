@@ -306,13 +306,31 @@ def _all(cat: Catalogue) -> list[dict[str, Any]]:
 
 
 def review_tasks(cat: Catalogue, task) -> list:
-    """One To review item per query with wrong-result or risky findings, unless everywhere it's found
-    is marked old or not relevant."""
+    """One To review item per check (SELECT *, NOLOCK, a missing schema...) across every query with a wrong-result
+    or risky finding, so a pattern you accept is answered once. Queries only found in old or not-relevant items
+    are left out."""
+    groups = findings_by_rule(cat)
+    out = []
+    for rule, g in groups.items():
+        sev, title, why, _ = RULES[rule]
+        queries = g["queries"]
+        names = [q["name"] for q in queries[:5]]
+        out.append(task("sql_check", f"sqlrule://{rule}",
+                        f"SQL: {title} in {len(queries)} quer{'y' if len(queries) == 1 else 'ies'}",
+                        f"{why} For example {', '.join(names)}{' …' if len(queries) > 5 else ''}. Open a query to fix "
+                        "or mark each one fine, or accept this pattern everywhere.",
+                        version=str(len(queries))))
+    return out
+
+
+def findings_by_rule(cat: Catalogue) -> dict[str, dict[str, Any]]:
+    """rule -> {"queries": [{"uid", "name", "where", "abouts"}], "severity"} for every open wrong-result or risky
+    finding, queries in old or not-relevant items left out."""
     from .curation import hidden_keys
     from .folderroles import archived
     from .groups import older_versions
     hidden = hidden_keys(cat, old=True) | archived(cat) | older_versions(cat)
-    out = []
+    groups: dict[str, dict[str, Any]] = {}
     for q in _all(cat):
         if q["places"] and all(p["item"] in hidden for p in q["places"]):
             continue
@@ -320,13 +338,21 @@ def review_tasks(cat: Catalogue, task) -> list:
         if not serious:
             continue
         where = (cat.get_asset(q["places"][0]["item"]) or {}).get("name", "") if q["places"] else ""
-        out.append(task("sql_check", f"query://{q['uid']}",
-                        f"SQL “{q['name']}”: " + ", ".join(f["title"] for f in serious[:3])
-                        + (" …" if len(serious) > 3 else ""),
-                        (f"In {where}. " if where else "") + " ".join(f["detail"] for f in serious[:2])
-                        + " Open the query to see each one, or mark it fine here.",
-                        version=",".join(sorted(f"{f['rule']}{f['about']}" for f in serious))))
-    return out
+        for rule in {f["rule"] for f in serious}:
+            g = groups.setdefault(rule, {"queries": [], "severity": RULES[rule][0]})
+            g["queries"].append({"uid": q["uid"], "name": q["name"], "where": where,
+                                 "abouts": [f["about"] for f in serious if f["rule"] == rule]})
+    return groups
+
+
+def accept_rule_everywhere(cat: Catalogue, rule: str) -> int:
+    """Mark every open finding of one check fine, in every query. Returns how many were marked."""
+    n = 0
+    for q in findings_by_rule(cat).get(rule, {}).get("queries", []):
+        for about in q["abouts"]:
+            mark_ok(cat, q["uid"], rule, about)
+            n += 1
+    return n
 
 
 def summary(cat: Catalogue) -> dict[str, int]:

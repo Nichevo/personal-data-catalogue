@@ -59,6 +59,8 @@ def test_exceptions_and_csv(cat):
 def test_new_objects_breaking_a_rule_go_to_review(cat):
     naming.add_rule(cat, DB, "view", "prefix", "vw_")
     from pdcat.review import open_tasks, refresh_tasks
+    from pdcat.reviewanswers import set_rule
+    set_rule(cat, "naming", True)   # off by default since 2.3 (a noisy check)
     refresh_tasks(cat)
     assert not [t for t in open_tasks(cat, limit=1000) if t["rule"] == "naming"]  # existing ones aren't nagged
     cat.upsert_asset(f"{DB}/dbo.newsales", "view", "dbo.NewSales", "dw", parent=DB, attrs={"object": "newsales"})

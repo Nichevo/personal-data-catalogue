@@ -28,10 +28,12 @@ GUIDE = {
     "Tables and datasets": "Every database table and view, and every data file and file series, as one list to "
                            "filter and sort. One click to open any of them.",
     "Python": "Every Python project, script and notebook, grouped by folder. One click to open any of them.",
-    "Power BI": "Every report, model table, Power Query query and measure, each as a list to filter. One click "
-                "to open any of them.",
+    "Power BI": "Every report, model table, column, Power Query query and measure, each as a list to filter, plus "
+                "the report register. What nothing scanned uses is behind a switch. One click to open any of them.",
     "SQL queries": "Every SQL query found in code, workbooks, reports and documents, with where it's used, the "
                    "tables it touches and likely mistakes.",
+    "Summaries": "One row per Power BI file, table or Python project with its counts (pages, visuals, measures, "
+                 "columns, rows, scripts…), grouped by folder, workspace, database or project, with totals.",
     "Knowledge": "Business rules, definitions, how-tos and quirks, linked to the tables and scripts they're about. "
                  "Starter packs load general knowledge to build on.",
     "Business projects": "Group the tables, scripts, files, reports and design documents that serve one purpose, "
@@ -46,8 +48,9 @@ GUIDE = {
                          "checks against the master list.",
     "Abbreviations": "Short forms search understands both ways (SOH = Stock on hand), starting with common supply "
                      "chain terms. Add your own.",
-    "To review": "Everything that needs your eyes, most important first, with views for data issues, items needing "
-                 "notes, unmatched tables, unlinked data and duplicates.",
+    "To review": "Everything that needs your eyes: counts by check to start from, one item per table, answers that "
+                 "stick, suggested descriptions, and views for data issues, unmatched tables, unlinked data and "
+                 "duplicates.",
     "Suggestions": "Things the catalogue worked out for you to confirm: groups, descriptions, SAP meanings, joins, "
                    "naming habits, checks and Copilot's answers.",
     "Health": "How well documented the catalogue is (coverage) and where problems cluster (issue hotspots).",
@@ -63,7 +66,8 @@ GUIDE = {
     "Packages": "Third-party packages your code imports (lightgbm, pandas...), kept apart from your own code.",
     "Measures across reports": "Power BI measures that recur across reports: the same DAX under different names, "
                                "and the same name worked out differently.",
-    "Sources": "Paste SQL, add data folders, and choose which SQL tables to measure and how gently.",
+    "Sources": "Paste SQL, add data folders (one, or many at once from a list), and choose which SQL tables to "
+               "measure and how gently.",
     "Schedules": "Import a list of scheduled jobs so scripts show when they run.",
     "Conda environments": "The conda environments on this machine and which projects use them.",
     "Import from Excel": "Bring in SQL queries, metrics or knowledge notes kept in a workbook.",
@@ -72,7 +76,8 @@ GUIDE = {
     "Copilot pack": "Write what the catalogue knows as documents a Microsoft 365 Copilot agent can use, test it, "
                     "and let it draft missing descriptions.",
     "Export": "Everything in the catalogue as CSV or JSON files, for Excel, Power BI or another tool.",
-    "Settings": "Your name, backups, the weekly scheduled scan, SQL pacing and limits, and the 2.1 switches.",
+    "Settings": "Your name, backups, the weekly scheduled scan, the scan scope, SQL pacing and limits, which To "
+                "review checks run, and the feature switches.",
     "Sensitive data": "Columns and items marked sensitive. Their values are never stored, shown or exported.",
     "Get started": "Set up step by step: your SQL Servers, Python projects and data folders, then the first scan.",
 }

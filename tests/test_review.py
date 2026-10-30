@@ -52,17 +52,39 @@ def test_new_changed_and_missing_objects(catalogue):
     changed = copy.deepcopy(FAKE_DB)
     changed["objects"] = [o for o in changed["objects"] if o["object_name"] != "Store"]
     changed["objects"][0]["modify_date"] = "2026-10-01 09:00:00"
+    changed["objects"][2]["modify_date"] = "2026-10-01 09:00:00"  # the view (Store is gone): definition changed
+    changed["columns"].append({"schema_name": "dbo", "object_name": "SalesDaily", "column_name": "Promo", "column_id": 3,
+                               "type_name": "bit", "max_length": 1, "precision": 1, "scale": 0, "is_nullable": True,
+                               "description": None})
     changed["objects"].append({"schema_name": "dbo", "object_name": "Promo", "object_type": "U ", "row_count": 5,
                                "description": None, "definition": None})
     FAKE_DB["objects"][0].setdefault("modify_date", "2026-01-01 00:00:00")
+    FAKE_DB["objects"][3].setdefault("modify_date", "2026-01-01 00:00:00")
     with catalogue.scan(SRC.name):
         ingest(catalogue, SRC, "ForecastDB", FAKE_DB)
     with catalogue.scan(SRC.name):
         ingest(catalogue, SRC, "ForecastDB", changed)
     refresh_tasks(catalogue)
     assert "sql://warehouse/forecastdb/dbo.promo" in by_rule(catalogue, "new")
-    assert SALES in by_rule(catalogue, "changed")
+    changed_tasks = by_rule(catalogue, "changed")
+    assert "column added" in changed_tasks[SALES]["title"] and "Promo bit" in changed_tasks[SALES]["detail"]
+    assert "definition changed" in changed_tasks["sql://warehouse/forecastdb/ml.vforecastlatest"]["title"]
     assert "1 note" in by_rule(catalogue, "missing")[STORE]["detail"]
+    del FAKE_DB["objects"][0]["modify_date"]
+    del FAKE_DB["objects"][3]["modify_date"]
+
+
+def test_a_table_whose_only_change_is_its_date_is_not_an_item(catalogue):
+    changed = copy.deepcopy(FAKE_DB)
+    changed["objects"][0]["modify_date"] = "2026-10-02 09:00:00"
+    changed["objects"][0]["row_count"] = 5000
+    FAKE_DB["objects"][0].setdefault("modify_date", "2026-01-01 00:00:00")
+    with catalogue.scan(SRC.name):
+        ingest(catalogue, SRC, "ForecastDB", FAKE_DB)
+    with catalogue.scan(SRC.name):
+        ingest(catalogue, SRC, "ForecastDB", changed)
+    refresh_tasks(catalogue)
+    assert SALES not in by_rule(catalogue, "changed")
     del FAKE_DB["objects"][0]["modify_date"]
 
 

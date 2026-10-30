@@ -133,7 +133,7 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
     token = cat.begin_scan(name)
     with cat.conn:
         cat.upsert_asset(folder_key, "folder", name, name, attrs={"path": str(root), "recursive": recursive})
-    counts = {"files": 0, "series": 0, "reports": 0, "workbooks": 0, "access": 0, "errors": 0}
+    counts = {"files": 0, "series": 0, "reports": 0, "workbooks": 0, "access": 0, "errors": 0, "documents": 0}
     try:
         for part in scan_office(cat, root, folder_key, name, found, step):
             for k, v in part.items():
@@ -141,6 +141,10 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
         for part in scan_data(cat, root, folder_key, name, plan, max_rows, step):
             for k, v in part.items():
                 counts[k] += v
+        from .documents import scan_folder_documents
+        docs = scan_folder_documents(cat, root, name, folder_key, report)
+        counts["documents"] = docs["documents"]
+        counts["errors"] += docs["errors"]
     except BaseException as e:  # stopped from the app, Ctrl+C, or a failure: what was saved stays saved
         what = "stopped" if isinstance(e, BaseException) and not isinstance(e, Exception) else f"failed: {e}"
         cat.note_stopped_scan(token, {**counts, "seconds": round(time.monotonic() - started, 1),
@@ -149,7 +153,7 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
                                                  f"{_saved(counts)} saved. The next scan carries on from there."})
         raise
     report("Updating links and search …", total, total)
-    out = {k: counts[k] for k in ("files", "series", "reports", "workbooks", "access", "errors")}
+    out = {k: counts[k] for k in ("files", "series", "reports", "workbooks", "access", "errors", "documents")}
     cat.finish_scan(token, {"seconds": round(time.monotonic() - started, 1), "read_seconds": round(step.seconds, 1),
                             "files_found": total, "bytes": size["bytes"], "skipped_folders": skipped,
                             "slow": step.slow[:20], "errors": out["errors"], "warning": warning,

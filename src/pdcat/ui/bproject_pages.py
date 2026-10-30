@@ -64,6 +64,8 @@ def bproject_page(cat: Catalogue, key: str) -> None:
         st.markdown(p["purpose"])
     if p["notes"]:
         st.markdown(p["notes"])
+    from .documents_page import design_documents_box
+    design_documents_box(cat, key)
     with st.expander("✏️ Edit"):
         project_form(cat, p)
         if st.button("Delete this business project"):

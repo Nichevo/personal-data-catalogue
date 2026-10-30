@@ -50,7 +50,7 @@ def test_measures_used_through_every_step(catalogue, report):
     assert rows["Units vs LY"]["why"] == "shown in a visual"
     assert rows["Units LY"]["used"] and rows["Units LY"]["why"].startswith("used by")
     assert rows["Total Units"]["used"]
-    assert not rows["Old test"]["used"] and rows["Old test"]["why"] == "not used in this file"
+    assert not rows["Old test"]["used"] and rows["Old test"]["why"] == "not used in scanned files"
     assert rows["Units vs LY"]["folder"] == "Growth"
     assert rows["Units vs LY"]["uses measures"] == "Sales[Total Units], Sales[Units LY]"
 

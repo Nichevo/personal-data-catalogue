@@ -138,7 +138,7 @@ def test_review_page_comment_marks_done(app, catalogue):
     app.run()
     goto(app, "To review")
     assert not app.exception
-    assert len(app.dataframe) == 1  # the compact table is the default
+    assert [d.key for d in app.dataframe] == ["review-by-rule", "review-table"]  # counts by check, then the table
     app.toggle[0].set_value(True).run()  # cards
     [t for t in app.text_area if t.label == "Your comment"][0].input("Checked: this is the store master.")
     [b for b in app.button if b.label == "Save"][0].click().run()

@@ -148,6 +148,8 @@ def detail(cat: Catalogue, key: str) -> None:
     about_form(cat, key, asset, info)
     columns = cat.columns(key)
     notes_section(cat, key, [c["name"] for c in columns])
+    if asset["kind"] in TABLE_LIKE and columns:
+        suggested_descriptions_box(cat, key, columns)
 
     if columns and not cat.profile(key):
         columns_section(cat, key, columns)
@@ -200,6 +202,9 @@ def detail(cat: Catalogue, key: str) -> None:
             from .dataflow_page import flow_block
             flow_block(cat, asset["source"], f"projflow-{key}")
 
+    if asset["kind"] == "folder":
+        from .documents_page import folder_documents_box
+        folder_documents_box(cat, key, asset)
     children = [c for c in cat.children(key) if c["kind"] != "series_file"]
     if children:
         st.subheader("Contains")
@@ -295,6 +300,23 @@ def about_form(cat: Catalogue, key: str, asset: dict | None, info: dict) -> None
                                        freshness_column=freshness, sensitive=sensitive, sap_name=sap)
                 st.toast("Saved")
                 st.rerun()
+
+
+def suggested_descriptions_box(cat: Catalogue, key: str, columns) -> None:
+    """Descriptions drafted for the undescribed columns, to accept in one go (see describedrafts)."""
+    from pdcat import describedrafts as DD
+    undescribed = [c for c in columns if not c["description"]]
+    if not undescribed:
+        return
+    mine = curation.column_info(cat, key)
+    if all((mine.get(c["name"]) or {}).get("description") for c in undescribed):
+        return
+    rows = DD.column_suggestions(cat, key, undescribed)
+    if not rows:
+        return
+    with st.expander(f"💡 Suggested descriptions for {len(rows)} column(s)"):
+        from .review_pages import suggestions_editor
+        suggestions_editor(cat, key, f"page-{key}", rows)
 
 
 def columns_section(cat: Catalogue, key: str, columns) -> None:

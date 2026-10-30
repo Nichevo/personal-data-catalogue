@@ -10,6 +10,7 @@ together, and each one gets a role from its name and what's in it:
   data      data/, processed/, interim/, clean/, staging/
   outputs   output/, outputs/, results/, exports/, reports/
   docs      docs/, doc/, documentation/
+  design    design/, specs/, requirements/: design documents, read as reference documents (2.3)
   archive   archive/, old/, backup/, bak/, legacy/, deprecated/: kept, but treated as old
   ignore    tmp/, temp/, cache/: not catalogued
 
@@ -29,13 +30,15 @@ from .scanprogress import has_files
 from .store import Catalogue
 
 ROLES = {"code": "Code", "raw data": "Raw data (comes in from outside)", "data": "Data", "outputs": "Outputs",
-         "docs": "Docs", "archive": "Archive (treated as old)", "ignore": "Ignore (not catalogued)",
+         "docs": "Docs", "design": "Design documents (read: Word, PowerPoint, Excel, PDF become reference documents)",
+         "archive": "Archive (treated as old)", "ignore": "Ignore (not catalogued)",
          "project": "A project of its own", "": "No particular role"}
 NAME_ROLES: list[tuple[str, re.Pattern]] = [
     ("raw data", re.compile(r"^(raw[_ -]?data|raw|inputs?|landing|source[_ -]?data|incoming|external)$", re.I)),
     ("code", re.compile(r"^(code|src|source|scripts?|notebooks?|nb|sql|lib|libs|python|py|pipelines?|etl)$", re.I)),
     ("data", re.compile(r"^(data|datasets?|processed|interim|clean(ed)?|staging|intermediate|features)$", re.I)),
     ("outputs", re.compile(r"^(outputs?|results?|exports?|reports?|deliverables?|figures?|plots?|predictions?)$", re.I)),
+    ("design", re.compile(r"^(design|designs|specs?|specifications?|requirements?|design[_ -]?docs?)$", re.I)),
     ("docs", re.compile(r"^(docs?|documentation|notes|wiki)$", re.I)),
     ("archive", re.compile(r"^(archive[ds]?|old|backups?|bak|legacy|deprecated|retired|_old|zz_?old)$", re.I)),
     ("ignore", re.compile(r"^(tmp|temp|cache|\.cache|scratch|__pycache__|\.ipynb_checkpoints|\.git|\.venv|venv|env|"

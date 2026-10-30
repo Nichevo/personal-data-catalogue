@@ -27,6 +27,7 @@ def settings_page(cat: Catalogue) -> None:
 
     backups_section(cat)
     schedule_section(cat)
+    review_section(cat)
 
     st.subheader("SQL Server: pace and limits")
     st.caption("Every query the catalogue sends follows these. Lower them if your DBA asks; the query log on the "
@@ -123,6 +124,7 @@ def schedule_section(cat: Catalogue) -> None:
     from .common import config_path
     st.subheader("Scan on a schedule")
     folder = Path(cat.path).parent
+    scope_picker(cat)
     if not T.available():
         st.caption("Windows only: creates a weekly Task Scheduler task that runs `pdcat scan` and then "
                    "`pdcat profile --queue`. On this machine, use cron to run those two commands.")
@@ -210,6 +212,84 @@ def backups_section(cat: Catalogue) -> None:
                 chosen = next(c for c in copies if c["file"] == pick)
                 safety = backup.restore(cat, chosen["path"])
                 st.success(f"Restored {pick}. What was there before is saved as {safety.name}.")
+
+
+def scope_picker(cat: Catalogue) -> None:
+    """Which sources `pdcat scan` covers when run with no names (the scheduled scan included)."""
+    from pdcat import scanscope
+
+    from .common import config_path
+    names = []
+    try:
+        from pdcat.config import find_config, load_config
+        names += load_config(find_config(config_path())).source_names()
+    except Exception:  # no config file: only the sources added in the app
+        pass
+    names += [f["name"] for f in cat.folders()] + [lib["name"] for lib in cat.libraries()]
+    names = sorted(set(names))
+    if not names:
+        return
+    scope = scanscope.saved(cat)
+    everything = st.checkbox("Scheduled and plain `pdcat scan` runs cover every source", value=scope is None,
+                             key="scope-all")
+    if everything:
+        if scope is not None:
+            scanscope.save(cat, None)
+            st.rerun()
+        return
+    picked = st.multiselect("Only these sources", names, default=[n for n in (scope or names) if n in names],
+                            key="scope-pick", help="`pdcat scan --all` still scans everything, and `--source` picks "
+                            "by hand. `pdcat scan --ask` shows this list and waits 60s for an answer.")
+    if set(picked) != set(scope or []) and picked:
+        scanscope.save(cat, picked)
+        st.rerun()
+
+
+def review_section(cat: Catalogue) -> None:
+    """Which review checks run, and the answers that stick (standard type patterns, placeholder values, servers
+    not catalogued on purpose, column names usually or never sensitive)."""
+    from pdcat import reviewanswers as RA
+    from pdcat.profiling import HINT_TEXT
+    from pdcat.review import RULES
+    st.subheader("Review")
+    st.caption("Checks that make To review items. A check switched off hides its items until you switch it back; "
+               "nothing is deleted.")
+    off = RA.rules_off(cat)
+    cols = st.columns(3)
+    for i, (rule, (label, category, _)) in enumerate(sorted(RULES.items(), key=lambda kv: kv[1][0])):
+        on = cols[i % 3].checkbox(label, value=rule not in off, key=f"rule-{rule}")
+        if on == (rule in off):
+            RA.set_rule(cat, rule, on)
+            st.rerun()
+    with st.expander("Answers that stick"):
+        ok = sorted(RA.hints_ok(cat))
+        st.markdown("**Data type patterns that are our standard** (never raised): "
+                    + (", ".join(HINT_TEXT.get(c, c) for c in ok) if ok else "none yet"))
+        if ok:
+            back = st.selectbox("Raise again", ok, format_func=lambda c: HINT_TEXT.get(c, c), key="hint-back")
+            if st.button("Raise it again", key="hint-back-btn"):
+                RA.mark_hint_standard(cat, back, standard=False)
+                st.rerun()
+        text = st.text_input("Placeholder values (a column holding only one of these isn't odd)",
+                             value=", ".join(RA.placeholders(cat)), key="placeholders")
+        if st.button("Save placeholders", key="placeholders-save"):
+            RA.set_placeholders(cat, text.split(","))
+            st.rerun()
+        ignored = sorted(RA.ignored_prefixes(cat))
+        st.markdown("**Servers and databases not catalogued on purpose:** " + (", ".join(ignored) if ignored else "none"))
+        if ignored:
+            back = st.selectbox("Ask again about", ignored, key="prefix-back")
+            if st.button("Ask again", key="prefix-back-btn"):
+                RA.ignore_prefix(cat, back, ignore=False)
+                st.rerun()
+        yes, no = RA.names_usually(cat, "yes"), RA.names_usually(cat, "no")
+        if yes or no:
+            st.markdown("**Column names answered the same way every time:** "
+                        + (f"sensitive: {', '.join(sorted(yes))}. " if yes else "")
+                        + (f"not sensitive: {', '.join(sorted(no))}." if no else ""))
+            if st.button("Forget these answers", key="sens-forget"):
+                cat.set_setting(RA.SENSITIVE_NAMES, {})
+                st.rerun()
 
 
 def features_section(cat: Catalogue) -> None:

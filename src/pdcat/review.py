@@ -14,6 +14,7 @@ import json
 import math
 import re
 import warnings
+import zlib
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,7 +23,8 @@ from typing import Any
 
 import pandas as pd
 
-from . import freshness, naming, rulechecks, sqlchecks, unknownfiles
+from . import freshness, naming, pbimpact, reviewanswers, rulechecks, sqlchecks, unknownfiles
+from .profiling import HINT_TEXT
 from .store import Catalogue, now
 
 # rule: (label, category, base priority)
@@ -50,9 +52,16 @@ RULES: dict[str, tuple[str, str, int]] = {
     "naming": ("Breaks a naming rule", "docs", 10),
     "sql_check": ("SQL problem", "warning", 20),
     "rule_check": ("Rule check failed", "warning", 32),
+    # version 2.3
+    "broken_visual": ("Visual uses a field the model doesn't have", "warning", 30),
 }
 # Checks where "dismiss" means "it's like this on purpose".
-BY_DESIGN = {"data_type", "sensitive", "stale_data", "duplicate"}
+BY_DESIGN = {"data_type", "sensitive", "stale_data", "duplicate", "odd_values"}
+# One item per table (or file, folder, pattern) rather than one per column or finding, since version 2.3.
+GROUPED = {"data_type", "sensitive", "unmatched", "sql_check", "wrong_folder", "broken_visual"}
+# Changes to these count only when something inside them changed (columns, layout), not the row count or date.
+STRUCTURE_ONLY = ("table", "data_file", "file_series", "series_file")
+NOISE_CHANGES = ("row count",)
 CATEGORY_LABELS = {"docs": "Document", "change": "Check a change", "warning": "Possible data problem"}
 QUANTITY_NAME = re.compile(r"(qty|quantity|units?|amount|price|cost|revenue|sales|count|weight|volume)", re.I)
 STALE_DAYS = 90
@@ -78,11 +87,12 @@ def refresh_tasks(cat: Catalogue) -> dict[str, int]:
         for t in found.values():
             old = existing.get(t.id)
             if old is None:
+                status = _carried_over(existing, t)
                 cat.conn.execute(
                     "INSERT INTO review_tasks (id, rule, asset_key, title, detail, priority, status, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)",
-                    (t.id, t.rule, t.asset_key, t.title, t.detail, t.priority, ts, ts))
-                opened += 1
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (t.id, t.rule, t.asset_key, t.title, t.detail, t.priority, status, ts, ts))
+                opened += status == "open"
             else:
                 status = "open" if old["status"] == "resolved" else old["status"]  # problem is back
                 cat.conn.execute(
@@ -94,6 +104,27 @@ def refresh_tasks(cat: Catalogue) -> dict[str, int]:
                 cat.conn.execute("UPDATE review_tasks SET status = 'resolved', updated_at = ? WHERE id = ?", (ts, task_id))
                 closed += 1
     return {"open": len(open_tasks(cat, limit=100_000)), "new": opened, "closed": closed}
+
+
+def members_version(names: list[str]) -> str:
+    """A short mark for the set of columns (or fields) a grouped item covers: when the set changes, the item gets
+    a new id, so one you dismissed comes back when a new column starts failing the check."""
+    return f"#{zlib.crc32('|'.join(sorted(set(names))).encode('utf-8')):08x}"
+
+
+def _carried_over(existing: dict[str, dict], t: Task) -> str:
+    """A grouped item (one per table) starts out dismissed or done when every per-column item it replaces was
+    answered that way, so nothing you already dealt with comes back. Earlier grouped versions (ids ending in a
+    #mark) don't count: a changed set of columns is a new question."""
+    if t.rule not in GROUPED:
+        return "open"
+    prefix = f"{t.rule}:{t.asset_key}:"
+    if any(tid.startswith(prefix + "#") and tid != t.id for tid in existing):
+        return "open"  # the per-column answers were carried into an earlier grouped item; this is a new set
+    olds = [r for tid, r in existing.items() if tid.startswith(prefix) and tid != t.id]
+    if olds and all(r["status"] in ("dismissed", "done") for r in olds):
+        return "dismissed" if all(r["status"] == "dismissed" for r in olds) else "done"
+    return "open"
 
 
 def open_tasks(cat: Catalogue, *, rule: str | None = None, category: str | None = None,
@@ -135,6 +166,25 @@ def set_task_status(cat: Catalogue, task_id: str, status: str, snooze_days: int 
 def set_tasks_status(cat: Catalogue, task_ids: list[str], status: str, snooze_days: int = 30) -> None:
     for tid in task_ids:
         set_task_status(cat, tid, status, snooze_days)
+
+
+def counts_by_rule(cat: Catalogue) -> list[dict[str, Any]]:
+    """[{"rule", "label", "category", "open"}] for every rule with open items, most first. The To review page
+    shows this table itself, so you never have to work the numbers out from the list."""
+    ts = now()
+    rows = cat.conn.execute(
+        "SELECT rule, COUNT(*) AS n FROM review_tasks WHERE status = 'open' OR (status = 'snoozed' AND snooze_until <= ?) "
+        "GROUP BY rule ORDER BY n DESC", (ts,)).fetchall()
+    return [{"rule": r["rule"], "label": RULES.get(r["rule"], (r["rule"],))[0],
+             "category": CATEGORY_LABELS.get(RULES.get(r["rule"], ("", "warning"))[1], ""), "open": r["n"]}
+            for r in rows]
+
+
+def done_recently(cat: Catalogue, days: int = 7) -> int:
+    """Items marked done or dismissed in the last `days` days."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+    return cat.conn.execute("SELECT COUNT(*) FROM review_tasks WHERE status IN ('done', 'dismissed') AND updated_at > ?",
+                            (since,)).fetchone()[0]
 
 
 def count_open(cat: Catalogue) -> int:
@@ -235,6 +285,8 @@ def _candidates(cat: Catalogue) -> list[Task]:
     profiles: dict[str, list[dict]] = defaultdict(list)
     for p in conn.execute("SELECT * FROM profiles ORDER BY asset_key, ordinal"):
         profiles[p["asset_key"]].append(dict(p))
+    known = reviewanswers.placeholders(cat)
+    described = {r[0] for r in conn.execute("SELECT asset_key FROM item_info WHERE COALESCE(purpose, '') != ''")}
 
     def priority(rule: str, key: str) -> float:
         a = assets.get(key, {"attrs": {}})
@@ -248,8 +300,8 @@ def _candidates(cat: Catalogue) -> list[Task]:
     tasks: list[Task] = []
     for key, a in assets.items():
         kind, attrs, name = a["kind"], a["attrs"], a["name"]
-        if kind in ("database", "folder", "project"):
-            continue
+        if kind in ("database", "folder", "project", "report_ref"):
+            continue  # register rows (2.3) are context, not things to document or check
 
         if a["status"] == "missing":
             if notes_on[key] or used_by[key]:
@@ -262,7 +314,7 @@ def _candidates(cat: Catalogue) -> list[Task]:
                                   "It has " + " and ".join(what) + ". Was it renamed or dropped? Update or remove the notes."))
             continue
 
-        if kind in ("table", "view") and not a["description"] and not notes_on[key]:
+        if kind in ("table", "view") and not a["description"] and not notes_on[key] and key not in described:
             rows = attrs.get("row_count")
             extra = f"{rows:,} rows. " if rows else ""
             use = f"Used by {used_by[key]} of your files." if used_by[key] else ""
@@ -280,12 +332,13 @@ def _candidates(cat: Catalogue) -> list[Task]:
             tasks.append(task("new", key, f"New: {name}", f"First seen {a['first_seen'][:10]}. What is it for?"))
 
         if attrs.get("changed_at"):
-            tasks.append(task("changed", key, f"{name} changed",
-                              f"Modified {str(attrs.get('modified'))[:16]} (was {str(attrs.get('previous_modified'))[:16]}). "
-                              "Check your notes still hold.", version=str(attrs.get("modified"))))
+            what = _what_changed(cat, key, kind, attrs)
+            if what is not None:
+                tasks.append(task("changed", key, f"{name} changed: {what[0]}", what[1],
+                                  version=str(attrs.get("modified"))))
 
         if profiles[key]:
-            odd = _odd_values(profiles[key])
+            odd = _odd_values(profiles[key], known)
             if odd:
                 tasks.append(task("odd_values", key, f"Odd values in {name}", "; ".join(odd)))
 
@@ -302,20 +355,85 @@ def _candidates(cat: Catalogue) -> list[Task]:
 
     tasks += _profile_candidates(cat, assets, profiles, used_by, task)
 
-    for r in cat.unresolved_refs():
-        ref = r["dst_ref"]
-        tasks.append(Task(f"unmatched:{ref}", "unmatched", ref, f"Table {ref[6:]} (used in code) not found",
-                          f"Used by {r['used_by']} file(s), e.g. {r['example']}. A server you haven't added, "
-                          "a typo, or a false match?", RULES["unmatched"][2] + 5 * min(r["used_by"], 5)))
+    tasks += _unmatched_candidates(cat)
     tasks += _feature_candidates(cat, task)
     from .curation import hidden_keys
     hidden = hidden_keys(cat)  # marked not relevant
-    return [t for t in tasks if t.asset_key not in hidden]
+    off = reviewanswers.rules_off(cat)
+    return [t for t in tasks if t.asset_key not in hidden and t.rule not in off]
+
+
+def _unmatched_candidates(cat: Catalogue) -> list[Task]:
+    """Tables named in code that aren't catalogued: one item per server or database they're on (answer once:
+    "that server isn't catalogued"), and one for the names with no database part. Temp tables, table
+    variables and names built while the code runs are left out."""
+    ignored = reviewanswers.ignored_prefixes(cat)
+    groups: dict[str, list] = defaultdict(list)
+    for r in cat.unresolved_refs():
+        table = r["dst_ref"][len("table:"):]
+        if reviewanswers.is_temp_name(table):
+            continue
+        prefix = reviewanswers.unmatched_prefix(table)
+        if prefix in ignored:
+            continue
+        groups[prefix].append(dict(r))
+    out = []
+    for prefix, refs in groups.items():
+        uses = sum(r["used_by"] for r in refs)
+        names = sorted({r["dst_ref"][6:] for r in refs}, key=str.lower)
+        shown = ", ".join(names[:8]) + (" …" if len(names) > 8 else "")
+        if prefix:
+            out.append(Task(f"unmatched:{prefix}", "unmatched", f"table:{prefix}",
+                            f"{len(names)} table(s) on {prefix} (used in code) not catalogued",
+                            f"{shown}. Used by {uses} file(s). Scan that server or database, or say it isn't "
+                            "catalogued on purpose.", RULES["unmatched"][2] + 5 * min(uses, 5)))
+        elif len(names) == 1:
+            r = refs[0]
+            out.append(Task(f"unmatched:{r['dst_ref']}", "unmatched", r["dst_ref"],
+                            f"Table {names[0]} (used in code) not found",
+                            f"Used by {r['used_by']} file(s), e.g. {r['example']}. A server you haven't added, "
+                            "a typo, or a false match?", RULES["unmatched"][2] + 5 * min(uses, 5)))
+        else:
+            out.append(Task("unmatched:(no database)", "unmatched", "table:(no database)",
+                            f"{len(names)} table names in code not found in what you've scanned",
+                            f"{shown}. Used by {uses} file(s). The Unmatched tables page says why each one didn't "
+                            "match.", RULES["unmatched"][2] + 5 * min(uses, 5)))
+    return out
+
+
+def _what_changed(cat: Catalogue, key: str, kind: str, attrs: dict) -> tuple[str, str] | None:
+    """(summary, detail) of what a rescan found changed, or None when only the row count or the modified date
+    moved on a table or file, which isn't worth an item."""
+    since = str(attrs.get("changed_at") or "")[:19]
+    rows = [(r["change"], r["detail"]) for r in cat.conn.execute(
+        "SELECT change, detail FROM schema_history WHERE asset_key = ? AND at >= ? ORDER BY at", (key, since))]
+    real = [(c, d) for c, d in rows if c not in NOISE_CHANGES]
+    if kind == "report":
+        rev = (attrs.get("revisions") or [{}])[-1]
+        if rev.get("summary") and "summary" in rev:
+            real.append(("report", rev["summary"]))
+    for c in attrs.get("layout_changes") or []:
+        real.append(("layout", f"{c.get('file')}: {c.get('detail')}"))
+    if not real and kind in STRUCTURE_ONLY:
+        return None
+    when = f"Modified {str(attrs.get('modified'))[:16].replace('T', ' ')} (was " \
+           f"{str(attrs.get('previous_modified'))[:16].replace('T', ' ')})."
+    if not real:
+        what = {"view": "definition", "procedure": "definition", "script": "code", "notebook": "code",
+                "sql_script": "SQL", "workbook": "workbook"}.get(kind, "content")
+        return f"{what} changed", f"{when} Check your notes still hold."
+    counts = Counter(c for c, _ in real if c not in ("report", "layout"))
+    bits = [c + (f" ×{n}" if n > 1 else "") for c, n in counts.items()]
+    bits += [d for c, d in real if c in ("report", "layout")][:2]
+    summary = ", ".join(bits)
+    lines = "; ".join(f"{c}: {d}" if c not in ("report", "layout") else d for c, d in real[:8])
+    return summary, f"{when} {lines}" + (" …" if len(real) > 8 else "")
 
 
 # Checks that live next to the feature they belong to: each is function(cat, task) -> [Task].
 FEATURE_CHECKS: list[Callable[..., list[Task]]] = [unknownfiles.review_tasks, freshness.review_tasks,
-                                                   naming.review_tasks, sqlchecks.review_tasks, rulechecks.review_tasks]
+                                                   naming.review_tasks, sqlchecks.review_tasks, rulechecks.review_tasks,
+                                                   pbimpact.review_tasks]
 
 
 def _feature_candidates(cat: Catalogue, task) -> list[Task]:
@@ -334,15 +452,21 @@ def _profile_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: C
     from .staleness import all_stale
 
     out: list[Task] = []
+    hints_ok = reviewanswers.hints_ok(cat)
+    hints_no = reviewanswers.hints_dismissed(cat)
     for key, prof in profiles.items():
         a = assets.get(key)
         if not a or a["status"] != "active":
             continue
-        for p in prof:
-            for h in json.loads(p.get("hints") or "[]"):
-                out.append(task("data_type", key, f"{p['column_name']} in {a['name']}: {h['text']}",
-                                f"Declared {p['data_type'] or '?'}. Fix the type at the source, note why, or "
-                                "dismiss it as by design.", version=f"{p['column_name']}:{h['code']}"))
+        found = type_hints_for(prof, key, hints_ok, hints_no)
+        if found:
+            codes = Counter(h["code"] for h in found)
+            top = ", ".join(f"{HINT_TEXT.get(c, c)} ({n})" for c, n in codes.most_common(3))
+            out.append(task("data_type", key, f"{len(found)} column(s) in {a['name']}: data type doesn't fit",
+                            f"{top}. " + "; ".join(f"{h['column']} ({h['declared'] or '?'}): {h['text']}"
+                                                   for h in found[:6]) + (" …" if len(found) > 6 else "")
+                            + ". Fix the types at the source, or answer by design for the table, a column, or "
+                            "the pattern everywhere.", version=members_version([h["column"] for h in found])))
         f = freshness(cat, key)
         if f and f["stale"] and (used_by[key] or (a["attrs"].get("row_count") or 0) > 0):
             out.append(task("stale_data", key, f"{a['name']}: newest {f['column']} is {f['latest']}",
@@ -353,10 +477,22 @@ def _profile_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: C
         out.append(task("stale_note", n["asset_key"], f"Check a note on {a['name'] if a else n['asset_key']}",
                         "; ".join(n["reasons"]).capitalize() + ". Confirm it, edit it or archive it.",
                         version=str(n["note_id"])))
+    by_table: dict[str, list[dict]] = defaultdict(list)
+    skip_tables = reviewanswers.tables_not_sensitive(cat)
+    usually_no = reviewanswers.names_usually(cat, "no")
+    usually_yes = reviewanswers.names_usually(cat, "yes")
     for c in sensitive_suggestions(cat):
-        out.append(task("sensitive", c["asset_key"], f"{c['name']} in {c['item']} may hold personal data",
-                        "Mark it sensitive on the item's page (values are then never kept or exported), or dismiss.",
-                        version=c["name"]))
+        if c["asset_key"] in skip_tables or c["name"].lower() in usually_no:
+            continue
+        by_table[c["asset_key"]].append(c)
+    for key, cols in by_table.items():
+        names = [c["name"] for c in cols]
+        known = [n for n in names if n.lower() in usually_yes]
+        out.append(task("sensitive", key, f"{len(names)} column(s) in {cols[0]['item']} may hold personal data",
+                        ", ".join(names[:10]) + (" …" if len(names) > 10 else "")
+                        + (f". You marked {', '.join(known[:4])} sensitive elsewhere." if known else "")
+                        + " Mark them sensitive (values are then never kept or exported), say none are, or pick.",
+                        version=members_version(names)))
     from .duplicates import report
     for group in report(cat)["same_file"]:
         first, *copies = group["files"]
@@ -372,9 +508,11 @@ def _profile_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: C
     return out
 
 
-def _odd_values(profile: list[dict]) -> list[str]:
+def _odd_values(profile: list[dict], placeholders: list[str] | None = None) -> list[str]:
+    """Columns worth a look. A column that holds only a placeholder value (0, -1, N/A: see Settings) isn't odd."""
     found = []
     today = datetime.now(timezone.utc).date().isoformat()
+    known = list(reviewanswers.DEFAULT_PLACEHOLDERS) if placeholders is None else placeholders
     for p in profile:
         rows, nulls, col = p["row_count"] or 0, p["null_count"], p["column_name"]
         if not rows or nulls is None:
@@ -384,7 +522,7 @@ def _odd_values(profile: list[dict]) -> list[str]:
             continue
         if nulls / rows >= 0.5:
             found.append(f"{col} is {nulls / rows:.0%} empty")
-        if p["distinct_count"] == 1 and rows > 1:
+        if p["distinct_count"] == 1 and rows > 1 and str(p["min_value"]).strip() not in known:
             found.append(f"{col} has only one value ({p['min_value'] if p['min_value'] is not None else 'same everywhere'})")
         lo = _num(p["min_value"])
         if lo is not None and lo < 0 and QUANTITY_NAME.search(col):
@@ -393,6 +531,20 @@ def _odd_values(profile: list[dict]) -> list[str]:
         if ("date" in dtype or "time" in dtype) and p["max_value"] and str(p["max_value"])[:10] > today:
             found.append(f"{col} has future dates (max {str(p['max_value'])[:10]})")
     return found
+
+
+def type_hints_for(profile: list[dict], key: str, hints_ok: set[str] | None = None,
+                   hints_no: set[tuple[str, str, str]] | None = None) -> list[dict[str, Any]]:
+    """[{"column", "code", "text", "declared"}]: the data type hints of one item still worth raising."""
+    out = []
+    for p in profile:
+        for h in json.loads(p.get("hints") or "[]"):
+            if hints_ok and h["code"] in hints_ok:
+                continue
+            if hints_no and (key, p["column_name"], h["code"]) in hints_no:
+                continue
+            out.append({"column": p["column_name"], "code": h["code"], "text": h["text"], "declared": p["data_type"]})
+    return out
 
 
 def _drift(file_profile: list[dict], source_profile: list[dict]) -> list[str]:

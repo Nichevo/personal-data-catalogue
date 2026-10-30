@@ -117,17 +117,26 @@ def test_sql_checks_go_to_review_and_can_be_marked_fine(cat, tmp_path: Path):
     sqllibrary.build_library(cat)
     from pdcat.review import open_tasks, refresh_tasks
     refresh_tasks(cat)
+    # one item per check across every query, since 2.3
     tasks = {t["asset_key"]: t for t in open_tasks(cat, limit=1000) if t["rule"] == "sql_check"}
     cleanup = next(q for q in sqllibrary.queries(cat) if q["name"] == "cleanup")
     built = next(q for q in sqllibrary.queries(cat) if "WHERE Region" in q["sql"])
-    assert f"query://{cleanup['uid']}" in tasks and f"query://{built['uid']}" in tasks
+    assert "sqlrule://no_where_change" in tasks and "sqlrule://built_from_variables" in tasks
+    assert "cleanup" in tasks["sqlrule://no_where_change"]["detail"]
     q = sqllibrary.get(cat, built["uid"])
     rules = {f["rule"] for f in sqlchecks.findings_for(cat, q)}
     assert {"built_from_variables", "select_star"} <= rules
+    by_rule = sqlchecks.findings_by_rule(cat)
+    assert cleanup["uid"] in {x["uid"] for x in by_rule["no_where_change"]["queries"]}
     sqlchecks.mark_ok(cat, cleanup["uid"], "no_where_change", "dbo.sales")
     refresh_tasks(cat)
-    assert f"query://{cleanup['uid']}" not in {t["asset_key"] for t in open_tasks(cat, limit=1000)
+    assert "sqlrule://no_where_change" not in {t["asset_key"] for t in open_tasks(cat, limit=1000)
                                                if t["rule"] == "sql_check"}
+    # accepting a pattern everywhere marks every query's finding fine
+    assert sqlchecks.accept_rule_everywhere(cat, "built_from_variables") >= 1
+    refresh_tasks(cat)
+    assert "sqlrule://built_from_variables" not in {t["asset_key"] for t in open_tasks(cat, limit=1000)
+                                           if t["rule"] == "sql_check"}
 
 
 @pytest.mark.parametrize("sql, rule", [

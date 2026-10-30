@@ -2,7 +2,8 @@
 
 A measure is used when a visual in this file shows it, or when a used measure builds on it
 (followed through every step). Reports connected to a published dataset can use measures this file
-can't see, so the app says "not used in this file" rather than "unused".
+can't see, so the app says "not used in scanned files" rather than "unused". Since 2.3 the visuals of thin
+reports matched to this file's model (pbimpact) count as uses too.
 """
 from __future__ import annotations
 
@@ -65,6 +66,14 @@ def measure_rows(cat: Catalogue, report_key: str) -> list[dict[str, Any]]:
         r["_columns"] = uc
     # used: shown by a visual, or built on by a used measure (every step)
     used: dict[str, str] = {lab: "shown in a visual" for lab in by_label if visuals.get(lab)}
+    try:
+        from .pbimpact import connected_usage
+        for lab, where in connected_usage(cat, report_key).items():
+            if lab in by_label:
+                visuals.setdefault(lab, []).extend(where)
+                used.setdefault(lab, "shown in a connected report")
+    except Exception:  # impact is optional to this table
+        pass
     frontier = list(used)
     while frontier:
         nxt = []
@@ -82,7 +91,7 @@ def measure_rows(cat: Catalogue, report_key: str) -> list[dict[str, Any]]:
                     "uses measures": ", ".join(uses.get(lab, [])), "uses columns": ", ".join(r["_columns"]),
                     "pages": ", ".join(attrs.get("used_on") or []), "visuals": len(visuals.get(lab, [])),
                     "shown in": "; ".join(visuals.get(lab, [])[:6]), "in glossary": r["key"] in glossary,
-                    "used": lab in used, "why": used.get(lab, "not used in this file"),
+                    "used": lab in used, "why": used.get(lab, "not used in scanned files"),
                     "description": r.get("description") or ""})
     return out
 

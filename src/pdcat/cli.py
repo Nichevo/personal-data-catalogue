@@ -59,9 +59,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
         jobs += [(r["name"], lambda r=r: scan_folder(cat, r["name"], r["path"], bool(r["recursive"]), report=report))
                  for r in app_folders]
         jobs += [(p.name, lambda p=p: scan_project(cat, p, report)) for p in [*app_libraries, *cfg.python]]  # last, so file links can match
+        from . import scanscope
         from .scan_files import scanned_recently
+        names = [n for n, _ in jobs]
+        chosen = scanscope.ask(cat, names) if args.ask else scanscope.apply(cat, names, wanted, everything=args.all)
+        if chosen != set(names):
+            print("Scope: " + ", ".join(n for n in names if n in chosen) + " (Settings › Scan on a schedule, or --all)")
         for name, run in jobs:
-            if wanted and name not in wanted:
+            if name not in chosen:
                 continue
             ago = None if args.force else scanned_recently(cat, name)
             if ago:
@@ -291,6 +296,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--database", action="append", metavar="DB", help="only this SQL Server database (repeatable)")
     s.add_argument("--plan", action="store_true", help="print the SQL Server queries that would run, without connecting")
     s.add_argument("--force", action="store_true", help="scan sources even if they were scanned in the last hour")
+    s.add_argument("--all", action="store_true", help="scan every source, ignoring the scope saved in Settings")
+    s.add_argument("--ask", action="store_true",
+                   help="pick the sources from a list; after 60s with no answer the saved scope (or everything) runs")
 
     pr = command("profile", "measure value ranges, nulls and common values of SQL tables (read-only, paced)",
                  "  pdcat profile dbo.SalesDaily dbo.Stores\n"

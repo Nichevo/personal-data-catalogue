@@ -611,6 +611,9 @@ ADDED_COLUMNS = {
     "libraries": {"role": "TEXT NOT NULL DEFAULT 'library'", "from_folder": "TEXT"},
     "item_info": {"relevance": "TEXT", "sap_name": "TEXT"},
     "column_info": {"sap_name": "TEXT", "business_name": "TEXT"},
+    # version 2.3
+    "metrics": {"usual_range": "TEXT", "range_note": "TEXT"},
+    "documents": {"path": "TEXT", "mtime": "REAL", "describes": "TEXT", "source": "TEXT"},
 }
 
 
@@ -1102,7 +1105,8 @@ class Catalogue:
                                    "WHERE kind != 'series_file'" + w, p):
             attrs = json.loads(a["attrs"])
             extra = " ".join(str(attrs.get(k, "")) for k in ("functions", "imports", "classes", "sql", "tags",
-                                                               "measures", "pattern"))
+                                                               "measures", "pattern", "owner", "audience", "app", "status",
+                                                               "workspace"))
             body = " ".join([a["description"] or "", info_by_key.get(a["key"], ""), extra,
                              " ".join(cols_by_key[a["key"]]), " ".join(notes_by_key[a["key"]])])
             rows.append((a["key"], a["kind"], a["source"], _searchable(a["name"]), _searchable(body)))
@@ -1134,7 +1138,8 @@ class Catalogue:
                 ("SELECT uid AS id, question AS name, COALESCE(answer, '') || ' ' || COALESCE(sql, '') || ' ' || tags "
                  "|| ' ' || COALESCE(caveats, '') AS body FROM questions", "q://", "question"),
                 ("SELECT uid AS id, name, COALESCE(definition, '') || ' ' || COALESCE(formula, '') || ' ' || tags "
-                 "|| ' ' || COALESCE(caveats, '') AS body FROM metrics", "metric://", "metric"),
+                 "|| ' ' || COALESCE(caveats, '') || ' ' || COALESCE(usual_range, '') || ' ' || COALESCE(range_note, '') "
+                 "AS body FROM metrics", "metric://", "metric"),
                 ("SELECT uid AS id, name, COALESCE(description, '') || ' ' || COALESCE(project, '') || ' ' || "
                  "COALESCE(entity, '') || ' ' || COALESCE(expression, '') AS body FROM features WHERE state != 'rejected'",
                  "feature://", "feature"),
