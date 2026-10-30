@@ -123,3 +123,21 @@ def test_no_inputs_means_no_estimate(catalogue):
     uid = save_metric(catalogue, "Mystery", formula="something / else")
     assert MV.estimate(catalogue, get_metric(catalogue, uid)) is None
     assert MV.usual_values(catalogue, get_metric(catalogue, uid)) is None
+
+
+# ---- summaries ---------------------------------------------------------------------------------
+
+def test_summary_rows_and_totals(catalogue):
+    from pdcat import summaries as S
+    tables = S.table_rows(catalogue)
+    sales = next(r for r in tables if r["key"] == SALES)
+    assert sales["columns"] == 2 and sales["rows"] == 1200 and sales["Schema"] == "dbo" and sales["used by scripts"] >= 1
+    grouped = S.with_totals(tables, "Schema", S.COUNT_KEYS_TABLE, "table")
+    totals = [r for r in grouped if str(r["table"]).startswith("Total")]
+    assert len(totals) == 3  # dbo, ml, and the whole table
+    assert totals[-1]["columns"] == sum(r["columns"] for r in tables)
+    py = S.python_rows(catalogue)
+    assert py[0]["project"] == "forecasting" and py[0]["scripts"] == 1 and py[0]["functions"] == 2
+    assert py[0]["tables read"] >= 1 and py[0]["third-party imports"] >= 1
+    assert S.powerbi_rows(catalogue) == []
+    assert S.with_totals([], "(none)", S.COUNT_KEYS_PBI, "report") == []

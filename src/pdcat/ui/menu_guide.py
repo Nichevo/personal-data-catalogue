@@ -32,6 +32,8 @@ GUIDE = {
                 "to open any of them.",
     "SQL queries": "Every SQL query found in code, workbooks, reports and documents, with where it's used, the "
                    "tables it touches and likely mistakes.",
+    "Summaries": "One row per Power BI file, table or Python project with its counts (pages, visuals, measures, "
+                 "columns, rows, scripts…), grouped by folder, workspace, database or project, with totals.",
     "Knowledge": "Business rules, definitions, how-tos and quirks, linked to the tables and scripts they're about. "
                  "Starter packs load general knowledge to build on.",
     "Business projects": "Group the tables, scripts, files, reports and design documents that serve one purpose, "

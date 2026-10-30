@@ -53,12 +53,16 @@ def sections() -> dict[str, dict[str, Page]]:
         setup_page,
         sources_extra,
         sql_pages,
+        summary_pages,
     )
     return {
         "🏠 Home": {"Home": home_page.home_page, "Menu guide": menu_guide.menu_guide_page},
         "🔎 Find": {"Search": search.search_page, "Tables and datasets": browse_pages.tables_page,
                    "Python": browse_pages.python_page, "Power BI": browse_pages.powerbi_page,
-                   "SQL queries": sql_pages.queries_page},
+                   "SQL queries": sql_pages.queries_page,
+                   "Summaries": combined("Summaries", "Counts per item with totals, grouped the way you choose.", {
+                       "Power BI": summary_pages.powerbi_summary, "Tables": summary_pages.tables_summary,
+                       "Python": summary_pages.python_summary})},
         "📚 Knowledge": {"Knowledge": knowledge_pages.knowledge_page, "Business projects": bproject_pages.bprojects_page,
                         "Question library": knowledge_pages.questions_page,
                         "Metric glossary": knowledge_pages.metrics_page, "ML model features": ml_pages.features_page,
