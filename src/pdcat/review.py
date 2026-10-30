@@ -22,7 +22,7 @@ from typing import Any
 
 import pandas as pd
 
-from . import freshness, naming, reviewanswers, rulechecks, sqlchecks, unknownfiles
+from . import freshness, naming, pbimpact, reviewanswers, rulechecks, sqlchecks, unknownfiles
 from .profiling import HINT_TEXT
 from .store import Catalogue, now
 
@@ -421,7 +421,8 @@ def _what_changed(cat: Catalogue, key: str, kind: str, attrs: dict) -> tuple[str
 
 # Checks that live next to the feature they belong to: each is function(cat, task) -> [Task].
 FEATURE_CHECKS: list[Callable[..., list[Task]]] = [unknownfiles.review_tasks, freshness.review_tasks,
-                                                   naming.review_tasks, sqlchecks.review_tasks, rulechecks.review_tasks]
+                                                   naming.review_tasks, sqlchecks.review_tasks, rulechecks.review_tasks,
+                                                   pbimpact.review_tasks]
 
 
 def _feature_candidates(cat: Catalogue, task) -> list[Task]:

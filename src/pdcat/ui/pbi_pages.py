@@ -75,9 +75,14 @@ def table_page(cat: Catalogue, key: str) -> None:
 
     st.subheader(f"Columns ({len(view['columns'])})")
     if view["columns"]:
-        st.dataframe(pd.DataFrame([{"column": c["name"], "type": c["data_type"],
-                                    "calculated": c["expression"] or ("yes" if c["calculated"] else "")}
-                                   for c in view["columns"]]), hide_index=True, width="stretch")
+        from .impact_pages import column_usage_frame
+        df = column_usage_frame(cat, view["report"]["key"], view["name"], view["columns"])
+        unused = int((df["used by"] == "not used in scanned files").sum()) if "used by" in df else 0
+        if unused:
+            st.caption(f"{unused} of {len(df)} columns are not used in scanned files (no visual, measure, calculated "
+                       "column or relationship in this model or its connected reports). They are kept: a report "
+                       "that wasn't scanned may use them.")
+        st.dataframe(df, hide_index=True, width="stretch")
     else:
         st.caption("No columns read. A .pbix needs pbixray to read its model.")
 
