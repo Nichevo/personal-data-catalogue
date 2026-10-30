@@ -47,3 +47,19 @@ def graph_view(cat: Catalogue, elements: list[dict[str, Any]], *, key: str, heig
         go(event["key"])
         st.session_state[f"show-functions-{event['key']}"] = True
         st.rerun()
+
+
+
+_subway = components.declare_component("pdcat_subway", path=str(Path(__file__).with_name("subway")))
+
+
+def show_svg(svg: str, *, key: str, max_height: int = 900) -> None:
+    """Show a drawing made in Python (the subway maps); clicking a name in it opens that item."""
+    event = _subway(svg=svg, height=max_height, key=key, default=None)
+    stamp = (event or {}).get("at")
+    if not event or stamp == st.session_state.get(f"{key}-last-event"):
+        return
+    st.session_state[f"{key}-last-event"] = stamp
+    if event.get("action") == "open" and event.get("key"):
+        go(event["key"])
+        st.rerun()

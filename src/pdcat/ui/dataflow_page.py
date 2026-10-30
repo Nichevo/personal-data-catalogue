@@ -41,6 +41,10 @@ def flow_block(cat: Catalogue, project: str | None, key: str, focus: str | None 
     level = "files" if focus else c1.radio(
         "Detail", ["files", "projects"], horizontal=True, key=f"{key}-level",
         format_func={"files": "Every script", "projects": "One box per project"}.get)
+    view = c1.radio("Draw as", ["boxes", "subway"], horizontal=True, key=f"{key}-view",
+                    format_func={"boxes": "Boxes and arrows", "subway": "Subway map"}.get,
+                    help="The subway map draws each table, file or outside source as a coloured line running "
+                         "down the page through the scripts and reports that use it.")
     show_old = c2.checkbox("Show old items", value=False, key=f"{key}-old",
                            help="Items marked old are hidden unless this is ticked.")
     g = flow_graph(cat, project, level=level, show_old=show_old, focus=focus)
@@ -53,12 +57,15 @@ def flow_block(cat: Catalogue, project: str | None, key: str, focus: str | None 
         st.markdown("**Starts from** " + " · ".join(f"{n} {SUMMARY_NAMES.get(k, k)}{'' if n == 1 else 's'}" for k, n in
                                                     sorted(counts.items(), key=lambda kv: -kv[1])))
     name = (focus or "").rsplit("/", 1)[-1].rsplit(".", 1)[0] or project or "all"
-    graph_view(cat, flow_elements(g), key=f"{key}-{project or 'all'}-{level}", name=f"dataflow-{name}",
-               height=420 if focus else 620)
-    st.caption("Data flows left to right. On the left are where it starts: 🌐 APIs, 🕸️ scraped web sites, "
-               "🛢️ database connections and tables, ⬇️ web downloads, ☁️ cloud storage, 📎 SharePoint, 🏭 SAP and "
-               "input files. Then the code and reports that use it (blue boxes, orange for reports), and the tables "
-               "and files they write. Dashed arrows read, red arrows write. Click a box to open it.")
+    if view == "subway":
+        subway_block(cat, g, key, name)
+    else:
+        graph_view(cat, flow_elements(g), key=f"{key}-{project or 'all'}-{level}", name=f"dataflow-{name}",
+                   height=420 if focus else 620)
+        st.caption("Data flows left to right. On the left are where it starts: 🌐 APIs, 🕸️ scraped web sites, "
+                   "🛢️ database connections and tables, ⬇️ web downloads, ☁️ cloud storage, 📎 SharePoint, 🏭 SAP and "
+                   "input files. Then the code and reports that use it (blue boxes, orange for reports), and the tables "
+                   "and files they write. Dashed arrows read, red arrows write. Click a box to open it.")
     dot, mermaid = to_dot(g), to_mermaid(g)
     d1, d2, d3 = st.columns(3)
     d1.download_button("⬇️ Mermaid (.mmd)", mermaid, f"dataflow-{name}.mmd", "text/plain", key=f"{key}-mmd",
@@ -86,3 +93,17 @@ def flow_block(cat: Catalogue, project: str | None, key: str, focus: str | None 
         c1, c2 = st.columns(2)
         c1.button(f"Open {r['source']}", on_click=go, args=(r["key"],), key=f"{key}-open-src")
         c2.button(f"Open {r['used by']}", on_click=go, args=(r["used_by_key"],), key=f"{key}-open-user")
+
+
+def subway_block(cat: Catalogue, g, key: str, name: str) -> None:
+    """The flow as a subway map: plain SVG, with a download."""
+    from pdcat.subway import subway_svg, table_rows
+
+    from .graphview import show_svg
+    svg = subway_svg(g, table_rows(cat))
+    show_svg(svg, key=f"{key}-subway")
+    st.caption("Each coloured line is one table (purple and blue), file (green) or outside source (orange). "
+               "▶ is where it comes in or is first written, the stations are the scripts and reports that use "
+               "it, top to bottom in run order, and ■ is where it ends. Dashed lines are data not in the "
+               "catalogue yet. Click a name to open it.")
+    st.download_button("⬇️ Subway map (.svg)", svg, f"subway-{name}.svg", "image/svg+xml", key=f"{key}-svg")
