@@ -48,7 +48,10 @@ def _show(cat: Catalogue, rows: list[dict], group_by: str, count_keys: tuple[str
     if sel:
         picked = table[sel[0]]
         name = picked.get(label)
-        hit = next((r for r in rows if r.get(label) == name and not str(name).startswith("Total")), None)
+
+        def same(r: dict) -> bool:
+            return all(str(r.get(k) or "") == str(v or "") for k, v in picked.items() if k != group_by)
+        hit = None if str(name).startswith("Total") else next((r for r in rows if same(r)), None)
         if hit and hit.get("key"):
             go(hit["key"])
             st.rerun()

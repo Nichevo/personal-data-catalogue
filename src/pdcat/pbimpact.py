@@ -100,10 +100,13 @@ def forget_model(cat: Catalogue, thin_key: str) -> None:
         cat.set_setting(MATCHES, manual)
 
 
-def connected_reports(cat: Catalogue, model_key: str) -> list[dict[str, Any]]:
-    """The thin reports matched to this model: [{"key", "name", "how"}]."""
+def connected_reports(cat: Catalogue, model_key: str, matches: dict[str, dict] | None = None
+                      ) -> list[dict[str, Any]]:
+    """The thin reports matched to this model: [{"key", "name", "how"}]. Pass `matches` (model_matches) when
+    calling this for many models."""
+    matches = model_matches(cat) if matches is None else matches
     names = {r["key"]: r["name"] for r in cat.conn.execute("SELECT key, name FROM assets WHERE kind = 'report'")}
-    return [{"key": k, "name": names.get(k, k), "how": m["how"]} for k, m in model_matches(cat).items()
+    return [{"key": k, "name": names.get(k, k), "how": m["how"]} for k, m in matches.items()
             if m.get("model") == model_key]
 
 
@@ -113,7 +116,7 @@ def _label(table: str, name: str) -> str:
     return f"{table}[{name}]"
 
 
-def usage(cat: Catalogue, model_key: str) -> dict[str, Any]:
+def usage(cat: Catalogue, model_key: str, matches: dict[str, dict] | None = None) -> dict[str, Any]:
     """Everything the model's measures and columns are used by, across the model's own file and every
     connected report. {"reports": [{"key", "name"}], "measures": {Table[Name]: {...}}, "columns": {Table[Column]:
     {...}}, "tables": {name: {"used": bool, "columns_used": n, "columns": n}}}.
@@ -126,7 +129,7 @@ def usage(cat: Catalogue, model_key: str) -> dict[str, Any]:
         return {"reports": [], "measures": {}, "columns": {}, "tables": {}}
     a = model["attrs"]
     reports = [{"key": model_key, "name": model["name"]}] + [{"key": c["key"], "name": c["name"]}
-                                                           for c in connected_reports(cat, model_key)]
+                                                           for c in connected_reports(cat, model_key, matches)]
     measures: dict[str, dict[str, Any]] = {}
     names: dict[str, str] = {}
     for c in cat.children(model_key):
@@ -331,6 +334,7 @@ def unused_keys(cat: Catalogue, what: str) -> set[str]:
     tables, views, data files and series nothing reads), "reports" (never: a report is always shown)."""
     from .pbiobjects import query_key, table_key
     out: set[str] = set()
+    matches = model_matches(cat) if what != "sql" else {}
     if what == "sql":
         for r in cat.conn.execute("SELECT key FROM assets WHERE status = 'active' AND kind IN ('table', 'view', "
                                   "'data_file', 'file_series') AND key NOT IN (SELECT dst_key FROM links WHERE "
@@ -341,7 +345,7 @@ def unused_keys(cat: Catalogue, what: str) -> set[str]:
         a = json.loads(r["attrs"])
         if not a.get("tables"):
             continue
-        u = usage(cat, r["key"])
+        u = usage(cat, r["key"], matches)
         if what == "measures":
             out |= {m["key"] for m in u["measures"].values() if not m["used"]}
         elif what == "tables":
@@ -361,12 +365,13 @@ def column_rows(cat: Catalogue, old_versions: bool = False) -> list[dict[str, An
     from .groups import older_versions
     from .pbiobjects import table_key
     skip = set() if old_versions else older_versions(cat)
+    matches = model_matches(cat)
     out = []
     for r in cat.conn.execute("SELECT key, name, source, attrs FROM assets WHERE kind = 'report' AND status = 'active' "
                               "ORDER BY name"):
         if r["key"] in skip or not json.loads(r["attrs"]).get("tables"):
             continue
-        u = usage(cat, r["key"])
+        u = usage(cat, r["key"], matches)
         for lab, c in u["columns"].items():
             out.append({"key": table_key(r["key"], c["table"]), "column": c["column"], "table": c["table"],
                         "in": r["name"], "where": r["source"], "calculated": "yes" if c["calculated"] else "",
@@ -436,5 +441,6 @@ def review_tasks(cat: Catalogue, task) -> list:
                    "model file you scanned is older than the published one, scan the newer file."
                    if not first["own"] else ". The field may have been renamed or removed; the visual would show an "
                    "error.")
-        out.append(task("broken_visual", key, title, detail))
+        from .review import members_version
+        out.append(task("broken_visual", key, title, detail, version=members_version(fields)))
     return out

@@ -6,7 +6,7 @@ import streamlit as st
 from pdcat import documents as D
 from pdcat.store import Catalogue
 
-from .common import asset_button, go, icon
+from .common import asset_button, cached, go, icon
 
 MAX_SHOWN = 30_000
 
@@ -56,7 +56,6 @@ def folder_documents_box(cat: Catalogue, key: str, asset: dict) -> None:
     (whole folders get the role in Folder roles)."""
     from pathlib import Path
 
-    from pdcat.scanprogress import find_files
     source = asset["source"]
     docs = D.documents_in(cat, source)
     root = Path(asset["attrs"].get("path") or "")
@@ -73,11 +72,11 @@ def folder_documents_box(cat: Catalogue, key: str, asset: dict) -> None:
             c2.caption(f"{d['versions']} version(s) · " + (d["describes"] or "describes nothing yet"))
         if not root.is_dir():
             return
-        found, _ = find_files(root, D.DOC_SUFFIXES, bool(asset["attrs"].get("recursive", True)))
-        known = D.by_path(cat)
-        marked = D.design_files(cat)
-        candidates = sorted(p for paths in found.values() for p in paths
-                            if not p.name.startswith("~$") and D._norm(p) not in known and D._norm(p) not in marked)
+        if not st.toggle("Mark single files", key=f"mark-doc-look-{key}",
+                         help="Lists the Word, PowerPoint, Excel, PDF, Markdown and text files in this folder that "
+                              "aren't read yet (walks the folder once)."):
+            return
+        candidates = [Path(p) for p in _candidate_files(cat, str(root), bool(asset["attrs"].get("recursive", True)))]
         if not candidates:
             st.caption("No other document files in this folder." if docs else "No document files in this folder.")
             return
@@ -205,3 +204,17 @@ def in_documents_box(cat: Catalogue, key: str) -> None:
     for i, d in enumerate(docs[:4]):
         cols[i].button(f"📄 {d['title']}", key=f"indoc-{key}-{i}", on_click=go, args=(f"doc://{d['uid']}",),
                        type="tertiary")
+
+
+@cached
+def _candidate_files(cat: Catalogue, root: str, recursive: bool) -> list[str]:
+    """Document files in a folder that aren't read as documents yet (as strings, so the cache can keep them)."""
+    from pathlib import Path
+
+    from pdcat.folderroles import ignored_dirs
+    from pdcat.scanprogress import find_files
+    found, _ = find_files(Path(root), D.DOC_SUFFIXES, recursive, ignored_dirs(cat, root))
+    known = D.by_path(cat)
+    marked = D.design_files(cat)
+    return sorted(str(p) for paths in found.values() for p in paths
+                  if not p.name.startswith("~$") and D._norm(p) not in known and D._norm(p) not in marked)

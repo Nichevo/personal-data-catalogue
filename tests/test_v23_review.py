@@ -16,8 +16,8 @@ def by_rule(cat, rule):
     return {t["asset_key"]: t for t in open_tasks(cat, limit=10_000) if t["rule"] == rule}
 
 
-def _profile_with_hints(cat):
-    cat.save_profile(SALES, [
+def _profile_with_hints(cat, extra=()):
+    cat.save_profile(SALES, [*extra,
         {"name": "StoreId", "data_type": "int", "rows": 100, "nulls": 0, "distinct": 40, "min": 1, "max": 40},
         {"name": "SaleDate", "data_type": "int", "rows": 100, "nulls": 0, "distinct": 90, "min": 20250101,
          "max": 20251231, "hints": [{"code": "int_yyyymmdd", "text": "whole numbers that look like dates (YYYYMMDD)"}]},
@@ -59,8 +59,17 @@ def test_old_per_column_answers_carry_over_to_the_grouped_item(catalogue):
     catalogue.conn.commit()
     refresh_tasks(catalogue)
     assert SALES not in by_rule(catalogue, "data_type")
-    row = catalogue.conn.execute("SELECT status FROM review_tasks WHERE id = ?", (f"data_type:{SALES}",)).fetchone()
+    row = catalogue.conn.execute("SELECT id, status FROM review_tasks WHERE id LIKE ?",
+                                 (f"data_type:{SALES}:#%",)).fetchone()
     assert row["status"] == "dismissed"
+    # a new column failing the check is a new question: the item comes back open under a new mark
+    _profile_with_hints(catalogue, extra=[{"name": "Code", "data_type": "nvarchar", "rows": 100, "nulls": 0,
+                                           "distinct": 100, "hints": [{"code": "text_numbers",
+                                                                       "text": "text that holds numbers"}]}])
+    refresh_tasks(catalogue)
+    rows = catalogue.conn.execute("SELECT id, status FROM review_tasks WHERE id LIKE ? ORDER BY created_at",
+                                  (f"data_type:{SALES}:#%",)).fetchall()
+    assert [r["status"] for r in rows] == ["dismissed", "open"] and rows[0]["id"] != rows[1]["id"]
 
 
 def test_sensitive_columns_one_item_per_table_with_table_answers(catalogue):

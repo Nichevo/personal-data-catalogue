@@ -48,6 +48,7 @@ def review_page(cat: Catalogue) -> None:
             sel = event.selection.rows if event else []
             if sel:
                 st.session_state["review-rule"] = by_rule[sel[0]]["rule"]
+                st.session_state["review-rule-box"] = by_rule[sel[0]]["rule"]  # the selectbox below reads this
                 st.session_state.pop("review-by-rule", None)
                 st.rerun()
     top = [t for t in all_open if t["category"] != "docs"][:5] or all_open[:5]
@@ -60,8 +61,9 @@ def review_page(cat: Catalogue) -> None:
     category = f1.selectbox("Type", ["All", *CATEGORY_LABELS], format_func=lambda c: CATEGORY_LABELS.get(c, c))
     rules = ["All", *RULES]
     picked_rule = st.session_state.get("review-rule", "All")
-    rule = f2.selectbox("Check", rules, index=rules.index(picked_rule) if picked_rule in rules else 0,
-                        format_func=lambda r: RULES[r][0] if r in RULES else r, key="review-rule-box")
+    if st.session_state.get("review-rule-box") not in rules:
+        st.session_state["review-rule-box"] = picked_rule if picked_rule in rules else "All"
+    rule = f2.selectbox("Check", rules, format_func=lambda r: RULES[r][0] if r in RULES else r, key="review-rule-box")
     st.session_state["review-rule"] = rule
     sort = f3.selectbox("Sort", list(SORTS))
     only_used = f4.checkbox("Only items my code uses", help="Handy on a large database: start with what you rely on.")
@@ -272,7 +274,6 @@ def _sensitive_actions(cat: Catalogue, t: dict) -> bool:
         return True
     if c3.button("None of these are sensitive", key=f"sensno-{tid}"):
         RA.answer_table_sensitive(cat, key, cols, sensitive=False)
-        RA.answer_sensitive(cat, key, cols, sensitive=False)
         set_task_status(cat, tid, "dismissed")
         st.rerun()
         return True
@@ -317,11 +318,11 @@ def _description_actions(cat: Catalogue, t: dict) -> bool:
     return suggestions_editor(cat, key, tid)
 
 
-def suggestions_editor(cat: Catalogue, key: str, widget: str) -> bool:
+def suggestions_editor(cat: Catalogue, key: str, widget: str, rows: list[dict] | None = None) -> bool:
     """A table of suggested column descriptions with tick boxes; Accept writes the ticked ones (and, if asked,
     every other undescribed column with the same name). Returns True after accepting."""
     from pdcat import describedrafts as DD
-    rows = DD.column_suggestions(cat, key)
+    rows = DD.column_suggestions(cat, key) if rows is None else rows
     if not rows:
         return False
     st.caption(f"Suggested descriptions for {len(rows)} column(s). Edit the text, untick what's wrong, then Accept.")

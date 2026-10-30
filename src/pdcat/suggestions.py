@@ -215,6 +215,7 @@ def _load_handlers() -> None:
         colrenames,
         commentdrafts,
         copilot_roundtrip,
+        documents,
         folderroles,
         gitinfo,
         groups,

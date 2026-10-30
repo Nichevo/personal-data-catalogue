@@ -238,12 +238,28 @@ def _norm(path: str) -> str:
 
 def design_folders(cat: Catalogue, root: Path) -> list[Path]:
     """Folders under root with the confirmed "design" role (root itself included when it has it)."""
-    from .folderroles import norm, stored
+    import os
+
+    from .folderroles import MAX_DEPTH, norm, role_from_name, stored
     base = norm(root)
-    out = []
-    for k, v in stored(cat).items():
-        if v.get("role") == "design" and v.get("confirmed") and (k == base or k.startswith(base + "/")):
-            out.append(root / k[len(base) + 1:] if k != base else root)
+    wanted = {k for k, v in stored(cat).items() if v.get("role") == "design" and v.get("confirmed")
+              and (k == base or k.startswith(base + "/"))}
+    if not wanted:
+        return []
+    out = [root] if base in wanted else []
+    # stored keys are lower-cased, so walk the real folders (which may be Design/ or Specs/) and compare
+    for dirpath, dirnames, _ in os.walk(root):
+        depth = len(Path(dirpath).relative_to(root).parts)
+        keep = []
+        for d in sorted(dirnames):
+            p = Path(dirpath) / d
+            if norm(p) in wanted:
+                out.append(p)
+            if depth + 1 < MAX_DEPTH and not d.startswith(".") and role_from_name(d) != "ignore":
+                keep.append(d)
+        dirnames[:] = keep
+        if len(out) >= len(wanted):
+            break
     return out
 
 

@@ -316,7 +316,7 @@ def suggested_descriptions_box(cat: Catalogue, key: str, columns) -> None:
         return
     with st.expander(f"💡 Suggested descriptions for {len(rows)} column(s)"):
         from .review_pages import suggestions_editor
-        suggestions_editor(cat, key, f"page-{key}")
+        suggestions_editor(cat, key, f"page-{key}", rows)
 
 
 def columns_section(cat: Catalogue, key: str, columns) -> None:

@@ -132,9 +132,12 @@ def answer_table_sensitive(cat: Catalogue, key: str, columns: list[str], *, sens
         set_item_info(cat, key, sensitive=True)
         _count_names(cat, columns, "yes")
     else:
+        from .curation import dismiss_sensitive_suggestion
         tables = set(cat.setting(SENSITIVE_TABLES_NO, []))
         tables.add(key)
         cat.set_setting(SENSITIVE_TABLES_NO, sorted(tables))
+        for col in columns:
+            dismiss_sensitive_suggestion(cat, key, col)
         _count_names(cat, columns, "no")
 
 

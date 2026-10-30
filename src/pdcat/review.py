@@ -14,6 +14,7 @@ import json
 import math
 import re
 import warnings
+import zlib
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -105,12 +106,22 @@ def refresh_tasks(cat: Catalogue) -> dict[str, int]:
     return {"open": len(open_tasks(cat, limit=100_000)), "new": opened, "closed": closed}
 
 
+def members_version(names: list[str]) -> str:
+    """A short mark for the set of columns (or fields) a grouped item covers: when the set changes, the item gets
+    a new id, so one you dismissed comes back when a new column starts failing the check."""
+    return f"#{zlib.crc32('|'.join(sorted(set(names))).encode('utf-8')):08x}"
+
+
 def _carried_over(existing: dict[str, dict], t: Task) -> str:
     """A grouped item (one per table) starts out dismissed or done when every per-column item it replaces was
-    answered that way, so nothing you already dealt with comes back."""
+    answered that way, so nothing you already dealt with comes back. Earlier grouped versions (ids ending in a
+    #mark) don't count: a changed set of columns is a new question."""
     if t.rule not in GROUPED:
         return "open"
-    olds = [r for tid, r in existing.items() if tid.startswith(f"{t.rule}:{t.asset_key}:") and tid != t.id]
+    prefix = f"{t.rule}:{t.asset_key}:"
+    if any(tid.startswith(prefix + "#") and tid != t.id for tid in existing):
+        return "open"  # the per-column answers were carried into an earlier grouped item; this is a new set
+    olds = [r for tid, r in existing.items() if tid.startswith(prefix) and tid != t.id]
     if olds and all(r["status"] in ("dismissed", "done") for r in olds):
         return "dismissed" if all(r["status"] == "dismissed" for r in olds) else "done"
     return "open"
@@ -289,8 +300,8 @@ def _candidates(cat: Catalogue) -> list[Task]:
     tasks: list[Task] = []
     for key, a in assets.items():
         kind, attrs, name = a["kind"], a["attrs"], a["name"]
-        if kind in ("database", "folder", "project"):
-            continue
+        if kind in ("database", "folder", "project", "report_ref"):
+            continue  # register rows (2.3) are context, not things to document or check
 
         if a["status"] == "missing":
             if notes_on[key] or used_by[key]:
@@ -455,7 +466,7 @@ def _profile_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: C
                             f"{top}. " + "; ".join(f"{h['column']} ({h['declared'] or '?'}): {h['text']}"
                                                    for h in found[:6]) + (" …" if len(found) > 6 else "")
                             + ". Fix the types at the source, or answer by design for the table, a column, or "
-                            "the pattern everywhere."))
+                            "the pattern everywhere.", version=members_version([h["column"] for h in found])))
         f = freshness(cat, key)
         if f and f["stale"] and (used_by[key] or (a["attrs"].get("row_count") or 0) > 0):
             out.append(task("stale_data", key, f"{a['name']}: newest {f['column']} is {f['latest']}",
@@ -480,7 +491,8 @@ def _profile_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: C
         out.append(task("sensitive", key, f"{len(names)} column(s) in {cols[0]['item']} may hold personal data",
                         ", ".join(names[:10]) + (" …" if len(names) > 10 else "")
                         + (f". You marked {', '.join(known[:4])} sensitive elsewhere." if known else "")
-                        + " Mark them sensitive (values are then never kept or exported), say none are, or pick."))
+                        + " Mark them sensitive (values are then never kept or exported), say none are, or pick.",
+                        version=members_version(names)))
     from .duplicates import report
     for group in report(cat)["same_file"]:
         first, *copies = group["files"]
