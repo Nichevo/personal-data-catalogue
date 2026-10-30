@@ -69,13 +69,19 @@ def powerbi_page(cat: Catalogue) -> None:
     from pdcat.pbiobjects import all_objects
     page_title("Power BI")
     c1, c2 = st.columns([3, 1.3], vertical_alignment="center")
-    view = c1.radio("Show", ["Reports", "Model tables", "Queries", "Measures"], horizontal=True,
+    view = c1.radio("Show", ["Reports", "Model tables", "Queries", "Measures", "Register"], horizontal=True,
                     key="browse-pbi-view", label_visibility="collapsed")
     with c2:
         old = _old_box("browse-old-pbi", "a report (same folder, names that start the same)")
     if view == "Reports":
         st.caption("Every Power BI report, the current version of each. Pick a row to open it.")
         _browse(cat, "Power BI reports", ("report",), "report name or any word", "Folder or database", old)
+        return
+    if view == "Register":
+        st.caption("The Power BI report register: published reports with their owners, audience, app and status, "
+                   "each matched to the scanned .pbix of the same name.")
+        from .register_pages import register_view
+        register_view(cat)
         return
     if view == "Measures":
         st.caption("Every measure in every report. Pick a row to open it.")

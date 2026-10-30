@@ -31,6 +31,7 @@ FEATURES: dict[str, str] = {
     "learned_joins": "Learn usual joins from your queries",
     "freshness": "Track whether output files keep refreshing",
     "bproject_folders": "Add new files to business projects that follow a folder",
+    "report_register": "Read the Power BI report register again after each scan and match its rows to reports",
 }
 
 

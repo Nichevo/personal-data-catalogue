@@ -13,6 +13,11 @@ def item_extras_top(cat: Catalogue, key: str, asset: dict) -> None:
     from pdcat.history import freshness
 
     from .bproject_pages import projects_box
+    from .register_pages import register_strip, use_as_register_box
+    if asset["kind"] == "report":
+        register_strip(cat, key, asset)
+    elif asset["kind"] == "data_file":
+        use_as_register_box(cat, key, asset)
     projects_box(cat, key)
     if asset["kind"] == "file_series":
         series_section(cat, key, asset)

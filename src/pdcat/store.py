@@ -1105,7 +1105,8 @@ class Catalogue:
                                    "WHERE kind != 'series_file'" + w, p):
             attrs = json.loads(a["attrs"])
             extra = " ".join(str(attrs.get(k, "")) for k in ("functions", "imports", "classes", "sql", "tags",
-                                                               "measures", "pattern"))
+                                                               "measures", "pattern", "owner", "audience", "app", "status",
+                                                               "workspace"))
             body = " ".join([a["description"] or "", info_by_key.get(a["key"], ""), extra,
                              " ".join(cols_by_key[a["key"]]), " ".join(notes_by_key[a["key"]])])
             rows.append((a["key"], a["kind"], a["source"], _searchable(a["name"]), _searchable(body)))

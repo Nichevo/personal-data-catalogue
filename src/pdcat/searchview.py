@@ -13,7 +13,7 @@ QUICK_FILTERS: dict[str, tuple[str, ...]] = {
     "Tables": ("table", "view", "procedure", "database"),
     "Files": ("data_file", "file_series", "folder"),
     "Code": ("script", "notebook", "sql_script", "sql_snippet", "query", "package", "project", "model"),
-    "Reports and measures": ("report", "workbook", "measure", "access_db"),
+    "Reports and measures": ("report", "workbook", "measure", "access_db", "report_ref"),
     "Metrics": ("metric",),
     "Knowledge": ("knowledge", "question", "feature", "key", "bproject", "document"),
 }

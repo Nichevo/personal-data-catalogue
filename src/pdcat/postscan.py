@@ -20,6 +20,7 @@ from . import (
     learned,
     metricfind,
     naming,
+    register,
     reportgroups,
     rulechecks,
     sapterms,
@@ -119,4 +120,5 @@ SWITCHABLE_STEPS: list[tuple[str, Callable[[Catalogue], int], str]] = [
     ("learned_joins", learned.learn_joins, "usual joins"),
     ("freshness", freshness.track, "freshness"),
     ("bproject_folders", bprojects.sync_folders, "new files in business project folders"),
+    ("report_register", register.refresh, "Power BI report register"),
 ]
