@@ -124,6 +124,7 @@ def schedule_section(cat: Catalogue) -> None:
     from .common import config_path
     st.subheader("Scan on a schedule")
     folder = Path(cat.path).parent
+    scope_picker(cat)
     if not T.available():
         st.caption("Windows only: creates a weekly Task Scheduler task that runs `pdcat scan` and then "
                    "`pdcat profile --queue`. On this machine, use cron to run those two commands.")
@@ -211,6 +212,37 @@ def backups_section(cat: Catalogue) -> None:
                 chosen = next(c for c in copies if c["file"] == pick)
                 safety = backup.restore(cat, chosen["path"])
                 st.success(f"Restored {pick}. What was there before is saved as {safety.name}.")
+
+
+def scope_picker(cat: Catalogue) -> None:
+    """Which sources `pdcat scan` covers when run with no names (the scheduled scan included)."""
+    from pdcat import scanscope
+
+    from .common import config_path
+    names = []
+    try:
+        from pdcat.config import find_config, load_config
+        names += load_config(find_config(config_path())).source_names()
+    except Exception:  # no config file: only the sources added in the app
+        pass
+    names += [f["name"] for f in cat.folders()] + [lib["name"] for lib in cat.libraries()]
+    names = sorted(set(names))
+    if not names:
+        return
+    scope = scanscope.saved(cat)
+    everything = st.checkbox("Scheduled and plain `pdcat scan` runs cover every source", value=scope is None,
+                             key="scope-all")
+    if everything:
+        if scope is not None:
+            scanscope.save(cat, None)
+            st.rerun()
+        return
+    picked = st.multiselect("Only these sources", names, default=[n for n in (scope or names) if n in names],
+                            key="scope-pick", help="`pdcat scan --all` still scans everything, and `--source` picks "
+                            "by hand. `pdcat scan --ask` shows this list and waits 60s for an answer.")
+    if set(picked) != set(scope or []) and picked:
+        scanscope.save(cat, picked)
+        st.rerun()
 
 
 def review_section(cat: Catalogue) -> None:

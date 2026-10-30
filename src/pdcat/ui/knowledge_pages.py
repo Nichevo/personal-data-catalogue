@@ -253,6 +253,39 @@ def metric_form(cat: Catalogue, m: dict | None, prefill: dict | None = None) -> 
                 st.error(str(e))
 
 
+def usual_values_box(cat: Catalogue, m: dict) -> None:
+    """The range this metric usually takes: yours if you typed one, else estimated from the input columns'
+    profiles (see metricvalues)."""
+    from pdcat import metricvalues as MV
+    uv = MV.usual_values(cat, m)
+    with st.container(border=True):
+        st.markdown("**📐 Usual values**")
+        if uv is None:
+            st.caption("Nothing to go on yet: name the columns in the formula (Table.Column) and pick the tables "
+                       "it comes from, and profile those tables, or type the usual range below.")
+        elif uv["source"] == "yours":
+            st.markdown(f"{uv['text']}" + (f"  \n_{uv['note']}_" if uv["note"] else ""))
+            est = MV.estimate(cat, m)
+            if est and est.get("text"):
+                st.caption(f"Estimated from the data: {est['text']}")
+        else:
+            label = {"measured": "From the data", "estimated": "Estimated", "inputs": "Input ranges"}[uv["source"]]
+            st.markdown(f"{label}: {uv['text']}")
+            if uv["note"]:
+                st.caption(uv["note"])
+            if uv["estimate"] and len(uv["estimate"]["inputs"]) > 1:
+                st.caption("Inputs: " + "; ".join(f"{r['label']} {MV._range_text(r['low'], r['high'])}"
+                                                   for r in uv["estimate"]["inputs"] if r["low"] is not None))
+        with st.form(f"usual-{m['uid']}", border=False):
+            c1, c2 = st.columns([1, 2])
+            rng = c1.text_input("Usual range (yours)", value=m.get("usual_range") or "", placeholder="0.6 to 0.95")
+            note = c2.text_input("Note", value=m.get("range_note") or "",
+                                 placeholder="below 0.7 usually means a load failed")
+            if st.form_submit_button("Save"):
+                MV.set_usual_range(cat, m["uid"], rng, note)
+                st.rerun()
+
+
 def metric_page(cat: Catalogue, key: str) -> None:
     m = K.get_metric(cat, key.removeprefix("metric://"))
     if not m:
@@ -269,6 +302,7 @@ def metric_page(cat: Catalogue, key: str) -> None:
         st.warning(m["caveats"])
     if m["from_measure"]:
         st.caption(f"From Power BI measure `{m['from_measure']}`")
+    usual_values_box(cat, m)
     if m["sources"]:
         st.subheader("Comes from")
         for i, s in enumerate(m["sources"]):

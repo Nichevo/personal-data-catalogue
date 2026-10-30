@@ -165,6 +165,7 @@ def business_rules(p: Pack) -> str:
 def glossary(p: Pack) -> str:
     from .keys import key_columns, list_keys
     from .knowledge import list_metrics
+    from .metricvalues import usual_values
     out = ["# Glossary", ""]
     metrics = list_metrics(p.cat)
     if metrics:
@@ -181,6 +182,12 @@ def glossary(p: Pack) -> str:
                 out += [f"Owner: {m['owner']}.", ""]
             if m["caveats"]:
                 out += [f"Caveats: {m['caveats']}", ""]
+            usual = p.safely(f"usual values of {m['name']}", usual_values, p.cat, m, default=None)
+            if usual:
+                label = {"yours": "Usual values", "measured": "Usual values (from the data)",
+                         "estimated": "Usual values (estimated from the data, not measured)",
+                         "inputs": "Usual values of the inputs"}.get(usual["source"], "Usual values")
+                out += [f"{label}: {usual['text']}." + (f" {usual['note']}" if usual["note"] else ""), ""]
     keys = list_keys(p.cat)
     if keys:
         out += ["## Company-wide keys", "",

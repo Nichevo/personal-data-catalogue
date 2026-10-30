@@ -63,6 +63,7 @@ def folders_page(cat: Catalogue) -> None:
             roles_editor(cat, f["path"], f["name"])
 
     st.subheader("Add a folder")
+    bulk_add(cat)
     path = st.text_input("Folder path", placeholder=r"C:\Users\you\data\extracts", key="add-folder-path",
                          help="Tip: in File Explorer, Shift + right-click the folder → Copy as path.").strip().strip('"')
     found = None
@@ -96,6 +97,94 @@ def folders_page(cat: Catalogue) -> None:
             if with_code:
                 add_code_projects(cat, name, path, found, status)
             _run_folder_scan(cat, scan_folder, name, path, recursive, status)
+
+
+def bulk_add(cat: Catalogue) -> None:
+    """Several folders at once: paste a list, pick the subfolders of a parent, or load a folder list file. One
+    preview table to look over, then one button scans them one after another."""
+    import pandas as pd
+
+    from pdcat import bulkfolders as B
+    with st.expander("➕ Add several folders at once"):
+        tab1, tab2, tab3 = st.tabs(["Paste a list", "Subfolders of a parent", "From a file"])
+        rows: list[dict] = []
+        with tab1:
+            text = st.text_area("One folder path per line", key="bulk-paste", height=120,
+                                placeholder="C:\\data\\forecasting\nC:\\data\\pricing\n\\\\server\\share\\extracts")
+            if text.strip():
+                rows = [{"path": p, "name": "", "recursive": True} for p in B.parse_paths(text)]
+        with tab2:
+            parent = st.text_input("Parent folder", key="bulk-parent", placeholder=r"C:\data\projects",
+                                   help="Each folder directly inside it becomes a source of its own.").strip().strip('"')
+            if parent:
+                subs = B.subfolders(parent)
+                if subs:
+                    st.caption(f"{len(subs)} subfolder(s) found.")
+                    rows = [{"path": p, "name": "", "recursive": True} for p in subs]
+                else:
+                    st.error(f"No subfolders found at {parent}")
+        with tab3:
+            up = st.file_uploader("A text file with one path per line, or CSV with path, name, subfolders columns",
+                                  type=["txt", "csv"], key="bulk-file")
+            if up is not None:
+                rows = B.parse_list_file(up.getvalue())
+            st.download_button("⬇️ Export the folders already added (CSV)", B.export_list(cat), "pdcat-folders.csv",
+                               "text/csv", key="bulk-export")
+        if not rows:
+            return
+        with st.spinner("Looking at the folders …"):
+            preview = _bulk_preview(str(cat.path), cat.revision(), tuple((r["path"], r.get("name", ""), r.get("recursive", True))
+                                                                    for r in rows))
+        if not preview:
+            return
+        df = pd.DataFrame(preview)
+        edited = st.data_editor(df, hide_index=True, width="stretch", key="bulk-table",
+                                column_config={"add": st.column_config.CheckboxColumn(width="small"),
+                                               "subfolders": st.column_config.CheckboxColumn(width="small"),
+                                               "exists": st.column_config.CheckboxColumn(width="small", disabled=True)},
+                                disabled=["path", "exists", "files", "size", "overlaps", "treated as"])
+        st.caption("Edit names, untick what you don't want. Folders that overlap one already added would catalogue "
+                   "the same files twice. Each folder is scanned in turn; stopping keeps what was read.")
+        with_code = st.checkbox("Also catalogue the Python code in them", value=True, key="bulk-code")
+        picked = [r for _, r in edited.iterrows() if r["add"] and r["exists"]]
+        if st.button(f"Add and scan {len(picked)} folder(s)", type="primary", disabled=not picked, key="bulk-go"):
+            from pdcat.folderroles import analyse, save
+            from pdcat.scan_files import scan_folder
+            taken = set(cat.sources()) | {f["name"] for f in cat.folders()} | {MANUAL_SOURCE}
+            status = ScanStatus(f"Adding {len(picked)} folders …")
+            done = 0
+            for r in picked:
+                name = str(r["name"]).strip().replace("/", "-") or B.suggest_name(str(r["path"]), taken)
+                if name in taken:
+                    name = B.suggest_name(name, taken)
+                taken.add(name)
+                path = str(r["path"])
+                status.phase(f"{name} ({done + 1} of {len(picked)}): looking at the folder …")
+                found = analyse(path)
+                cat.add_folder(name, path, bool(r["subfolders"]))
+                save(cat, path, found["roles"], confirmed=False, mode=found["mode"])
+                if with_code:
+                    add_code_projects(cat, name, path, found, status)
+                status.phase(f"{name} ({done + 1} of {len(picked)}): scanning {path} …")
+                try:
+                    scan_folder(cat, name, path, bool(r["subfolders"]), report=status)
+                except Exception as e:  # one unreadable folder must not stop the rest
+                    status.note(f"{name}: scan failed: {type(e).__name__}: {e}")
+                done += 1
+            after_scan_with_status(cat, status)
+            status.done(f"Added and scanned {done} folder(s)")
+            st.session_state["last-folder-scan"] = f"Added and scanned {done} folder(s) in {status.took()}."
+            st.session_state.pop("bulk-table", None)
+            st.rerun()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _bulk_preview(db: str, revision: int, rows: tuple) -> list[dict]:
+    """Kept a few minutes: counting files on a network drive is slow and the page redraws on every click."""
+    from pdcat import bulkfolders as B
+    from pdcat.store import Catalogue
+    with Catalogue(db) as cat:
+        return B.preview(cat, [{"path": p, "name": n, "recursive": r} for p, n, r in rows])
 
 
 def sampling_note(cat: Catalogue, name: str, i: int) -> None:
