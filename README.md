@@ -165,6 +165,17 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.4.1
+
+- **Inside a script as a subway map.** On a Python script's page, under **Inside this script**,
+  pick **Draw as: Subway map**. The functions run top to bottom in call order (a function sits
+  above the ones it calls). Each function that nothing else in the view calls starts a coloured
+  line through everything it calls, so a helper used from two places is an interchange where two
+  lines meet. Tables and files are lines too, as on the data flow map. Works for the whole script
+  and when you zoom into one function (that function gets a yellow card). Laid out automatically;
+  click a table, file or another file's function to open it; the map downloads as SVG.
+- No rescan is needed.
+
 ## New in version 2.4
 
 - **About page** under Home: what the app is, its version, a subway map of how its parts fit

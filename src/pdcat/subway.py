@@ -24,7 +24,10 @@ FAMILIES = {
     "table": ["#5b3fd1", "#3f5bd1", "#8e5bd9", "#2f7fd6", "#6a4fb3", "#4a3fa0"],
     "file": ["#2fa77a", "#1f8f8f", "#5cbf6a", "#3a9fb8", "#4f9f4f", "#2a7f6a"],
     "outside": ["#e0901f", "#d9662f", "#c7a21f", "#d14f6a", "#b8732a", "#e07a5f"],
+    # Inside a script: one line per starting function, through everything it calls.
+    "route": ["#c2185b", "#455a64", "#7b1fa2", "#00838f", "#ad1457", "#5d4037"],
 }
+FUNCTION_KINDS = ("function", "focus", "libfn", "external")
 ICONS = {"table": "🛢️", "file": "📄"}
 
 TRACK = 16        # gap between tracks
@@ -53,7 +56,7 @@ class Line:
 
 
 def _family(kind: str) -> str:
-    return kind if kind in ("table", "file") else "outside"
+    return kind if kind in ("table", "file", "route") else "outside"
 
 
 def station_order(stations: set[str], after: dict[str, set[str]], names: dict[str, str]) -> list[str]:
@@ -243,21 +246,76 @@ def subway_svg(g: Graph, rows: dict[str, int] | None = None, *, width: int = 900
             out.append(f'<circle cx="{_x(ln.track)}" cy="{y}" r="5" fill="#fff" stroke="{ln.colour}" '
                        f'stroke-width="3"><title>{escape(ln.label)}</title></circle>')
         n = lay["nodes"][s]
-        r, wr = len(lay["reads"][s]), len(lay["writes"][s])
-        sub = " · ".join(p for p in (f"reads {r}" if r else "", f"writes {wr}" if wr else "",
+        r = sum(1 for d in lay["reads"][s] if lines[d].kind != "route")
+        wr = len(lay["writes"][s])
+        calls = sum(1 for (a, _, rel) in g.edges if rel == "runs" and a == s) if n["kind"] in FUNCTION_KINDS else 0
+        sub = " · ".join(p for p in (f"calls {calls}" if calls else "", f"reads {r}" if r else "",
+                                     f"writes {wr}" if wr else "",
                                      (n.get("group") or "").lstrip("📁📊 ").strip()) if p)
-        title = n["label"].rsplit("/", 1)[-1]
+        title = n["label"] if n["kind"] in FUNCTION_KINDS else n["label"].rsplit("/", 1)[-1]
         card_w = max(len(title) * 8.4, len(sub) * 6.6) + 28
+        edge = ' stroke="#b45309" stroke-width="2"' if n["kind"] == "focus" else ' stroke="#e2e2ea"'
+        card_fill = "#fff7e0" if n["kind"] == "focus" else "#fff"
         out.append(f'<line x1="{xs[-1] + 10}" y1="{y}" x2="{lx - 4}" y2="{y}" stroke="#3a3a4a" '
                    f'stroke-opacity="0.25"/>')
         out.append(_link(n.get("key"), f'<g filter="url(#lift)"><rect x="{lx - 4}" y="{y - 24}" width="{card_w:.0f}" '
-                                       f'height="48" rx="6" fill="#fff" stroke="#e2e2ea"/></g>'
+                                       f'height="48" rx="6" fill="{card_fill}"{edge}/></g>'
                                        f'<text x="{lx + 8}" y="{y - 4}" font-size="15" font-weight="600" '
                                        f'fill="#1f1f2e">{escape(title)}</text>'
                                        f'<text x="{lx + 8}" y="{y + 14}" font-size="12" fill="#6b6b7b">'
                                        f'{escape(sub)}</text>'))
     out.append("</svg>")
     return "".join(out)
+
+
+def function_subway(g: Graph, key: str | None = None) -> Graph:
+    """The inside of a script (a function graph from codemap.function_graph) in subway terms.
+
+    Stations are the functions, top to bottom in call order (a function sits above the ones it calls).
+    Each function that nothing here calls starts a line (a route) that stops at every function it reaches,
+    so a helper used from two places is an interchange where two routes meet. Tables and files are lines
+    too, as on the data flow map: they start where they are first written and stop at every function
+    reading or writing them. Clicking a function from another file opens that file."""
+    out = Graph()
+    stations = sorted((n for n, d in g.nodes.items() if d["kind"] in FUNCTION_KINDS),
+                      key=lambda n: g.nodes[n]["label"].lower())
+    children: dict[str, set[str]] = defaultdict(set)
+    for s in stations:
+        d = g.nodes[s]
+        owner = s.split("::", 1)[0] if "::" in s else None
+        out.nodes[s] = {**d, "key": owner if owner and owner != key else None}
+    for (a, b, rel) in g.edges:
+        if rel == "call" and a in out.nodes and b in out.nodes and a != b:
+            children[a].add(b)
+            out.edges[(a, b, "runs")]
+        elif rel in ("reads", "writes") and a in out.nodes and b in g.nodes:
+            out.nodes[b] = {**g.nodes[b]}
+            out.edges[(b, a, "reads") if rel == "reads" else (a, b, "writes")]
+
+    def reach(start: str) -> set[str]:
+        seen, todo = {start}, [start]
+        while todo:
+            for c in children[todo.pop()] - seen:
+                seen.add(c)
+                todo.append(c)
+        return seen
+
+    called = {c for cs in children.values() for c in cs}
+    starts = [s for s in stations if s not in called]
+    reached: set[str] = set()
+    while True:
+        for s in starts:
+            stops = reach(s)
+            reached |= stops
+            label = g.nodes[s]["label"]
+            out.nodes[f"route:{s}"] = {"label": f"{label} and what it calls" if len(stops) > 1 else label,
+                                       "kind": "route", "group": None, "key": None}
+            for t in stops:
+                out.edges[(f"route:{s}", t, "reads")]
+        rest = [s for s in stations if s not in reached]
+        if not rest:
+            return out
+        starts = rest[:1]  # functions that only call each other in a circle: start a route at the first
 
 
 def table_rows(cat) -> dict[str, int]:

@@ -644,7 +644,8 @@ def function_graph(cat: Catalogue, key: str, focus: str | None = None, *, depth:
             da = assets.get(dk)
             label = da["name"] if da else d["ref"].split(":", 1)[-1]
             is_file = (da["kind"] == "data_file") if da else d["ref"].startswith("file:")
-            g.nodes[dk] = {"label": label, "kind": "file" if is_file else "table", "group": None}
+            g.nodes[dk] = {"label": label, "kind": "file" if is_file else "table", "group": None,
+                           "key": dk if da else None, "uncatalogued": da is None}
             g.edges[(nid, dk, d["relation"])]
 
     def expand(k: str, fn: str, levels: int, seen: set) -> None:
