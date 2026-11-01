@@ -255,7 +255,7 @@ def subway_svg(g: Graph, rows: dict[str, int] | None = None, *, width: int = 900
         title = n["label"] if n["kind"] in FUNCTION_KINDS else n["label"].rsplit("/", 1)[-1]
         card_w = max(len(title) * 8.4, len(sub) * 6.6) + 28
         edge = ' stroke="#b45309" stroke-width="2"' if n["kind"] == "focus" else ' stroke="#e2e2ea"'
-        card_fill = "#fff7e0" if n["kind"] == "focus" else "#fff"
+        card_fill = "#fff7e0" if n["kind"] == "focus" or n.get("focus") else ("#eeeef2" if n.get("older") else "#fff")
         out.append(f'<line x1="{xs[-1] + 10}" y1="{y}" x2="{lx - 4}" y2="{y}" stroke="#3a3a4a" '
                    f'stroke-opacity="0.25"/>')
         out.append(_link(n.get("key"), f'<g filter="url(#lift)"><rect x="{lx - 4}" y="{y - 24}" width="{card_w:.0f}" '

@@ -47,16 +47,15 @@ def base_name(stem: str) -> tuple[str, str]:
     return current.rstrip(" _-."), " ".join(p for p in label_parts if p)
 
 
-def find_versions(cat: Catalogue) -> int:
+def _buckets(cat: Catalogue, skip: set[str]) -> dict[tuple, list[dict]]:
+    """Scripts in one folder whose names are the same apart from a version or date at the end, keyed by
+    (parent, folder, base name, extension). Buckets too thin to call versions are left out."""
     rows = [dict(r) for r in cat.conn.execute(
         "SELECT key, name, source, parent, kind, attrs FROM assets WHERE kind IN ('script', 'notebook', 'sql_script') "
         "AND status = 'active'")]
-    excluded = groups.excluded(cat, "versions")
-    in_group = {r[0] for r in cat.conn.execute(
-        "SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid WHERE g.type = 'versions'")}
     by_base: dict[tuple, list[dict]] = defaultdict(list)
     for r in rows:
-        if r["key"] in excluded:
+        if r["key"] in skip:
             continue
         folder, _, file = r["name"].replace("\\", "/").rpartition("/")
         stem, dot, ext = file.rpartition(".")
@@ -64,16 +63,53 @@ def find_versions(cat: Catalogue) -> int:
         r["label"] = label or "plain"
         r["weak"] = bool(label) and bool(WEAK.fullmatch(stem[len(base):] or "x"))
         by_base[(r["parent"], folder.lower(), base.lower(), ext.lower())].append(r)
-    used = _used_by_others(cat)
-    scheduled = _scheduled(cat)
-    found = []
-    for (parent, folder, base, ext), members in by_base.items():
-        if len(members) < 2 or all(m["key"] in in_group for m in members):
+    out = {}
+    for k, members in by_base.items():
+        if len(members) < 2:
             continue
         if all(m["weak"] or m["label"] == "plain" for m in members) and sum(m["weak"] for m in members) < 2:
             continue  # "load_1.py" next to "load.py" alone is too thin to call versions
+        out[k] = members
+    return out
+
+
+def _group_name(members: list[dict], base: str, ext: str) -> str:
+    return f"{members[0]['name'].rsplit('/', 1)[0] + '/' if '/' in members[0]['name'] else ''}{base}.{ext}"
+
+
+def script_groups(cat: Catalogue, skip: set[str] = frozenset()) -> list[dict]:
+    """Script versions grouped automatically (version 2.4.1), the same shape as reportgroups.find_groups.
+    The current one is the one other code uses, or a schedule runs, or else the newest. When two or more are
+    used by other code or run on a schedule, they may all be live: those stay a suggestion for you to decide."""
+    used, scheduled = _used_by_others(cat), _scheduled(cat)
+    out = []
+    for (_, _, base, ext), members in _buckets(cat, skip).items():
         main, why = _pick_main(members, used, scheduled)
-        name = f"{members[0]['name'].rsplit('/', 1)[0] + '/' if '/' in members[0]['name'] else ''}{base}.{ext}"
+        if main is None:
+            if sum(m["key"] in used for m in members) > 1 or sum(m["key"] in scheduled for m in members) > 1:
+                continue
+            best = max(members, key=lambda m: (json.loads(m["attrs"] or "{}").get("mtime") or 0,
+                                               m["label"] == "plain", m["name"]))
+            main, why = best["key"], "newest by date and name"
+        out.append({"members": {m["key"]: m["label"] for m in sorted(members, key=lambda m: m["name"].lower())},
+                    "main_key": main, "why": why, "kind": members[0]["kind"],
+                    "name": _short(main, members),
+                    "matched_by": "names that differ only by a version or date at the end"})
+    return out
+
+
+def find_versions(cat: Catalogue) -> int:
+    excluded = groups.excluded(cat, "versions")
+    in_group = {r[0] for r in cat.conn.execute(
+        "SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid WHERE g.type = 'versions'")}
+    used = _used_by_others(cat)
+    scheduled = _scheduled(cat)
+    found = []
+    for (parent, folder, base, ext), members in _buckets(cat, excluded).items():
+        if all(m["key"] in in_group for m in members):
+            continue
+        main, why = _pick_main(members, used, scheduled)
+        name = _group_name(members, base, ext)
         detail = ", ".join(sorted(m["name"].rsplit("/", 1)[-1] for m in members))
         found.append({
             "id": f"versions:{parent}:{folder}/{base}.{ext}", "subject": main or members[0]["key"],

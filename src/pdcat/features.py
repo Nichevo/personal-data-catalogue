@@ -9,7 +9,8 @@ FEATURES: dict[str, str] = {
     "relationships": "Suggest relationships between tables from joins in SQL and matching key names",
     "called_by": "Find scripts that run other scripts (subprocess, python -m, %run)",
     "more_outputs": "Follow file paths through function arguments, settings modules and config dictionaries",
-    "script_versions": "Group versions of a script (forecast_v2.py, forecast_v3.py)",
+    "script_versions": "Group versions of a script (forecast_v2.py, forecast_v3.py) automatically and show only "
+                       "the current one",
     "report_versions": "Group versions of a Power BI report or Excel workbook automatically (same folder, names "
                        "that start the same) and show only the current one",
     "families": "Group files that are the same data at different grains (SOH_D, SOH_W, SOH_M)",

@@ -324,12 +324,12 @@ def _run_links(cat: Catalogue) -> dict[str, list[str]]:
     return out
 
 
-def hidden_from_map(cat: Catalogue, show_old: bool = False) -> set[str]:
-    """Items the code map leaves out: not relevant, older versions of scripts, and (unless show_old)
-    items marked old or inside a project marked old."""
+def hidden_from_map(cat: Catalogue, show_old: bool = False, old_versions: bool = False) -> set[str]:
+    """Items the code map leaves out: not relevant, older versions of scripts and reports (unless
+    old_versions), and (unless show_old) items marked old or inside a project marked old."""
     from .curation import hidden_keys
     from .groups import older_versions
-    hidden = hidden_keys(cat, old=not show_old) | older_versions(cat)
+    hidden = hidden_keys(cat, old=not show_old) | (set() if old_versions else older_versions(cat))
     if not show_old:
         from .folderroles import archived
         hidden |= archived(cat)  # inside a folder whose role is archive
@@ -625,14 +625,16 @@ def function_graph(cat: Catalogue, key: str, focus: str | None = None, *, depth:
     focus="fn": that function, what it calls down to `depth` levels (following calls into
     other catalogued files too), and what calls it.
     """
+    from .groups import older_versions
     idx = index or CodeIndex(cat)
     assets = _assets(cat)
+    older = older_versions(cat)
     g = Graph()
 
     def node(k: str, fn: str, *, is_focus: bool = False) -> str:
         nid = _fn_id(k, fn)
         a = idx.assets.get(k) or assets.get(k) or {"name": k, "source": ""}
-        group = a["name"] if k == key else f"{a['source']}: {a['name']}"
+        group = (a["name"] if k == key else f"{a['source']}: {a['name']}") + (" (older version)" if k in older else "")
         kind = "focus" if is_focus else ("function" if k == key else "libfn")
         if nid not in g.nodes or is_focus:
             g.nodes[nid] = {"label": fn, "kind": kind, "group": group}

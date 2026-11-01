@@ -174,7 +174,16 @@ one at a time, and every query is logged:
   lines meet. Tables and files are lines too, as on the data flow map. Works for the whole script
   and when you zoom into one function (that function gets a yellow card). Laid out automatically;
   click a table, file or another file's function to open it; the map downloads as SVG.
-- No rescan is needed.
+- **Script versions grouped automatically.** Scripts in one folder whose names differ only by a
+  version or date at the end (forecast_v2.py, forecast_v3.py, forecast_old.py) are now grouped
+  without waiting for a yes, like reports in 2.17. The current one is the one other code uses or a
+  schedule runs, else the newest; when two versions are both in use it stays a suggestion. Older
+  versions no longer show on the code map or the data flow (boxes or subway map). Data flow has a
+  **Show older versions** switch that draws them too, labelled "(older version)" with a grey card
+  on the subway map; an older version's own page still shows its flow. Functions from an older
+  file on the inside-a-script view are labelled the same way. Change the current version or break
+  a group up on the group's page; the Settings switch for script versions turns it off.
+- No rescan is needed: versions are grouped once when the app opens.
 
 ## New in version 2.4
 
