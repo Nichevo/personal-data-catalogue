@@ -242,7 +242,9 @@ FIELDS = ("name", "project", "description", "entity", "grain", "sources", "built
 JSON_FIELDS = {"sources", "models", "importance"}
 
 
-def save_feature(cat: Catalogue, name: str, uid: str | None = None, **fields: Any) -> str:
+def save_feature(cat: Catalogue, name: str, uid: str | None = None, reindex: bool = True, **fields: Any) -> str:
+    """Add or change a feature. `reindex=False` leaves the search index for the caller to rebuild once (rebuilding
+    it is a full pass over the catalogue, far too slow to do per feature in a big one)."""
     bad = set(fields) - set(FIELDS)
     if bad:
         raise ValueError(f"unknown field(s): {', '.join(sorted(bad))}")
@@ -265,7 +267,8 @@ def save_feature(cat: Catalogue, name: str, uid: str | None = None, **fields: An
             + ", ".join(f"{c} = excluded.{c}" for c in cols) + ", updated_at = excluded.updated_at",
             (uid, merged["name"], *(merged[c] for c in cols), (old or {}).get("author") or cat.author(),
              (old or {}).get("created_at") or ts, ts))
-    cat.rebuild_search()
+    if reindex:
+        cat.rebuild_search()
     return uid
 
 
@@ -346,20 +349,24 @@ def suggest_features(cat: Catalogue) -> int:
             for key in read:
                 cols = {c["name"].lower(): c["name"] for c in cat.columns(key)}
                 f["sources"] += [f"{key}#{cols[u.lower()]}" for u in f["uses"] if u.lower() in cols]
-    n = 0
+    n, changed = 0, False
     with cat.conn:
-        cat.conn.execute("DELETE FROM features WHERE state = 'suggested'")
+        removed = cat.conn.execute("DELETE FROM features WHERE state = 'suggested'").rowcount
     for ident, f in found.items():
         mine = known.get(ident)
         if mine and mine["state"] in ("confirmed", "rejected"):
             # Keep what you wrote, but bring model usage and importance up to date.
             if mine["state"] == "confirmed" and (f.get("models") or f.get("importance")):
-                save_feature(cat, mine["name"], mine["uid"], models=f.get("models", []),
+                save_feature(cat, mine["name"], mine["uid"], reindex=False, models=f.get("models", []),
                              importance=f.get("importance", {}))
+                changed = True
             continue
         f.pop("uses", None)
-        save_feature(cat, f.pop("name"), state="suggested", **{k: v for k, v in f.items() if k in FIELDS})
+        save_feature(cat, f.pop("name"), reindex=False, state="suggested",
+                     **{k: v for k, v in f.items() if k in FIELDS})
         n += 1
+    if n or removed or changed:
+        cat.rebuild_search()   # once, not once per feature
     return n
 
 

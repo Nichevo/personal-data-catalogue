@@ -64,6 +64,8 @@ def resolve_imports(cat: Catalogue) -> int:
             if not absolute:
                 continue
             target = _longest_match(absolute, modules)
+            if not target and imp.get("managed"):
+                target = by_last_name(absolute, modules)
             if target and (plain_names or not names):
                 targets[target].update(plain_names)
         for target, used in targets.items():
@@ -163,6 +165,14 @@ def _absolute(module: str, level: int, own: str, is_package: bool) -> str | None
         return None
     base = package[: len(package) - (level - 1)]
     return ".".join([*base, module] if module else base)
+
+
+def by_last_name(module: str, modules: dict[str, str]) -> str | None:
+    """The one scanned module whose name ends with `module` (Management -> tools.Management), any case.
+    Only for modules a home-built loader brings in from its own folders, where the dotted path is unknown."""
+    want = module.lower()
+    hits = {k for name, k in modules.items() if name.lower() == want or name.lower().endswith("." + want)}
+    return hits.pop() if len(hits) == 1 else None
 
 
 def _longest_match(dotted: str, modules: dict[str, str]) -> str | None:
@@ -583,8 +593,10 @@ class CodeIndex:
             if absolute:
                 dotted = f"{absolute}.{rest}" if rest else absolute
                 parts = dotted.split(".")
+                managed = {d["module"] for d in attrs.get("import_details") or [] if d.get("managed")}
                 for i in range(len(parts) - 1, 0, -1):
-                    mod_key = self.modules.get(".".join(parts[:i]))
+                    mod = ".".join(parts[:i])
+                    mod_key = self.modules.get(mod) or (by_last_name(mod, self.modules) if mod in managed else None)
                     if mod_key:
                         return ("lib", mod_key, ".".join(parts[i:]))
         return ("other", call)

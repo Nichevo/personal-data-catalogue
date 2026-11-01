@@ -218,6 +218,43 @@ def test_function_graph_zooms_in_and_out(libs, project):
     assert "fillcolor=\"#fde68a\"" in to_dot(zoomed)
 
 
+def test_functions_loaded_by_a_module_manager(libs, project, tmp_path):
+    """No import lines: a home-built loader is fed a dict of modules and the functions to load from each."""
+    from pdcat.codemap import CodeIndex
+
+    shared = tmp_path / "shared-code"
+    write(shared, "tools/Management.py", '''
+        def function1(df):
+            return df
+
+        def function2():
+            return 2
+    ''')
+    write(project, "src/managed.py", '''
+        modules_to_load = {
+            'Management': {'local_folder': r'C:\\code\\local', 'sys_folder': r'\\\\server\\code',
+                           'functions': ['function1', 'function2']},
+            'NotScanned': {'local_folder': 'x', 'functions': ['elsewhere']},
+        }
+        ModuleManager(modules_to_load)
+
+        def main(df):
+            out = function1(df)
+            elsewhere()
+            return Management.function2(), out
+    ''')
+    scan_project(libs, PythonSource(name="shared", path=shared, role="library"))
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    key = "py://forecasting/src/managed.py"
+    lib = "py://shared/tools/Management.py"
+    links = {(l["dst_key"], l["evidence"]) for l in libs.links_from(key) if l["relation"] == "imports"}
+    assert (lib, "function1, function2") in links
+    calls = set(CodeIndex(libs).calls(key, "main"))
+    assert ("lib", lib, "function1") in calls and ("lib", lib, "function2") in calls
+    assert ("other", "elsewhere") in calls          # its module wasn't scanned
+    assert (key, "main") in CodeIndex(libs).callers(lib, "function1")
+
+
 def test_function_subway_routes_follow_calls(libs, project):
     from pdcat.codemap import function_graph
     from pdcat.subway import function_subway, layout, subway_svg

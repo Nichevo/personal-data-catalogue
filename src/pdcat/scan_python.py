@@ -292,6 +292,15 @@ def scan_python_source(text: str) -> Found:
         found.attrs["feature_assignments"] = feats
     found.attrs["import_details"] = _import_details(tree)
     found.attrs["import_map"] = _import_map(tree)
+    managed = managed_imports(tree)
+    if managed:
+        # A home-built loader fed a dict of modules and functions (no import lines): the functions it loads
+        # are imports too. Real imports of the same name win.
+        found.attrs["import_details"] += managed
+        for d in managed:
+            found.attrs["import_map"].setdefault(d["module"].split(".")[0], d["module"].split(".")[0])
+            for fn in d["names"]:
+                found.attrs["import_map"].setdefault(fn, f"{d['module']}.{fn}")
     found.attrs["function_info"] = _function_info(tree)
     paths = _sys_path_additions(tree, consts)
     if paths:
@@ -1057,6 +1066,49 @@ def _import_map(tree: ast.Module) -> dict[str, str]:
                 if a.name != "*":
                     out[a.asname or a.name] = f"{base}.{a.name}" if base and not base.endswith(".") else f"{base}{a.name}"
     return out
+
+
+MANAGED_FUNCTION_KEYS = ("functions", "funcs", "function_list", "function_names")
+
+
+def managed_imports(tree: ast.Module) -> list[dict]:
+    """Modules loaded by a home-built loader instead of import lines, from a dict at the top of the script:
+
+        modules_to_load = {"Management": {"local_folder": ..., "sys_folder": ..., "functions": ["f1", "f2"]}, ...}
+        ModuleManager(modules_to_load)
+
+    Any module-level dict whose values are dicts with a "functions" list counts, whatever it is called, so the
+    loader's own name doesn't matter. Each module becomes an import detail like `from Management import f1, f2`,
+    marked "managed" so its module can also be found by its last name part (Management -> tools.Management)."""
+    out = []
+    for node in _module_level(tree):
+        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
+        if not isinstance(value, ast.Dict):
+            continue
+        for k, v in zip(value.keys, value.values):
+            if not (isinstance(k, ast.Constant) and isinstance(k.value, str) and isinstance(v, ast.Dict)):
+                continue
+            names = []
+            for ik, iv in zip(v.keys, v.values):
+                if isinstance(ik, ast.Constant) and str(ik.value).lower() in MANAGED_FUNCTION_KEYS \
+                        and isinstance(iv, (ast.List, ast.Tuple, ast.Set)):
+                    names += [e.value for e in iv.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            module = k.value.strip().removesuffix(".py").replace("/", ".").replace("\\", ".")
+            if names and module:
+                out.append({"module": module, "names": sorted(set(names)), "level": 0, "line": node.lineno,
+                            "managed": True})
+    return out
+
+
+def _module_level(tree: ast.Module):
+    """Statements at the top of a module, including those under if / try / with."""
+    stack = list(getattr(tree, "body", []))
+    while stack:
+        node = stack.pop(0)
+        yield node
+        if isinstance(node, (ast.If, ast.With, ast.Try)):
+            stack += [*node.body, *getattr(node, "orelse", []), *getattr(node, "finalbody", []),
+                      *[s for h in getattr(node, "handlers", []) for s in h.body]]
 
 
 def _import_details(tree: ast.Module) -> list[dict]:
