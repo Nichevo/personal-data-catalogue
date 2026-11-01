@@ -1,4 +1,5 @@
-"""Versions of Power BI reports and Excel workbooks, grouped automatically (version 2.17).
+"""Versions of Power BI reports and Excel workbooks, grouped automatically (version 2.17), and since 2.4.1
+scripts too (versions.script_groups: same folder, names that differ only by a version or date at the end).
 
 A folder of reports often holds the same report many times over: "Sales report v2", "Sales report 2023-04
 FINAL", "Sales report - copy", "Sales report March". Reports in the same folder whose names start the
@@ -195,18 +196,20 @@ def auto_groups(cat: Catalogue) -> dict[str, dict[str, Any]]:
 
 
 def sync(cat: Catalogue) -> int:
-    """Make, update or remove the automatic report and workbook version groups. A current version you picked
+    """Make, update or remove the automatic report, workbook and script version groups. A current version you picked
     is kept; items you took out, and items in a group you made or accepted, are left alone. Returns how many
     groups there are."""
     from .features import on
+    from .versions import script_groups
     auto = auto_groups(cat)
-    if not on(cat, "report_versions"):
-        _remove(cat, list(auto))
-        return 0
     others = {r[0] for r in cat.conn.execute(
         "SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid WHERE g.type = 'versions' "
         "AND NOT coalesce(json_extract(g.attrs, '$.auto'), 0)")}
-    found = find_groups(cat, skip=others | groups.excluded(cat, "versions"))
+    skip = others | groups.excluded(cat, "versions")
+    # Reports and workbooks (2.17), and scripts in one folder named like forecast_v2.py / forecast_v3.py (2.4.1).
+    # A kind whose switch is off gets no groups, so its old automatic groups are removed below.
+    found = (find_groups(cat, skip=skip) if on(cat, "report_versions") else []) \
+        + (script_groups(cat, skip=skip) if on(cat, "script_versions") else [])
     kept: set[str] = set()
     for f in found:
         keys = set(f["members"])

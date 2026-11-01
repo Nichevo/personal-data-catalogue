@@ -56,3 +56,5 @@ def test_about_page_and_subway_data_flow_render(catalogue, monkeypatch):
     goto(app, "Data flow")
     app.radio(key="flow-view").set_value("subway").run()
     assert not app.exception
+    app.checkbox(key="flow-versions").check().run()
+    assert not app.exception

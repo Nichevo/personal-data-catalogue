@@ -165,6 +165,26 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.4.1
+
+- **Inside a script as a subway map.** On a Python script's page, under **Inside this script**,
+  pick **Draw as: Subway map**. The functions run top to bottom in call order (a function sits
+  above the ones it calls). Each function that nothing else in the view calls starts a coloured
+  line through everything it calls, so a helper used from two places is an interchange where two
+  lines meet. Tables and files are lines too, as on the data flow map. Works for the whole script
+  and when you zoom into one function (that function gets a yellow card). Laid out automatically;
+  click a table, file or another file's function to open it; the map downloads as SVG.
+- **Script versions grouped automatically.** Scripts in one folder whose names differ only by a
+  version or date at the end (forecast_v2.py, forecast_v3.py, forecast_old.py) are now grouped
+  without waiting for a yes, like reports in 2.17. The current one is the one other code uses or a
+  schedule runs, else the newest; when two versions are both in use it stays a suggestion. Older
+  versions no longer show on the code map or the data flow (boxes or subway map). Data flow has a
+  **Show older versions** switch that draws them too, labelled "(older version)" with a grey card
+  on the subway map; an older version's own page still shows its flow. Functions from an older
+  file on the inside-a-script view are labelled the same way. Change the current version or break
+  a group up on the group's page; the Settings switch for script versions turns it off.
+- No rescan is needed: versions are grouped once when the app opens.
+
 ## New in version 2.4
 
 - **About page** under Home: what the app is, its version, a subway map of how its parts fit
