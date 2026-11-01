@@ -112,6 +112,21 @@ def test_feature_suggestions_from_code_and_models(catalogue, project):
     assert [f["name"] for f in c["leakage"]] == ["next_week_sales"]
 
 
+def test_feature_suggestions_rebuild_search_once(catalogue, project, monkeypatch):
+    """Rebuilding the search index per suggested feature made the step take many minutes in a big catalogue."""
+    (project / "src" / "train.py").write_text(FEATURE_CODE)
+    (project / "models").mkdir()
+    (project / "models" / "lgb_model.txt").write_text(LGB_MODEL)
+    scan_project(catalogue, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    calls = []
+    real = catalogue.rebuild_search
+    monkeypatch.setattr(catalogue, "rebuild_search", lambda: (calls.append(1), real())[1])
+    assert M.suggest_features(catalogue) >= 3
+    assert len(calls) == 1
+    hits = [k for k, *_ in catalogue.conn.execute("SELECT key FROM search_idx WHERE key LIKE 'feature://%'")]
+    assert len(hits) >= 3   # the suggestions are still searchable
+
+
 def test_describe_everywhere(catalogue, tmp_path):
     import pandas as pd
 
