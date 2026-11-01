@@ -1,4 +1,6 @@
 """The subway map: the data flow drawn as coloured lines through the scripts that use them."""
+import pytest
+
 from pdcat.codemap import Graph
 from pdcat.subway import layout, subway_svg
 
@@ -38,3 +40,19 @@ def test_svg_links_to_items_and_survives_loops_between_scripts():
     svg = subway_svg(g)
     assert svg.startswith("<svg") and svg.endswith("</svg>")
     assert 'href="?asset=clean.py"' in svg and "stage" in svg
+
+
+def test_about_page_and_subway_data_flow_render(catalogue, monkeypatch):
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+    from test_app import APP, goto
+    monkeypatch.setenv("PDCAT_DB", str(catalogue.path))
+    app = AppTest.from_file(APP, default_timeout=20)
+    app.run()
+    goto(app, "About")
+    assert not app.exception
+    assert app.title[0].value == "About"
+    assert any(e.label.startswith("Version ") for e in app.expander)
+    goto(app, "Data flow")
+    app.radio(key="flow-view").set_value("subway").run()
+    assert not app.exception
