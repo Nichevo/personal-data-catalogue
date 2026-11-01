@@ -23,6 +23,7 @@ GUIDE = {
     "Home": "Your follow-ups, five quick questions, failing checks and outputs that stopped refreshing, and what "
             "changed since your last visit.",
     "Menu guide": "This page.",
+    "About": "What the app is, a subway map of how its parts fit together, and what changed in each version.",
     "Search": "Find tables, columns, scripts, files, reports and notes by any word, as a table you can sort, filter "
               "by kind and group by script, family, folder or business project.",
     "Tables and datasets": "Every database table and view, and every data file and file series, as one list to "

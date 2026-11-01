@@ -37,7 +37,7 @@ where = ["src"]
 version = {attr = "pdcat.__version__"}
 
 [tool.setuptools.package-data]
-pdcat = ["ui/graph/*.html", "ui/graph/*.js", "ui/graph/vendor/*"]
+pdcat = ["ui/subway/*.html", "ui/graph/*.html", "ui/graph/*.js", "ui/graph/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

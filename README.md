@@ -165,6 +165,17 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.4
+
+- **About page** under Home: what the app is, its version, a subway map of how its parts fit
+  together (what you bring in, the parts of the app that use it, and what comes out), and the
+  release notes from this README, newest first.
+- **Data flow as a subway map.** On Data flow, pick **Draw as: Subway map**. Each table, file or
+  outside source is a coloured line running down the page through the scripts and reports that
+  use it, in run order, laid out automatically. A table that a script reads and writes back makes
+  a loop, and row counts show on table lines. Click a name to open it; the map downloads as SVG.
+- No rescan is needed.
+
 ## New in version 2.3
 
 - **Power BI impact, from the files alone.** Nothing calls the Power BI service. A *thin report*

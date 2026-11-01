@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: #f5f5fa; }
+  #map { overflow: auto; border-radius: 8px; }
+  #map a { cursor: pointer; }
+  #map a:hover text { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+// The subway map drawn in Python (pdcat/subway.py), shown as is. Clicking a name sends its key back so the
+// app can open that item. It talks to Streamlit with the plain postMessage protocol, like the graph viewer.
+(function () {
+  function send(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+  var map = document.getElementById("map");
+  map.addEventListener("click", function (e) {
+    var a = e.target.closest("a[data-key]");
+    if (!a) { return; }
+    e.preventDefault();
+    send("streamlit:setComponentValue", { value: { action: "open", key: a.dataset.key, at: Date.now() },
+                                         dataType: "json" });
+  });
+  var last = null;
+  window.addEventListener("message", function (event) {
+    var msg = event.data;
+    if (!msg || msg.type !== "streamlit:render") { return; }
+    var args = msg.args || {};
+    if (args.svg !== last) {
+      last = args.svg;
+      map.innerHTML = args.svg || "";
+    }
+    map.style.maxHeight = (args.height || 900) + "px";
+    send("streamlit:setFrameHeight", { height: Math.min(map.scrollHeight, args.height || 900) + 4 });
+  });
+  send("streamlit:componentReady", { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>
