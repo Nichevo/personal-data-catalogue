@@ -47,7 +47,10 @@ def flow_block(cat: Catalogue, project: str | None, key: str, focus: str | None 
                          "down the page through the scripts and reports that use it.")
     show_old = c2.checkbox("Show old items", value=False, key=f"{key}-old",
                            help="Items marked old are hidden unless this is ticked.")
-    g = flow_graph(cat, project, level=level, show_old=show_old, focus=focus)
+    old_versions = c2.checkbox("Show older versions", value=False, key=f"{key}-versions",
+                               help="Only the current version of a script or report is drawn. Tick to draw "
+                                    "older versions too, labelled \"(older version)\".")
+    g = flow_graph(cat, project, level=level, show_old=show_old, focus=focus, old_versions=old_versions)
     if not g.nodes:
         st.caption("This doesn't read or write any data the catalogue knows about." if focus
                    else "No data found flowing in or out yet.")

@@ -206,14 +206,35 @@ def functions_section(cat: Catalogue, key: str, asset: dict) -> None:
                        include_other=include_other, index=idx)
     if g.nodes:
         dot = to_dot(g)
-        st.graphviz_chart(dot, width="stretch")
-        st.caption("Blue boxes are functions in this file, purple ones are in your other files and libraries"
-                   + (", the yellow one is the function you zoomed into" if focus_fn else "")
-                   + ". Arrows point from caller to called; dashed arrows read data, red arrows write it.")
-        d1, d2, d3 = st.columns([1, 1, 2])
         stem = Path(asset["name"]).stem + (f"-{focus_fn}" if focus_fn else "")
+        view = st.radio("Draw as", ["boxes", "subway"], horizontal=True, key=f"{key}-fnview",
+                        format_func={"boxes": "Boxes and arrows", "subway": "Subway map"}.get,
+                        help="The subway map puts the functions top to bottom in call order. Each function that "
+                             "nothing here calls starts a coloured line through everything it calls, and each "
+                             "table or file is a line through the functions that read or write it.")
+        if view == "subway":
+            from pdcat.subway import function_subway, subway_svg, table_rows
+
+            from .graphview import show_svg
+            svg = subway_svg(function_subway(g, key), table_rows(cat))
+            show_svg(svg, key=f"{key}-fnsubway")
+            st.caption("Each starting function is a coloured line running down through the functions it calls, in "
+                       "call order; where two lines share a stop, both use that function. Tables (purple and blue) "
+                       "and files (green) are lines too, from where they come in or are first written (▶) to "
+                       "where they end (■); a loop means the function reads and writes it. "
+                       + ("The function you zoomed into has a yellow card. " if focus_fn else "")
+                       + "Click a table, file or another file's function to open it.")
+        else:
+            st.graphviz_chart(dot, width="stretch")
+            st.caption("Blue boxes are functions in this file, purple ones are in your other files and libraries"
+                       + (", the yellow one is the function you zoomed into" if focus_fn else "")
+                       + ". Arrows point from caller to called; dashed arrows read data, red arrows write it.")
+        d1, d2, dsvg, d3 = st.columns([1, 1, 1.3, 2])
         d1.download_button("⬇️ Mermaid", to_mermaid(g), f"{stem}.mmd", "text/plain", key=f"{key}-fnmmd")
         d2.download_button("⬇️ Graphviz", dot, f"{stem}.dot", "text/plain", key=f"{key}-fndot")
+        if view == "subway":
+            dsvg.download_button("⬇️ Subway map (.svg)", svg, f"{stem}-subway.svg", "image/svg+xml",
+                                 key=f"{key}-fnsvg")
         if focus_fn:
             d3.button("🔭 Zoom out to the whole script", key=f"{key}-zoomout", on_click=focus, args=(WHOLE,))
         elif asset["parent"]:

@@ -28,14 +28,18 @@ GROUP_NAMES = {"api": "🌐 APIs and web services", "web_scraping": "🕸️ Web
 
 def flow_graph(cat: Catalogue, project: str | None = None, *, level: str = "files", show_old: bool = False,
                hops: int = 3, focus: str | None = None, start: set[str] | None = None,
-               downstream: bool = True) -> Graph:
+               downstream: bool = True, old_versions: bool = False) -> Graph:
     """The flow for one project or folder source (followed `hops` steps up- and downstream), or everything.
     focus: one script, notebook or report instead of a project, drawn highlighted.
     start: any set of scripts and reports to start from instead (the Power BI map starts from every report);
     downstream=False follows the data upstream only.
-    level="projects" shows each project as one box instead of one per script."""
+    level="projects" shows each project as one box instead of one per script.
+    old_versions: also draw older versions of scripts and reports (labelled as older); otherwise only the
+    current one shows, unless the focus is itself an older version."""
+    from .groups import older_versions
     assets = _assets(cat)
-    hidden = hidden_from_map(cat, show_old)
+    hidden = hidden_from_map(cat, show_old, old_versions) - ({focus} if focus else set())
+    older = older_versions(cat)
     from .links import unimportant
     noise = unimportant(cat)
     backup_of = _backup_main(cat)
@@ -104,6 +108,9 @@ def flow_graph(cat: Catalogue, project: str | None = None, *, level: str = "file
         else:
             g.nodes[key] = {"label": a["name"], "kind": a["kind"], "group": "📊 Reports and workbooks"
                             if a["kind"] in ("report", "workbook") else None, "key": key}
+        if key in older:
+            g.nodes[key]["label"] += " (older version)"
+            g.nodes[key]["older"] = True
         return key
 
     def data_node(d: str) -> str:

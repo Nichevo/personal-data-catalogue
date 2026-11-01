@@ -253,3 +253,40 @@ def test_functions_loaded_by_a_module_manager(libs, project, tmp_path):
     assert ("lib", lib, "function1") in calls and ("lib", lib, "function2") in calls
     assert ("other", "elsewhere") in calls          # its module wasn't scanned
     assert (key, "main") in CodeIndex(libs).callers(lib, "function1")
+
+
+def test_function_subway_routes_follow_calls(libs, project):
+    from pdcat.codemap import function_graph
+    from pdcat.subway import function_subway, layout, subway_svg
+
+    write(project, "src/pipeline.py", NESTED_PY)
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    key = "py://forecasting/src/pipeline.py"
+    g = function_subway(function_graph(libs, key, "run", depth=3), key)
+    lay = layout(g)
+    order, ys = lay["order"], lay["station_y"]
+    # A function sits above the ones it calls, all the way down into the libraries.
+    script, run, stash = f"{key}::(script)", f"{key}::run", "py://deep/deep/util.py::stash"
+    assert ys[script] < ys[run] < ys[stash]
+    route = lay["lines"][f"route:{script}"]
+    assert route.kind == "route" and route.stops[0] == script and stash in route.stops
+    assert lay["lines"]["table:ml.deep"].stops == [stash]              # the table stash writes is a line too
+    assert set(order) == {n for n, d in g.nodes.items() if d["kind"] in ("function", "focus", "libfn", "external")}
+    svg = subway_svg(g)
+    assert 'href="?asset=py://deep/deep/util.py"' in svg               # another file's function opens it
+    assert f'href="?asset={key}"' not in svg                           # this file's own functions don't
+    assert "#fff7e0" in svg                                            # the zoomed-into function stands out
+
+
+def test_function_subway_handles_circular_calls():
+    from pdcat.codemap import Graph
+    from pdcat.subway import function_subway, layout
+
+    g = Graph()
+    for fn in ("a", "b", "lonely"):
+        g.nodes[f"f.py::{fn}"] = {"label": fn, "kind": "function", "group": "f.py"}
+    g.edges[("f.py::a", "f.py::b", "call")]
+    g.edges[("f.py::b", "f.py::a", "call")]
+    lay = layout(function_subway(g, "f.py"))
+    assert set(lay["order"]) == {"f.py::a", "f.py::b", "f.py::lonely"}  # nothing dropped, no endless loop
+    assert {ln.id for ln in lay["lines"].values()} == {"route:f.py::a", "route:f.py::lonely"}

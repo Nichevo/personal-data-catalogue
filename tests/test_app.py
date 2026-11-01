@@ -183,6 +183,16 @@ def test_script_page_zooms_into_a_function(app, catalogue):
     assert [s for s in app.selectbox if s.label == "Zoom"][0].value == "(whole script)"
 
 
+def test_script_page_draws_functions_as_subway_map(app):
+    app.query_params["asset"] = "py://forecasting/src/features.py"
+    app.run()
+    app.radio(key="py://forecasting/src/features.py-fnview").set_value("subway").run()
+    assert not app.exception
+    assert any(b.label.startswith("⬇️ Subway map") for b in app.get("download_button"))
+    app.selectbox(key="zoom-py://forecasting/src/features.py").set_value("load").run()
+    assert not app.exception
+
+
 def test_script_page_opens_at_function_from_link(app):
     app.query_params["asset"] = "py://forecasting/src/features.py"
     app.query_params["fn"] = "save"
