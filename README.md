@@ -181,6 +181,14 @@ one at a time, and every query is logged:
   (a live copy, a backup folder, an old version), the one in the dict's `local_folder` /
   `sys_folder` now wins, then the current version. Before, whichever copy was scanned first was
   used, so calls could link to the wrong file or to none.
+- **Helpers or process steps.** Inside this script (subway map and boxes) now hides helper
+  functions by default, with a **Show helpers** switch. A function is a process step when you
+  zoomed into it, nothing calls it (main, the script's own code), or it reads or writes a table or
+  file itself. Of the rest, helpers are those that never lead to a table or file, are used from
+  three or more places, or are named like helpers (`_private`, `get_`, `is_`, `format_`, `parse_`,
+  `log`...). Each step's card lists the helpers it uses ("+2 helpers: _clean_name, log_step") and
+  takes over anything they read or write, so no table or file drops off the map. A list under the
+  switch says why each one counted as a helper.
 - **Loaded by a helper.** A script's **Inside** tab lists each module its loader brings in, the
   functions, the folders, and the scanned file it was matched to, or why not: no file of that name
   was scanned (add the folder as a Python source with role library), or several were and none sits

@@ -204,6 +204,20 @@ def functions_section(cat: Catalogue, key: str, asset: dict) -> None:
     focus_fn = None if fn == WHOLE else fn
     g = function_graph(cat, key, focus_fn, depth=depth, include_data=include_data,
                        include_other=include_other, index=idx)
+    from pdcat.subway import helper_functions, without_helpers
+    helpers = helper_functions(g) if include_data else {}
+    if helpers:
+        show_helpers = st.toggle(f"Show helpers ({len(helpers)})", value=False, key=f"{key}-fnhelpers",
+                                 help="Helpers are functions that support the process rather than being a step "
+                                      "of it: they touch no tables or files, are used from three or more places, "
+                                      "or are named like helpers (_private, get_, is_, format_, parse_...). When "
+                                      "hidden, each step lists the helpers it uses and takes over what they read "
+                                      "and write.")
+        if not show_helpers:
+            g = without_helpers(g, helpers)
+            with st.expander(f"{len(helpers)} helper function(s) hidden"):
+                for n, why in sorted(helpers.items(), key=lambda x: x[0].lower()):
+                    st.caption(f"`{n.split('::', 1)[-1]}`: {why}")
     if g.nodes:
         dot = to_dot(g)
         stem = Path(asset["name"]).stem + (f"-{focus_fn}" if focus_fn else "")

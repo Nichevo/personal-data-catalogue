@@ -115,3 +115,28 @@ def test_function_subway_marks_loops_and_recursion():
     g.edges[("s::walk", "s::once", "call")]
     svg = subway_svg(function_subway(g, "s"))
     assert "↻ in a loop" in svg and "Calls itself" in svg
+
+
+def test_helpers_are_told_apart_from_process_steps_and_folded_in():
+    from pdcat.codemap import Graph
+    from pdcat.subway import function_subway, helper_functions, subway_svg, without_helpers
+    g = Graph()
+    for fn in ("main", "load", "train", "save", "_clean_name", "get_config", "fmt", "log_step"):
+        g.nodes[f"s::{fn}"] = {"label": fn, "kind": "function", "group": "s"}
+    g.nodes["t:sales"] = {"label": "dbo.Sales", "kind": "table", "group": None}
+    g.nodes["f:out"] = {"label": "out.csv", "kind": "file", "group": None}
+    for a, b in [("main", "load"), ("main", "train"), ("main", "save"), ("load", "_clean_name"),
+                 ("train", "get_config"), ("save", "fmt"), ("load", "log_step"), ("train", "log_step"),
+                 ("save", "log_step")]:
+        g.edges[(f"s::{a}", f"s::{b}", "call")]
+    g.edges[("s::load", "t:sales", "reads")]
+    g.edges[("s::get_config", "f:out", "reads")]     # a helper that does read something: train takes it over
+    g.edges[("s::save", "f:out", "writes")]
+    h = helper_functions(g)
+    assert set(h) == {"s::_clean_name", "s::fmt", "s::log_step"}
+    assert "s::get_config" not in h                   # it reads a file itself, so it's a step
+    folded = without_helpers(g, h)
+    assert "s::log_step" not in folded.nodes and folded.nodes["s::load"]["helpers"] == ["_clean_name", "log_step"]
+    assert ("s::main", "s::load", "call") in folded.edges
+    svg = subway_svg(function_subway(folded, "s"))
+    assert "+2 helpers" in svg and "log_step" in svg

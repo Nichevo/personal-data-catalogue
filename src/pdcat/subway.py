@@ -166,6 +166,95 @@ def layout(g: Graph, rows: dict[str, int] | None = None) -> dict[str, Any]:
             "nodes": g.nodes}
 
 
+_HELPER_NAMES = ("_", "get_", "is_", "has_", "to_", "as_", "format_", "fmt_", "parse_", "make_", "log", "print",
+                 "check_", "validate_", "convert_", "normalise_", "normalize_", "safe_", "util", "helper")
+
+
+def helper_functions(g) -> dict[str, str]:
+    """Functions in a function graph that are helpers rather than steps of the process: {node: why}.
+
+    A function is a process step when it is the one you zoomed into, nothing here calls it (an entry point
+    such as main or the script's own code), or it reads or writes a table or file itself. Of the rest, a
+    helper is one that never leads to any table or file, one called from three or more places, or one named
+    like a helper (_private, get_, is_, format_, parse_, log...)."""
+    funcs = {n for n, d in g.nodes.items() if d["kind"] in FUNCTION_KINDS and d["kind"] != "external"}
+    calls: dict[str, set[str]] = defaultdict(set)
+    callers: dict[str, set[str]] = defaultdict(set)
+    touches: set[str] = set()
+    for (a, b, rel) in g.edges:
+        if rel == "call" and a in funcs and b in funcs and a != b:
+            calls[a].add(b)
+            callers[b].add(a)
+        elif rel in ("reads", "writes") and a in funcs:
+            touches.add(a)
+
+    reach: dict[str, bool] = {}
+
+    def leads_to_data(f: str, seen: frozenset = frozenset()) -> bool:
+        if f in reach:
+            return reach[f]
+        r = f in touches or any(leads_to_data(c, seen | {f}) for c in calls[f] if c not in seen)
+        reach[f] = r
+        return r
+
+    out = {}
+    for f in funcs:
+        d = g.nodes[f]
+        if d["kind"] == "focus" or d.get("focus") or not callers[f] or f in touches:
+            continue
+        name = d["label"].rsplit(".", 1)[-1].lower()
+        if not leads_to_data(f):
+            out[f] = "reads and writes no tables or files, directly or through what it calls"
+        elif len(callers[f]) >= 3:
+            out[f] = f"used from {len(callers[f])} places"
+        elif name.startswith(_HELPER_NAMES) or name in ("main_helper",):
+            out[f] = "named like a helper"
+    return out
+
+
+def without_helpers(g, helpers: dict[str, str] | None = None):
+    """A copy of the function graph with helper functions folded into the functions that use them: a caller
+    takes over the calls and the tables and files reached only through its helpers, and lists them."""
+    from .codemap import Graph
+    helpers = helper_functions(g) if helpers is None else helpers
+    if not helpers:
+        return g
+    calls: dict[str, set[str]] = defaultdict(set)
+    data: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    for (a, b, rel) in g.edges:
+        if rel == "call":
+            calls[a].add(b)
+        elif rel in ("reads", "writes"):
+            data[a].add((b, rel))
+    out = Graph()
+    for n, d in g.nodes.items():
+        if n not in helpers:
+            out.nodes[n] = dict(d)
+    for (a, b, rel) in g.edges:
+        if a not in helpers and b not in helpers:
+            out.edges[(a, b, rel)]
+    for f in list(out.nodes):
+        if f in helpers:
+            continue
+        used, todo, seen = [], [h for h in calls[f] if h in helpers], set()
+        while todo:
+            h = todo.pop()
+            if h in seen:
+                continue
+            seen.add(h)
+            used.append(g.nodes[h]["label"])
+            for t in calls[h]:
+                if t in helpers:
+                    todo.append(t)
+                elif t != f:
+                    out.edges[(f, t, "call")]
+            for dst, rel in data[h]:
+                out.edges[(f, dst, rel)]
+        if used:
+            out.nodes[f]["helpers"] = sorted(set(used))
+    return out
+
+
 def loop_note(n: dict) -> str:
     """"↻ calls itself", "↻ loop: load, clean" or "↻ 2 loops" for a function station; "" otherwise."""
     if n.get("kind") not in FUNCTION_KINDS:
@@ -180,6 +269,14 @@ def loop_note(n: dict) -> str:
     elif n.get("loops"):
         bits.append(f"↻ {n['loops']} loop{'s' if n['loops'] != 1 else ''}")
     return " · ".join(bits)
+
+
+def helpers_note(n: dict) -> str:
+    names = n.get("helpers") or []
+    if not names:
+        return ""
+    return f"+{len(names)} helper{'s' if len(names) != 1 else ''}: " + ", ".join(names[:2]) + \
+        (" …" if len(names) > 2 else "")
 
 
 def _short(n: int | None) -> str:
@@ -266,7 +363,7 @@ def subway_svg(g: Graph, rows: dict[str, int] | None = None, *, width: int = 900
         wr = len(lay["writes"][s])
         calls = sum(1 for (a, _, rel) in g.edges if rel == "runs" and a == s) if n["kind"] in FUNCTION_KINDS else 0
         sub = " · ".join(p for p in (f"calls {calls}" if calls else "", f"reads {r}" if r else "",
-                                     f"writes {wr}" if wr else "", loop_note(n),
+                                     f"writes {wr}" if wr else "", loop_note(n), helpers_note(n),
                                      (n.get("group") or "").lstrip("📁📊 ").strip()) if p)
         if n.get("recursive"):  # calls itself: a grey loop beside the station
             out.append(f'<path d="M{xs[0] - 12},{y - 14} C{xs[0] - 44},{y - 22} {xs[0] - 44},{y + 22} '
