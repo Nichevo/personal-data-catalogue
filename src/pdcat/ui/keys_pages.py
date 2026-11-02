@@ -34,17 +34,18 @@ def keys_page(cat: Catalogue) -> None:
         st.info("No company-wide keys yet.")
     suggested = K.list_keys(cat, "suggested")
     if suggested:
-        st.subheader("Suggested")
-        st.caption("Key-like column names found in many places after the last scan.")
-        for i, k in enumerate(suggested):
-            c1, c2, c3 = st.columns([3, 1, 1])
-            c1.markdown(f"**{k['name']}** · {k['evidence']}")
-            if c2.button("Accept", key=f"acc-{i}"):
-                K.accept_key(cat, k["name"])
-                st.rerun()
-            if c3.button("Reject", key=f"rej-{i}", help="It won't be suggested again"):
-                K.reject_key(cat, k["name"])
-                st.rerun()
+        st.subheader(f"Suggested ({len(suggested)})")
+        st.caption("Key-like column names found in many places after the last scan. Tick any that aren't real keys, "
+                   "then accept all the others.")
+        from .bulk import bulk_decide
+        bulk_decide(suggested, prefix="keysugg", row_id=lambda k: k["name"], text=lambda k: f"{k['name']} "
+                    f"{k['evidence'] or ''}", render=lambda k: st.markdown(f"**{k['name']}** · {k['evidence'] or ''}"),
+                    accept=lambda k: K.accept_key(cat, k["name"]), reject=lambda k: K.reject_key(cat, k["name"]),
+                    noun="key")
+    waiting = [c for k in active for c in K.key_columns(cat, k["name"], "suggested")] if active else []
+    if waiting:
+        with st.expander(f"Columns to confirm across all keys ({len(waiting)})", expanded=not suggested):
+            key_columns_picker(cat, waiting, "allkc")
     rejected = K.list_keys(cat, "rejected")
     if rejected:
         with st.expander(f"Rejected ({len(rejected)})"):
@@ -111,24 +112,40 @@ def key_page(cat: Catalogue, key: str) -> None:
     suggested = K.key_columns(cat, k["name"], "suggested")
     if suggested:
         st.subheader(f"Probably carries it ({len(suggested)})")
-        b1, _ = st.columns([1, 4])
-        if b1.button("Confirm all"):
-            for c in suggested:
-                K.set_column_state(cat, c["asset_key"], c["column_name"], "confirmed")
-            st.rerun()
-        for i, c in enumerate(suggested):
-            c1, c2, c3 = st.columns([4, 1, 1])
-            with c1:
-                asset_button(c["asset_key"], f"{c['item'] or c['asset_key']} · {c['column_name']}",
-                             c["kind"] or "table", f"ks-{i}")
-            if c2.button("Confirm", key=f"kconf-{i}"):
-                K.set_column_state(cat, c["asset_key"], c["column_name"], "confirmed")
-                st.rerun()
-            if c3.button("Not this", key=f"krej-{i}"):
-                K.set_column_state(cat, c["asset_key"], c["column_name"], "rejected")
-                st.rerun()
+        key_columns_picker(cat, suggested, f"kc-{name}", confirmed=confirmed)
     from .detail import notes_section
     notes_section(cat, key, [])
+
+
+def key_columns_picker(cat: Catalogue, suggested: list[dict], prefix: str,
+                       confirmed: list[dict] | None = None) -> None:
+    """Columns that probably carry a key: marked likely / check / unlikely by data type, confirmed in bulk."""
+    from pdcat.triage import key_column_bands
+
+    from .bulk import bulk_decide
+    by_key: dict[str, list[dict]] = {}
+    for c in suggested:
+        by_key.setdefault(c["key_name"], []).append(c)
+    rows = []
+    for name, cols in by_key.items():
+        conf = confirmed if confirmed is not None else K.key_columns(cat, name, "confirmed")
+        for c, (band, why, group) in zip(cols, key_column_bands(conf, cols), strict=True):
+            rows.append({**c, "band": band, "why": why, "group": group})
+    rows.sort(key=lambda r: ("likely", "check", "unlikely").index(r["band"]))
+
+    def render(c: dict) -> None:
+        asset_button(c["asset_key"], f"{c['item'] or c['asset_key']} · {c['column_name']}", c["kind"] or "table",
+                     f"{prefix}-b-{c['asset_key']}-{c['column_name']}")
+        bits = [f"🔑 {c['key_name']}" if confirmed is None else "", c.get("data_type") or "", c.get("source") or ""]
+        if any(bits):
+            st.caption(" · ".join(b for b in bits if b))
+
+    bulk_decide(rows, prefix=prefix, row_id=lambda c: f"{c['key_name']}|{c['asset_key']}|{c['column_name']}",
+                text=lambda c: f"{c['key_name']} {c['item'] or ''} {c['asset_key']} {c['column_name']} "
+                               f"{c.get('data_type') or ''}",
+                render=render, noun="column", accept_word="Confirm", reject_word="Not this",
+                accept=lambda c: K.set_column_state(cat, c["asset_key"], c["column_name"], "confirmed"),
+                reject=lambda c: K.set_column_state(cat, c["asset_key"], c["column_name"], "rejected"))
 
 
 def mark_key_form(cat: Catalogue, asset_key: str, columns: list[str]) -> None:

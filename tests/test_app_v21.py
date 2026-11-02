@@ -57,7 +57,7 @@ def test_suggestions_page_accepts_ticked(app, catalogue):
     app.run()
     goto(app, "Suggestions")
     assert not app.exception
-    app.checkbox(key="sp-family:x").check().run()
+    app.checkbox(key="sp-family-t-family:x").check().run()
     [b for b in app.button if b.label.startswith("Accept")][0].click().run()
     assert not app.exception
     assert groups.for_item(catalogue, STORE)
