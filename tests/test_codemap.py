@@ -290,3 +290,104 @@ def test_function_subway_handles_circular_calls():
     lay = layout(function_subway(g, "f.py"))
     assert set(lay["order"]) == {"f.py::a", "f.py::b", "f.py::lonely"}  # nothing dropped, no endless loop
     assert {ln.id for ln in lay["lines"].values()} == {"route:f.py::a", "route:f.py::lonely"}
+
+
+def test_module_manager_dict_in_other_shapes():
+    import ast
+
+    from pdcat.scan_python import managed_imports
+
+    def found(code: str):
+        out, inst = managed_imports(ast.parse(textwrap.dedent(code)), with_instances=True)
+        return {d["module"]: d["names"] for d in out}, inst
+
+    # Inside a function, passed straight in, and the result kept as mm.
+    assert found('''
+        def main():
+            mm = ModuleManager({"Management": {"local_folder": "x", "functions": ["f1", "f2"]}})
+            mm.f1()
+    ''') == ({"Management": ["f1", "f2"]}, {"mm"})
+    # dict(...) calls, a "f1, f2" string, and a function list kept in a variable.
+    assert found('''
+        MGMT = ["f3"]
+        modules = dict(Management=dict(functions="f1, f2"), Reports=dict(function_list=MGMT))
+        loader = Loader(modules)
+    ''') == ({"Management": ["f1", "f2"], "Reports": ["f3"]}, {"loader"})
+    # Filled in one module at a time, a list of {"module": ..., "functions": ...}, and file paths as names.
+    assert found('''
+        to_load = {}
+        to_load["Management"] = {"funcs_to_load": ("f1",)}
+        more = [{"module": r"C:\\code\\tools\\Stock.py", "functions": {"soh": "stock_on_hand"}}]
+        ModuleManager(to_load)
+    ''')[0] == {"Management": ["f1"], "Stock": ["soh"]}
+    # The loader's own shape: for module, details in modules_to_load.items(): for name in details["function"].
+    assert found('''
+        modules_to_load = {"Management": {"local_folder": "C:/code", "sys_folder": "//srv/code",
+                                          "function": ["function1", "function2"]}}
+        ModuleManager(modules_to_load)
+    ''')[0] == {"Management": ["function1", "function2"]}
+    # Ordinary dicts are left alone.
+    assert found('cfg = {"server": {"name": "x", "timeout": 3}}')[0] == {}
+
+
+def test_module_manager_inside_main_with_instance_calls(libs, project, tmp_path):
+    from pdcat.codemap import CodeIndex
+
+    shared = tmp_path / "shared-code"
+    write(shared, "tools/Management.py", '''
+        def function1(df):
+            return df
+    ''')
+    write(project, "src/managed2.py", '''
+        def main(df):
+            modules_to_load = {"Management": {"sys_folder": "x", "functions": ["function1"]}}
+            mm = ModuleManager(modules_to_load)
+            return mm.function1(df)
+    ''')
+    scan_project(libs, PythonSource(name="shared", path=shared, role="library"))
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    key, lib = "py://forecasting/src/managed2.py", "py://shared/tools/Management.py"
+    assert any(l["dst_key"] == lib for l in libs.links_from(key) if l["relation"] == "imports")
+    assert ("lib", lib, "function1") in set(CodeIndex(libs).calls(key, "main"))
+
+
+def test_module_manager_picks_the_copy_in_its_folder(libs, project, tmp_path):
+    from pdcat.codemap import CodeIndex
+
+    shared = tmp_path / "shared-code"
+    for folder in ("live", "backup"):
+        write(shared, f"{folder}/Management.py", '''
+            def function1(df):
+                return df
+        ''')
+    live = str(shared / "live").replace("\\", "/")
+    write(project, "src/managed3.py", f'''
+        modules_to_load = {{"Management": {{"local_folder": r"{live}", "function": ["function1"]}}}}
+        ModuleManager(modules_to_load)
+
+        def main(df):
+            return function1(df)
+    ''')
+    scan_project(libs, PythonSource(name="shared", path=shared, role="library"))
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    key, lib = "py://forecasting/src/managed3.py", "py://shared/live/Management.py"
+    assert any(l["dst_key"] == lib for l in libs.links_from(key) if l["relation"] == "imports")
+    assert ("lib", lib, "function1") in set(CodeIndex(libs).calls(key, "main"))
+
+
+def test_script_page_lists_modules_loaded_by_a_helper(libs, project, tmp_path, monkeypatch):
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+    from test_app import APP, open_tab
+    write(project, "src/managed4.py", '''
+        modules_to_load = {"Missing": {"local_folder": "C:/code", "function": ["f1"]}}
+        ModuleManager(modules_to_load)
+    ''')
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    monkeypatch.setenv("PDCAT_DB", str(libs.path))
+    app = AppTest.from_file(APP, default_timeout=15)
+    app.query_params["asset"] = "py://forecasting/src/managed4.py"
+    app.run()
+    open_tab(app, "inside")
+    assert any(h.value.startswith("Loaded by a helper") for h in app.subheader)
+    assert any("No scanned file is called Missing.py" in m.value for m in app.info)

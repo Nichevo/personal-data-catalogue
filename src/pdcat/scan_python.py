@@ -292,7 +292,7 @@ def scan_python_source(text: str) -> Found:
         found.attrs["feature_assignments"] = feats
     found.attrs["import_details"] = _import_details(tree)
     found.attrs["import_map"] = _import_map(tree)
-    managed = managed_imports(tree)
+    managed, instances = managed_imports(tree, with_instances=True)
     if managed:
         # A home-built loader fed a dict of modules and functions (no import lines): the functions it loads
         # are imports too. Real imports of the same name win.
@@ -302,6 +302,7 @@ def scan_python_source(text: str) -> Found:
             for fn in d["names"]:
                 found.attrs["import_map"].setdefault(fn, f"{d['module']}.{fn}")
     found.attrs["function_info"] = _function_info(tree)
+    unwrap_managed_calls(found.attrs["function_info"], instances, managed)
     paths = _sys_path_additions(tree, consts)
     if paths:
         found.attrs["sys_path"] = paths
@@ -1095,35 +1096,160 @@ def _import_map(tree: ast.Module) -> dict[str, str]:
 
 
 MANAGED_FUNCTION_KEYS = ("functions", "funcs", "function_list", "function_names")
+_MODULE_NAME_KEYS = ("module", "module_name", "name", "file", "filename", "script", "module_file", "py_file")
 
 
-def managed_imports(tree: ast.Module) -> list[dict]:
-    """Modules loaded by a home-built loader instead of import lines, from a dict at the top of the script:
+def _is_function_key(k: str) -> bool:
+    k = k.lower()
+    return k in MANAGED_FUNCTION_KEYS or "func" in k or k in ("methods", "callables", "imports", "objects")
+
+
+def managed_imports(tree: ast.Module, with_instances: bool = False):
+    """Modules loaded by a home-built loader instead of import lines, from a dict of modules and functions:
 
         modules_to_load = {"Management": {"local_folder": ..., "sys_folder": ..., "functions": ["f1", "f2"]}, ...}
         ModuleManager(modules_to_load)
 
-    Any module-level dict whose values are dicts with a "functions" list counts, whatever it is called, so the
-    loader's own name doesn't matter. Each module becomes an import detail like `from Management import f1, f2`,
-    marked "managed" so its module can also be found by its last name part (Management -> tools.Management)."""
-    out = []
-    for node in _module_level(tree):
-        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
-        if not isinstance(value, ast.Dict):
-            continue
-        for k, v in zip(value.keys, value.values):
-            if not (isinstance(k, ast.Constant) and isinstance(k.value, str) and isinstance(v, ast.Dict)):
-                continue
-            names = []
-            for ik, iv in zip(v.keys, v.values):
-                if isinstance(ik, ast.Constant) and str(ik.value).lower() in MANAGED_FUNCTION_KEYS \
-                        and isinstance(iv, (ast.List, ast.Tuple, ast.Set)):
-                    names += [e.value for e in iv.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
-            module = k.value.strip().removesuffix(".py").replace("/", ".").replace("\\", ".")
-            if names and module:
-                out.append({"module": module, "names": sorted(set(names)), "level": 0, "line": node.lineno,
-                            "managed": True})
-    return out
+    Found anywhere in the script: at the top, inside a function, passed straight into the loader's call, built
+    with dict(...), filled in one module at a time (modules_to_load["Management"] = {...}), or as a list of
+    {"module": "Management", "functions": [...]}. The function list may be a list, a "f1, f2" string, a dict
+    of names, or a variable holding one of those. Each module becomes an import detail like
+    `from Management import f1, f2`, marked "managed" so its module can also be found by its last name part
+    (Management -> tools.Management). with_instances=True also returns the names the loader's result is saved
+    under (mm = ModuleManager(modules_to_load)), so mm.f1() counts as a call to f1."""
+    consts: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            consts.setdefault(node.targets[0].id, node.value)
+
+    def deref(v: ast.AST | None, depth: int = 0) -> ast.AST | None:
+        while isinstance(v, ast.Name) and v.id in consts and depth < 5:
+            v, depth = consts[v.id], depth + 1
+        return v
+
+    def as_dict(v: ast.AST | None) -> dict[str, ast.AST] | None:
+        v = deref(v)
+        if isinstance(v, ast.Dict):
+            out = {}
+            for k, val in zip(v.keys, v.values):
+                k = deref(k)
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    out[k.value] = val
+            return out
+        if isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "dict":
+            return {kw.arg: kw.value for kw in v.keywords if kw.arg}
+        return None
+
+    def names_in(v: ast.AST | None) -> list[str]:
+        v = deref(v)
+        if isinstance(v, ast.Constant) and isinstance(v.value, str):
+            return [n for n in re.split(r"[,;\s]+", v.value) if n.isidentifier()]
+        if isinstance(v, (ast.List, ast.Tuple, ast.Set)):
+            out = []
+            for e in v.elts:
+                e = deref(e)
+                if isinstance(e, (ast.Tuple, ast.List)) and e.elts:  # ("f1", "alias")
+                    e = deref(e.elts[0])
+                if isinstance(e, ast.Constant) and isinstance(e.value, str) and e.value.strip().isidentifier():
+                    out.append(e.value.strip())
+            return out
+        d = as_dict(v)
+        return [k for k in d if k.isidentifier()] if d else []
+
+    def spec(module: str | None, inner: ast.AST, line: int) -> dict | None:
+        d = as_dict(inner)
+        if not d:
+            return None
+        names = [n for k, val in d.items() if _is_function_key(k) for n in names_in(val)]
+        if module is None:
+            for k in _MODULE_NAME_KEYS:
+                m = deref(d.get(k))
+                if isinstance(m, ast.Constant) and isinstance(m.value, str):
+                    module = m.value
+                    break
+        if not module or not names:
+            return None
+        module = module.strip().replace("\\", "/")
+        if module.endswith(".py") and ("/" in module or ":" in module):
+            module = module.rsplit("/", 1)[-1]   # a file path: C:/code/tools/Management.py -> Management
+        module = module.removesuffix(".py").replace("/", ".").strip(".")
+        if not module:
+            return None
+        folders = []
+        for k, val in d.items():
+            val = deref(val)
+            if any(w in k.lower() for w in ("folder", "path", "dir", "location")) and isinstance(val, ast.Constant) \
+                    and isinstance(val.value, str) and val.value.strip():
+                folders.append(val.value.strip())
+        return {"module": module, "names": sorted(set(names)), "level": 0, "line": line, "managed": True,
+                "folders": folders}
+
+    found: dict[str, dict] = {}
+    holders: set[int] = set()   # ids of dict / list nodes that turned out to describe managed modules
+
+    def add(sp: dict | None, holder: ast.AST | None = None) -> None:
+        if not sp:
+            return
+        if holder is not None:
+            holders.add(id(holder))
+        have = found.get(sp["module"])
+        if have:
+            have["names"] = sorted(set(have["names"]) | set(sp["names"]))
+            have["folders"] = list(dict.fromkeys(have["folders"] + sp["folders"]))
+        else:
+            found[sp["module"]] = sp
+
+    for node in ast.walk(tree):
+        line = getattr(node, "lineno", 0)
+        if isinstance(node, (ast.Dict, ast.Call)):
+            outer = as_dict(node) if not isinstance(node, ast.Call) or (
+                isinstance(node.func, ast.Name) and node.func.id == "dict") else None
+            if outer:
+                for module, inner in outer.items():
+                    add(spec(module, inner, line), node)
+                add(spec(None, node, line), node)   # {"module": "Management", "functions": [...]}
+        elif isinstance(node, (ast.List, ast.Tuple)):
+            for e in node.elts:
+                sp = spec(None, e, line)
+                add(sp, node if sp else None)
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Subscript):
+            key = deref(node.targets[0].slice)
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):   # modules["Management"] = {...}
+                sp = spec(key.value, node.value, line)
+                if sp:
+                    add(sp)
+                    if isinstance(node.targets[0].value, ast.Name):
+                        holders.add(id(consts.get(node.targets[0].value.id)))
+    out = sorted(found.values(), key=lambda d: d["line"])
+    if not with_instances:
+        return out
+    holder_names = {n for n, v in consts.items() if id(v) in holders}
+    instances = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            args = [*node.value.args, *[kw.value for kw in node.value.keywords]]
+            if any(id(a) in holders or (isinstance(a, ast.Name) and a.id in holder_names) for a in args):
+                instances |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+    return out, instances
+
+
+def unwrap_managed_calls(info: dict[str, dict], instances: set[str], managed: list[dict]) -> None:
+    """mm.f1() -> f1() and mm.Management.f1() -> Management.f1(), when mm holds what the loader returned."""
+    if not instances:
+        return
+    loaded = {n for d in managed for n in d["names"]}
+    modules = {d["module"].split(".")[-1] for d in managed}
+    for f in info.values():
+        calls = []
+        for c in f.get("calls", []):
+            head, _, rest = c.partition(".")
+            if head in instances and rest:
+                first = rest.split(".", 1)[0]
+                if rest in loaded or first in modules:
+                    c = rest
+            if c not in calls:
+                calls.append(c)
+        f["calls"] = calls
 
 
 def _module_level(tree: ast.Module):

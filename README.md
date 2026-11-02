@@ -165,6 +165,38 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.5.2
+
+- **ModuleManager dictionaries found in more shapes.** Scripts that load functions with a home-built
+  loader fed a dict of modules and functions (no import lines) are now read when the dict:
+  is inside a function such as `main()`; is passed straight into the loader's call; is built with
+  `dict(...)`; is filled in one module at a time (`modules["Management"] = {...}`); or is a list
+  like `[{"module": "Management", "functions": [...]}]`. The function list can be a list, a
+  `"f1, f2"` string, a dict of names, or a variable holding one; any key with "func" in its name
+  counts (functions, funcs, function_list, funcs_to_load...). A module given as a file path
+  (`C:\code\tools\Management.py`) is matched by its file name. When the loader's result is kept
+  (`mm = ModuleManager(modules_to_load)`), calls like `mm.function1()` count as calls to
+  function1. Rescan your Python projects (`pdcat scan --force`) to pick this up.
+- **The right copy of a loaded module.** When several scanned files share the loaded module's name
+  (a live copy, a backup folder, an old version), the one in the dict's `local_folder` /
+  `sys_folder` now wins, then the current version. Before, whichever copy was scanned first was
+  used, so calls could link to the wrong file or to none.
+- **Helpers or process steps.** Inside this script (subway map and boxes) now hides helper
+  functions by default, with a **Show helpers** switch. A function is a process step when you
+  zoomed into it, nothing calls it (main, the script's own code), or it reads or writes a table or
+  file itself. Of the rest, helpers are those that never lead to a table or file, are used from
+  three or more places, or are named like helpers (`_private`, `get_`, `is_`, `format_`, `parse_`,
+  `log`...). Each step's card lists the helpers it uses ("+2 helpers: _clean_name, log_step") and
+  takes over anything they read or write, so no table or file drops off the map. A list under the
+  switch says why each one counted as a helper.
+- **Loaded by a helper.** A script's **Inside** tab lists each module its loader brings in, the
+  functions, the folders, and the scanned file it was matched to, or why not: no file of that name
+  was scanned (add the folder as a Python source with role library), or several were and none sits
+  in the named folders.
+- **Table diagrams in a ring.** On a table's or view's page, the diagram now puts the table in the
+  middle with the tables it joins to around it (up to 12 on an inner ring, the rest on an outer
+  one) instead of one tall column. Diagrams with three or fewer neighbours keep the old layout.
+
 ## New in version 2.5.1
 
 - **Loops on the function subway map.** A function's card on Inside this script › Subway map now

@@ -302,7 +302,8 @@ def inside_tab(cat: Catalogue, key: str, asset: dict) -> None:
         from .sql_pages import queries_in_box
         queries_in_box(cat, key)
     if kind in ("script", "notebook", "sql_script"):
-        from .item_boxes import unknown_files_box
+        from .item_boxes import managed_modules_box, unknown_files_box
+        managed_modules_box(cat, key, asset)
         unknown_files_box(cat, key)
     if kind == "access_db":
         from .sources_extra import access_section

@@ -265,3 +265,32 @@ def contains_table(cat: Catalogue, key: str, children: list) -> None:
     if sel:
         go(rows[sel[0]]["key"])
         st.rerun()
+
+
+def managed_modules_box(cat: Catalogue, key: str, asset: dict) -> None:
+    """Modules a home-built loader (ModuleManager) brings in from a dict, and which scanned file each one is."""
+    managed = [d for d in asset["attrs"].get("import_details") or [] if d.get("managed")]
+    if not managed:
+        return
+    from pdcat.codemap import code_files, pick_managed
+    from pdcat.groups import older_versions
+
+    from .common import asset_button
+    files, older = code_files(cat), older_versions(cat)
+    st.subheader(f"Loaded by a helper ({len(managed)})")
+    st.caption("Modules this script loads from a dict of modules and functions instead of import lines.")
+    for i, d in enumerate(managed):
+        target, same_name = pick_managed(d["module"], d.get("folders") or [], files, older)
+        with st.container(border=True):
+            st.markdown(f"**{d['module']}** · " + ", ".join(f"`{n}`" for n in d["names"]))
+            if d.get("folders"):
+                st.caption("From " + " or ".join(f"`{f}`" for f in d["folders"]))
+            if target:
+                asset_button(target, files[target], "script", f"managed-{key}-{i}")
+            elif same_name:
+                st.warning(f"{len(same_name)} scanned files are called {d['module']}.py and none is in the folders "
+                           "above, so calls to it aren't linked. Mark the old copies as older versions, or scan the "
+                           "folder it's really loaded from.")
+            else:
+                st.info(f"No scanned file is called {d['module']}.py, so calls to its functions aren't linked. Add "
+                        "the folder it's loaded from as a Python source (role: library) and scan it.", icon="➕")
