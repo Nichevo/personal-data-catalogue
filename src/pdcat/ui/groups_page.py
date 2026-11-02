@@ -171,37 +171,40 @@ def suggestions_page(cat: Catalogue) -> None:
 
 
 def suggestion_picker(cat: Catalogue, kind: str, *, prefix: str = "sp") -> None:
-    """Open suggestions of one kind, each with a tick box, and Accept / Reject for the ticked ones."""
-    rows = suggestions.open_suggestions(cat, kind, limit=300)
+    """Open suggestions of one kind: filter, tick the few that are wrong, accept all the others (or act on ticked)."""
+    rows = suggestions.open_suggestions(cat, kind, limit=100000)
     if not rows:
         st.caption("Nothing waiting.")
         return
+    from pdcat.triage import triage
+    rows = triage(cat, kind, rows)
     what, does = suggestions.help_for(kind)
     st.info(f"**What these are:** {what}  \n**Accept** {does} **Reject** means it isn't suggested again.", icon="💡")
-    c1, c2, _ = st.columns([1.4, 1.4, 4])
-    picked = []
-    for s in rows:
-        cc1, cc2 = st.columns([0.4, 8])
-        if cc1.checkbox("pick", key=f"{prefix}-{s['id']}", label_visibility="collapsed"):
-            picked.append(s["id"])
-        with cc2:
-            item = cat.get_asset(s["subject"]) if s["subject"] and "://" in s["subject"] else None
-            title = s["title"]
-            if item and item["name"] not in title.replace("**", ""):  # "Owner: Sam" -> about which item
-                title = f"{item['name']}: {title}"
-            st.markdown(title)
-            if s.get("detail"):
-                st.caption(s["detail"])
-            if item:
-                st.button(f"Open {item['name']}", key=f"{prefix}o-{s['id']}", on_click=go, args=(s["subject"],),
-                          type="tertiary")
-    if c1.button(f"Accept {len(picked) or 'ticked'}", key=f"{prefix}acc-{kind}", disabled=not picked, type="primary"):
-        for sid in picked:
-            suggestions.accept(cat, sid)
-        st.rerun()
-    if c2.button(f"Reject {len(picked) or 'ticked'}", key=f"{prefix}rej-{kind}", disabled=not picked):
-        for sid in picked:
-            suggestions.reject(cat, sid)
-        st.rerun()
+    names: dict[str, str] = {}
+
+    def item_name(s: dict) -> str:
+        subj = s["subject"]
+        if subj and "://" in subj and subj not in names:
+            item = cat.get_asset(subj)
+            names[subj] = item["name"] if item else ""
+        return names.get(subj or "", "")
+
+    def title(s: dict) -> str:
+        name = item_name(s)
+        t = s["title"]
+        return f"{name}: {t}" if name and name not in t.replace("**", "") else t  # "Owner: Sam" -> which item
+
+    def render(s: dict) -> None:
+        st.markdown(title(s))
+        if s.get("detail"):
+            st.caption(s["detail"])
+        if item_name(s):
+            st.button(f"Open {item_name(s)}", key=f"{prefix}o-{s['id']}", on_click=go, args=(s["subject"],),
+                      type="tertiary")
+
+    from .bulk import bulk_decide
+    bulk_decide(rows, prefix=f"{prefix}-{kind}", row_id=lambda s: s["id"],
+                text=lambda s: f"{s['title']} {s.get('detail') or ''} {s['subject'] or ''}", render=render,
+                accept=lambda s: suggestions.accept(cat, s["id"]), reject=lambda s: suggestions.reject(cat, s["id"]))
 
 

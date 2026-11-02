@@ -210,8 +210,9 @@ def metrics_page(cat: Catalogue) -> None:
     waiting = len(suggestions.open_suggestions(cat, "metric"))
     if waiting:
         with st.expander(f"💡 Suggested metrics ({waiting})", expanded=not K.list_metrics(cat)):
-            st.caption("Calculations found in your code, SQL and reports that aren't in the glossary yet. Tick the "
-                       "ones to add; rejected ones don't come back.")
+            st.caption("Calculations found in your code, SQL and reports that aren't in the glossary yet. Each is "
+                       "marked likely, check or unlikely; show the likely ones, tick any that are wrong and accept "
+                       "the rest. Rejected ones don't come back.")
             from .groups_page import suggestion_picker
             suggestion_picker(cat, "metric", prefix="mp")
     rows = K.list_metrics(cat)

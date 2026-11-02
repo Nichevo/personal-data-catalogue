@@ -78,6 +78,8 @@ def test_report_page_shows_measures_table_and_wireframe(catalogue, report, monke
     app = AppTest.from_file(str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py"), default_timeout=15)
     app.query_params["asset"] = report
     app.run()
+    from tests.test_app import open_tab
+    open_tab(app, "inside")
     assert not app.exception
     assert any(s.value.startswith("Measures (4)") for s in app.subheader)
     assert any("<svg" in m.value for m in app.markdown)

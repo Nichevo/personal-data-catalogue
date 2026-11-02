@@ -81,48 +81,73 @@ def series_section(cat: Catalogue, key: str, asset: dict) -> None:
             st.toast("Done. Re-scan the folder to see the separate files.")
 
 
-def item_extras_bottom(cat: Catalogue, key: str, asset: dict) -> None:
-    from pdcat.history import history
+def join_rows(cat: Catalogue, key: str, asset: dict) -> tuple[list[dict], list[dict]]:
+    """(company-wide key hints, joins) for a table or view."""
     from pdcat.keys import join_hints
-    from pdcat.knowledge import list_questions
-    from pdcat.relationships import joins_for, set_relationship_state
+    from pdcat.relationships import joins_for
     hints = join_hints(cat, key)
     joins = joins_for(cat, key) if asset["kind"] in ("table", "view") else []
-    if asset["kind"] in ("table", "view"):
-        item_erd(cat, key, asset, bool(joins))
-    if hints or joins:
-        st.subheader("Joins to")
-        for i, h in enumerate(hints):
+    return hints, joins
+
+
+def item_joins(cat: Catalogue, key: str, hints: list[dict], joins: list[dict]) -> None:
+    """Joins to: key hints and joins, the first 10 with a filter and "Show all" when there are many."""
+    from pdcat.relationships import set_relationship_state
+
+    from .item_tabs import limited
+    if not hints and not joins:
+        return
+    rows = [("hint", h) for h in hints] + [("join", r) for r in joins]
+
+    def text(row) -> str:
+        what, r = row
+        if what == "hint":
+            return f"{r['other_name'] or r['other']} {r['column']} {r['other_column']} {r['key']}"
+        return f"{r['src_key']} {r['dst_key']} {r['src_columns']} {r['dst_columns']} {r['state']} {r['evidence'] or ''}"
+
+    st.subheader(f"Joins to ({len(rows)})")
+    visible, footer = limited(rows, f"joins-{key}", text=text, noun="joins")
+    for i, (what, r) in enumerate(visible):
+        if what == "hint":
             c1, c2 = st.columns([3, 3])
             with c1:
-                st.button(f"🔑 {h['other_name'] or h['other']}", key=f"jh-{key}-{i}", on_click=go, args=(h["other"],),
-                          type="tertiary")
-            c2.caption(f"on {h['column']} = {h['other_column']} (company-wide key {h['key']})")
-        for i, r in enumerate(joins):
-            other, mine, theirs = (r["dst_key"], r["src_columns"], r["dst_columns"]) if r["src_key"] == key else \
-                (r["src_key"], r["dst_columns"], r["src_columns"])
-            c1, c2, c3 = st.columns([3, 3, 1.4])
-            with c1:
-                st.button(f"🗃️ {other.split('/')[-1]}", key=f"rel-{key}-{i}", on_click=go, args=(other,),
-                          type="tertiary")
-            label = {"declared": "foreign key", "confirmed": "confirmed", "suggested": "suggested"}[r["state"]] \
-                if r["state"] in ("declared", "confirmed", "suggested") else r["state"]
-            c2.caption(f"on {mine} = {theirs} · {label} · {r['evidence'] or ''}")
-            if r["state"] == "suggested":
-                with c3:
-                    a, b = st.columns(2)
-                    if a.button("✓", key=f"relok-{key}-{i}", help="Confirm this join"):
-                        set_relationship_state(cat, r, "confirmed")
-                        st.rerun()
-                    if b.button("✗", key=f"relno-{key}-{i}", help="Not a real join; don't suggest it again"):
-                        set_relationship_state(cat, r, "rejected")
-                        st.rerun()
+                st.button(f"🔑 {r['other_name'] or r['other']}", key=f"jh-{key}-{i}", on_click=go,
+                          args=(r["other"],), type="tertiary")
+            c2.caption(f"on {r['column']} = {r['other_column']} (company-wide key {r['key']})")
+            continue
+        other, mine, theirs = (r["dst_key"], r["src_columns"], r["dst_columns"]) if r["src_key"] == key else \
+            (r["src_key"], r["dst_columns"], r["src_columns"])
+        c1, c2, c3 = st.columns([3, 3, 1.4])
+        with c1:
+            st.button(f"🗃️ {other.split('/')[-1]}", key=f"rel-{key}-{i}", on_click=go, args=(other,),
+                      type="tertiary")
+        label = {"declared": "foreign key", "confirmed": "confirmed", "suggested": "suggested"}[r["state"]] \
+            if r["state"] in ("declared", "confirmed", "suggested") else r["state"]
+        c2.caption(f"on {mine} = {theirs} · {label} · {r['evidence'] or ''}")
+        if r["state"] == "suggested":
+            with c3:
+                a, b = st.columns(2)
+                if a.button("✓", key=f"relok-{key}-{i}", help="Confirm this join"):
+                    set_relationship_state(cat, r, "confirmed")
+                    st.rerun()
+                if b.button("✗", key=f"relno-{key}-{i}", help="Not a real join; don't suggest it again"):
+                    set_relationship_state(cat, r, "rejected")
+                    st.rerun()
+    footer()
+
+
+def change_history_box(cat: Catalogue, key: str) -> None:
+    from pdcat.history import history
     changes = history(cat, key)
     if changes:
         with st.expander(f"Change history ({len(changes)})"):
             import pandas as pd
             st.dataframe(pd.DataFrame([{"when": c["at"][:16].replace("T", " "), "change": c["change"],
                                         "detail": c["detail"]} for c in changes]), hide_index=True, width="stretch")
+
+
+def questions_box(cat: Catalogue, key: str) -> None:
+    from pdcat.knowledge import list_questions
     qs = list_questions(cat, table_key=key)
     if qs:
         st.subheader("Questions this answers")

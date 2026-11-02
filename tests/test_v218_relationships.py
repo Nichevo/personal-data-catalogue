@@ -197,6 +197,8 @@ def test_the_table_page_diagram_renders_and_opens_the_full_diagram(catalogue, mo
     app = AppTest.from_file(str(Path(__file__).parents[1] / "src" / "pdcat" / "app.py"), default_timeout=20)
     app.query_params["asset"] = sales
     app.run()
+    from tests.test_app import open_tab
+    open_tab(app, "connections")
     assert not app.exception
     assert any(h.value == "Diagram" for h in app.subheader)
     [b for b in app.button if b.label.startswith("🗺️ Open the full database diagram")][0].click().run()

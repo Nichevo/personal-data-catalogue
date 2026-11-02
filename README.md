@@ -165,6 +165,38 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.5
+
+- **Tidier item pages.** Every item page (table, view, file, script, report, folder, project) now
+  has a line of counts at the top ("3 to review", "4 notes", "42 columns", "read by 14", "joins 6")
+  and the same tabs: **Overview** (purpose, To review, notes, About this item, suggestions),
+  **Columns** or **Contents**, **Connections** (uses, made by, read by, joins, called by, SQL using
+  it, diagrams and data flow), **Inside** (functions, SQL in the file, report pages, measures and
+  model, sheets, environment) and **History** (over time, change log, edit history, details). Tabs
+  with nothing in them are left out. Only the open tab is drawn, so busy pages open faster. Click a
+  count to jump to its tab. The app remembers the last tab you used for each kind of item, so if
+  you always check a table's joins, every table opens on Connections. A link to a function opens
+  the script on Inside.
+- **Long lists cut to 10.** Read by, Joins to, Uses, Created or loaded by, Called by, To review,
+  report pages and a project's contents show the first 10, with a filter box and **Show all**.
+- **Deciding many suggestions at once.** Suggested SAP meanings, suggested metrics, every list on
+  the Suggestions page, suggested company-wide keys and the columns that probably carry a key now
+  work the same way: filter, tick only the few that are wrong, then **Accept all except ticked**
+  (it asks once to be sure and shows progress). You can still tick a few and accept or reject just
+  those. Long lists show 50 at a time.
+- **Likely, check or unlikely.** Each suggestion is marked 🟢 likely, 🟡 check or 🔴 unlikely with
+  a one-line reason, and you can show one band at a time, so you can accept all the likely ones in
+  one go and look properly at the rest. The marks use how strong the match is (a column named
+  exactly WERKS is likely; one that only contains it needs a check), what you decided before (if
+  you rejected Plant_Name as WERKS once, the next Plant_Name is unlikely), and for metrics how
+  many places a calculation is found and whether its name looks like a working column. Key columns
+  are marked by whether their data type matches the columns already confirmed. A **Group** picker
+  narrows the list to one SAP field, one kind of metric or one key.
+- **About page: high level or detailed.** The app map on Home › About has a switch. **Detailed**
+  draws one stop per part of the code, named module.function (for example
+  `scan_sqlserver.scan_server`), so you can see which piece does what and find it. A test checks
+  every name on the map still exists, so the drawing keeps up with the code.
+
 ## New in version 2.4.1
 
 - **Inside a script as a subway map.** On a Python script's page, under **Inside this script**,

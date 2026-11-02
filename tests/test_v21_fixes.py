@@ -124,6 +124,8 @@ def test_pasted_sql_page_has_tables_and_diagram(app, catalogue):
     key = catalogue.save_snippet("Stock by plant", "SELECT s.a FROM inv.Stock s JOIN inv.Plant p ON s.PlantId = p.PlantId")
     app.query_params["asset"] = key
     app.run()
+    from tests.test_app import open_tab
+    open_tab(app, "inside")
     assert not app.exception
     assert any("Tables it uses" in s.value for s in app.subheader)
     assert any("inv.stock" in b.label for b in app.button)

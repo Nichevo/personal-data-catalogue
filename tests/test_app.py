@@ -17,6 +17,12 @@ def sidebar_search(app, text: str):
     return app
 
 
+def open_tab(app, tab: str):
+    """Open one of an item page's tabs: overview, data, connections, inside or history."""
+    [g for g in app.button_group if (g.key or "").startswith("item-tab-")][0].set_value(tab).run()
+    assert not app.exception
+
+
 def goto(app, page: str):
     """Pick a page from the sidebar: its section first, then the page."""
     from pdcat.ui.main import ALIASES, sections
@@ -88,6 +94,7 @@ def test_add_sql_page_saves_and_opens_snippet(app, catalogue):
     key = app.query_params["asset"]
     key = key[0] if isinstance(key, list) else key
     assert catalogue.get_asset(key)["name"] == "Store regions"
+    open_tab(app, "connections")
     assert any("dbo.Store" in b.label for b in app.button)  # detail page shows the linked table
 
 
@@ -113,6 +120,7 @@ def test_data_folder_page_adds_and_scans(app, catalogue, tmp_path):
     app.query_params["asset"] = "files://extracts/sales.csv"
     app.run()
     assert not app.exception
+    open_tab(app, "data")
     assert any("Compare with" in e.label for e in app.expander)
     assert len(app.dataframe) >= 2  # profile + comparison
 
@@ -170,6 +178,7 @@ def test_script_page_zooms_into_a_function(app, catalogue):
     app.query_params["asset"] = key
     app.run()
     assert not app.exception
+    open_tab(app, "inside")
     zoom = [s for s in app.selectbox if s.label == "Zoom"][0]
     assert zoom.value == "(whole script)"
     assert any(d.value.shape[0] == 2 for d in app.dataframe)          # load and save
@@ -177,7 +186,7 @@ def test_script_page_zooms_into_a_function(app, catalogue):
     assert not app.exception
     assert app.query_params["fn"] in ("load", ["load"])
     assert any("def load(engine)" in c.value for c in app.code)
-    assert any("dbo.SalesDaily" in b.label for b in app.button)        # the table load reads
+    assert any("dbo.salesdaily" in b.label.lower() for b in app.button)  # the table load reads
     [b for b in app.button if b.label.startswith("🔭 Zoom out")][0].click().run()
     assert not app.exception
     assert [s for s in app.selectbox if s.label == "Zoom"][0].value == "(whole script)"
@@ -186,6 +195,7 @@ def test_script_page_zooms_into_a_function(app, catalogue):
 def test_script_page_draws_functions_as_subway_map(app):
     app.query_params["asset"] = "py://forecasting/src/features.py"
     app.run()
+    open_tab(app, "inside")
     app.radio(key="py://forecasting/src/features.py-fnview").set_value("subway").run()
     assert not app.exception
     assert any(b.label.startswith("⬇️ Subway map") for b in app.get("download_button"))
@@ -210,6 +220,7 @@ def test_project_page_shows_environment(app, catalogue, project):
     app.query_params["asset"] = "py://forecasting"
     app.run()
     assert not app.exception
+    open_tab(app, "inside")
     assert any(s.value == "Environment and libraries" for s in app.subheader)
     assert any(t.label.startswith("Declared, not imported (1)") for t in app.tabs)
 
@@ -337,8 +348,9 @@ def test_report_versions_show_over_time_and_on_the_group_page(app, catalogue, tm
         app.query_params["asset"] = key
         app.run()
         assert not app.exception, (key, app.exception)
-    assert any(s.value == "Over time" for s in app.subheader)
     assert any("Current version" in m.value for m in app.markdown)
+    open_tab(app, "history")
+    assert any(s.value == "Over time" for s in app.subheader)
 
 
 def test_scan_log_page_lists_scans(app, catalogue, tmp_path):

@@ -133,6 +133,9 @@ def called_by_box(cat: Catalogue, key: str) -> None:
         return
     st.subheader(f"Called by ({len(rows)})")
     from .common import asset_button
+    from .item_tabs import limited
+    rows, footer = limited(rows, f"calledby-{key}", text=lambda r: f"{r['src_name']} {r['evidence'] or ''}",
+                           noun="scripts")
     for i, r in enumerate(rows):
         c1, c2 = st.columns([3, 4])
         with c1:
@@ -141,6 +144,7 @@ def called_by_box(cat: Catalogue, key: str) -> None:
             c2.caption(f"imports it · uses {r['evidence']}" if r["evidence"] else "imports it")
         else:
             c2.caption(f"runs it · {r['how'] or ''} · {r['evidence'] or ''}")
+    footer()
 
 
 def unknown_files_box(cat: Catalogue, key: str) -> None:
