@@ -107,7 +107,34 @@
     return Math.max(60, Math.min(longest * 5.5 + 30, 260));
   }
 
+  // Around: the table the page is about in the middle and the tables it joins to in rings around it,
+  // instead of one tall column. Up to 12 sit on the inner ring, the rest on an outer one.
+  function aroundOptions(fit) {
+    const all = cy ? cy.nodes().filter((n) => !n.isParent()) : cytoscape().collection();
+    const focus = all.filter((n) => n.data("focus"));
+    const others = all.filter((n) => !n.data("focus")).sort(
+      (a, b) => String(a.data("label")).localeCompare(String(b.data("label"))));
+    const inner = others.slice(0, 12), outer = others.slice(12);
+    const size = (ns) => Math.max(60, ...ns.map((n) => Math.max(n.outerWidth(), n.outerHeight())));
+    const mid = focus.length ? Math.max(focus[0].outerWidth(), focus[0].outerHeight()) / 2 : 40;
+    // Rings big enough that neighbouring boxes don't touch; the outer ring sits in the gaps of the inner one,
+    // so its lines don't run through the inner boxes.
+    const r1 = Math.max(mid + size(inner) + 40, (inner.length * (size(inner) + 24)) / (2 * Math.PI));
+    const r2 = Math.max(r1 + size(outer) + 60, (outer.length * (size(outer) + 24)) / (2 * Math.PI));
+    const pos = {};
+    focus.forEach((n) => { pos[n.id()] = { x: 0, y: 0 }; });
+    [[inner, r1, 0], [outer, r2, 0.5]].forEach(([ring, r, shift]) => {
+      ring.forEach((n, i) => {
+        const a = -Math.PI / 2 + (2 * Math.PI * (i + shift)) / Math.max(ring.length, 1);
+        pos[n.id()] = { x: r * Math.cos(a) * 1.25, y: r * Math.sin(a) };
+      });
+    });
+    return { name: "preset", fit: fit !== false, padding: 24, animate: false,
+             positions: (n) => pos[n.id()] || { x: 0, y: 0 } };
+  }
+
   function layoutOptions(fit) {
+    if (args.around) { return aroundOptions(fit); }
     if (args.packed) {
       return {
         name: "elk", fit: fit !== false, padding: 20, nodeDimensionsIncludeLabels: true, animate: false,
@@ -307,7 +334,7 @@
       r.setProperty("--panel", theme.secondaryBackgroundColor || "#262730");
       r.setProperty("--line", "#3b3d45");
     }
-    const data = JSON.stringify([args.elements, args.direction, args.algorithm, args.packed, dark]);
+    const data = JSON.stringify([args.elements, args.direction, args.algorithm, args.packed, args.around, dark]);
     if (data !== lastData) {
       lastData = data;
       build({ elements: args.elements || [], open: args.open || [] }, dark);

@@ -186,8 +186,10 @@ def item_erd(cat: Catalogue, key: str, asset: dict, joined: bool = True) -> None
                "suggested ones dashed. Click a table to open it."
                + (f" {left_out} more joined tables are left out here; the full diagram has them all." if left_out
                   else ""))
-    graph_view(cat, elements, key=f"item-erd-{key}{'-f' if fields else ''}", height=420, direction="RIGHT",
-               name=f"erd-{asset['name']}")
+    n = sum(1 for e in elements if "source" not in e["data"])
+    graph_view(cat, elements, key=f"item-erd-{key}{'-f' if fields else ''}",
+               height=min(760, 380 + 14 * max(0, n - 6) + (200 if fields else 0)), direction="RIGHT",
+               name=f"erd-{asset['name']}", around=n > 3)
 
 
 def manual_link_form(cat: Catalogue, key: str) -> None:

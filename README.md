@@ -193,6 +193,9 @@ one at a time, and every query is logged:
   functions, the folders, and the scanned file it was matched to, or why not: no file of that name
   was scanned (add the folder as a Python source with role library), or several were and none sits
   in the named folders.
+- **Table diagrams in a ring.** On a table's or view's page, the diagram now puts the table in the
+  middle with the tables it joins to around it (up to 12 on an inner ring, the rest on an outer
+  one) instead of one tall column. Diagrams with three or fewer neighbours keep the old layout.
 
 ## New in version 2.5.1
 
