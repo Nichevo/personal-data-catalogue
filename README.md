@@ -165,6 +165,19 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.5.2
+
+- **ModuleManager dictionaries found in more shapes.** Scripts that load functions with a home-built
+  loader fed a dict of modules and functions (no import lines) are now read when the dict:
+  is inside a function such as `main()`; is passed straight into the loader's call; is built with
+  `dict(...)`; is filled in one module at a time (`modules["Management"] = {...}`); or is a list
+  like `[{"module": "Management", "functions": [...]}]`. The function list can be a list, a
+  `"f1, f2"` string, a dict of names, or a variable holding one; any key with "func" in its name
+  counts (functions, funcs, function_list, funcs_to_load...). A module given as a file path
+  (`C:\code\tools\Management.py`) is matched by its file name. When the loader's result is kept
+  (`mm = ModuleManager(modules_to_load)`), calls like `mm.function1()` count as calls to
+  function1. Rescan your Python projects (`pdcat scan --force`) to pick this up.
+
 ## New in version 2.5.1
 
 - **Loops on the function subway map.** A function's card on Inside this script › Subway map now
