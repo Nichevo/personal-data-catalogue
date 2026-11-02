@@ -75,12 +75,8 @@ def detail(cat: Catalogue, key: str) -> None:
         sap_m = meaning(info["sap_name"])
         meta.append(f"SAP {info['sap_name']}" + (f" ({sap_m})" if sap_m else ""))
     st.caption(" · ".join(str(m) for m in meta if m) + f"  \n`{key}`")
-    from .item_boxes import groups_box, item_actions, suggestions_box
+    from .item_boxes import item_actions
     item_actions(cat, key, info)
-    groups_box(cat, key)
-    if asset["kind"] == "table":
-        from .item_boxes import backup_link_box
-        backup_link_box(cat, key, asset)
     if info.get("lifecycle") in ("deprecated", "retired"):
         msg = f"This is marked **{info['lifecycle']}**."
         if info.get("replaced_by"):
@@ -105,6 +101,79 @@ def detail(cat: Catalogue, key: str) -> None:
         st.warning(f"Couldn't read this data file: {attrs['read_error']}")
     if attrs.get("path") and asset["kind"] in ("data_file", "folder", "project", "workbook", "report"):
         st.caption(f"📍 `{attrs['path']}`")
+
+    kind = asset["kind"]
+    columns = cat.columns(key)
+    notes = [n for n in cat.notes(key) if not n["archived"]]
+    mine = open_tasks(cat, asset_key=key, limit=1000)
+    from pdcat.links import links_for
+
+    from .extras import join_rows
+    links = links_for(cat, key, asset)
+    uses, made_by, read_by = links
+    hints, joins = join_rows(cat, key, asset) if kind in ("table", "view") else ([], [])
+    called = []
+    if kind in ("script", "notebook", "sql_script"):
+        from pdcat.codemap import called_by
+        called = called_by(cat, key)
+    children = [c for c in cat.children(key) if c["kind"] != "series_file"]
+    n_links = len({(l["relation"], l["dst_key"] or l["dst_ref"]) for l in uses}) + len(made_by) + len(read_by) + \
+        len(hints) + len(joins) + len(called)
+
+    labels = {"overview": "Overview"}
+    if kind in TABLE_LIKE or columns:
+        labels["data"] = f"Columns ({len(columns)})"
+    elif children or kind in ("folder", "database", "project"):
+        labels["data"] = f"Contents ({len(children)})"
+    if n_links or kind in TABLE_LIKE + ("script", "notebook", "sql_script", "project", "procedure", "report",
+                                        "workbook", "access_db"):
+        labels["connections"] = f"Connections ({n_links})"
+    if kind in ("report", "workbook", "script", "notebook", "sql_script", "access_db", "project", "view",
+                "procedure", "sql_snippet"):
+        labels["inside"] = "Inside"
+    labels["history"] = "History"
+
+    from .item_tabs import summary_chips, tab_bar
+    a = attrs
+    summary_chips(key, kind, [
+        (f"📋 {len(mine)} to review" if mine else "", "overview", True),
+        ("📝 " + _n(len(notes), "note") if notes else "", "overview", False),
+        (_n(len(columns), "column") if columns else "", "data", False),
+        (f"{len(children)} inside" if children and "data" in labels and not columns else "", "data", False),
+        (f"uses {len(uses)}" if uses else "", "connections", False),
+        (f"made by {len(made_by)}" if made_by else "", "connections", False),
+        (f"read by {len(read_by)}" if read_by else "", "connections", False),
+        (f"joins {len(hints) + len(joins)}" if hints or joins else "", "connections", False),
+        (f"called by {len(called)}" if called else "", "connections", False),
+        (_n(len(a["pages"]), "page") if kind == "report" and a.get("pages") else "", "inside", False),
+        (_n(len(a["measures"]), "measure") if kind == "report" and a.get("measures") else "", "inside", False),
+    ])
+    fn = st.query_params.get("fn")
+    if fn and "inside" in labels and not st.session_state.get(f"fnjump-{key}-{fn}"):
+        st.session_state[f"fnjump-{key}-{fn}"] = True  # a link to a function opens the Inside tab, once
+        from .item_tabs import jump
+        jump(key, kind, "inside")
+    tab = tab_bar(key, kind, labels)
+
+    if tab == "overview":
+        overview_tab(cat, key, asset, info, mine)
+    elif tab == "data":
+        data_tab(cat, key, asset, columns, children)
+    elif tab == "connections":
+        connections_tab(cat, key, asset, links, hints, joins)
+    elif tab == "inside":
+        inside_tab(cat, key, asset)
+    else:
+        history_tab(cat, key, asset)
+
+
+def _n(n: int, word: str) -> str:
+    return f"{n:,} {word}{'' if n == 1 else 's'}"
+
+
+def overview_tab(cat: Catalogue, key: str, asset: dict, info: dict, mine: list) -> None:
+    """What it is, what's waiting for you, your notes and what you know about it."""
+    attrs = asset["attrs"]
     if info.get("purpose"):
         st.markdown(f"**Purpose:** {info['purpose']}")
     if info.get("grain"):
@@ -115,26 +184,11 @@ def detail(cat: Catalogue, key: str) -> None:
              f"👤 owner {info['owner']}" if info.get("owner") else ""]
     if any(facts):
         st.caption(" · ".join(f for f in facts if f))
-
     if asset["kind"] == "data_source":
         data_source_facts(attrs)
-
-    from .extras import item_extras_top
-    item_extras_top(cat, key, asset)
-    from .documents_page import in_documents_box
-    in_documents_box(cat, key)
-    if asset["kind"] in ("report", "measure", "workbook"):
+    if asset["kind"] == "measure":
         from .office_pages import office_section
         office_section(cat, key, asset)
-
-    suggestions_box(cat, key)
-    mine = open_tasks(cat, asset_key=key, limit=1000)
-    if mine:
-        from .review_pages import task_card
-        with st.container(border=True):
-            st.markdown(f"**📋 To review ({len(mine)})**")
-            for t in mine:
-                task_card(cat, t, show_link=False)
     if asset["kind"] == "sql_snippet":
         from .sources import snippet_form
         st.code(attrs.get("sql", ""), language="sql")
@@ -142,78 +196,135 @@ def detail(cat: Catalogue, key: str) -> None:
             st.caption(" ".join(f"#{t.strip()}" for t in attrs["tags"].split(",") if t.strip()))
         with st.expander("Edit or delete this SQL"):
             snippet_form(cat, asset)
-        from .sql_pages import snippet_box
-        snippet_box(cat, asset)
-
-    about_form(cat, key, asset, info)
+    if mine:
+        from .item_tabs import limited
+        from .review_pages import task_card
+        with st.container(border=True):
+            st.markdown(f"**📋 To review ({len(mine)})**")
+            shown, footer = limited(mine, f"tasks-{key}")
+            for t in shown:
+                task_card(cat, t, show_link=False)
+            footer()
     columns = cat.columns(key)
     notes_section(cat, key, [c["name"] for c in columns])
-    if asset["kind"] in TABLE_LIKE and columns:
-        suggested_descriptions_box(cat, key, columns)
+    about_form(cat, key, asset, info)
+    from .item_boxes import groups_box, suggestions_box
+    suggestions_box(cat, key)
+    from .extras import item_extras_top, questions_box
+    item_extras_top(cat, key, asset)
+    from .documents_page import in_documents_box
+    in_documents_box(cat, key)
+    groups_box(cat, key)
+    if asset["kind"] == "table":
+        from .item_boxes import backup_link_box
+        backup_link_box(cat, key, asset)
+    questions_box(cat, key)
 
+
+def data_tab(cat: Catalogue, key: str, asset: dict, columns: list, children: list) -> None:
+    """Columns and values (tables and files) or what's inside (folders, databases, projects)."""
+    kind = asset["kind"]
+    if kind in TABLE_LIKE and columns:
+        suggested_descriptions_box(cat, key, columns)
     if columns and not cat.profile(key):
         columns_section(cat, key, columns)
-
-    if asset["kind"] in TABLE_LIKE:
+    if kind in TABLE_LIKE:
         profile_section(cat, key, asset)
         from .item_boxes import rule_checks_box
         rule_checks_box(cat, key)
         compare_section(cat, key)
-
-    lineage_section(cat, key, asset)
-    from .sql_pages import queries_in_box, renames_box, using_table_box
-    renames_box(cat, key)
-    if asset["kind"] in ("table", "view", "procedure"):
-        using_table_box(cat, key)
-    if asset["kind"] in ("script", "notebook", "sql_script", "workbook", "report", "access_db", "view", "procedure"):
-        queries_in_box(cat, key)
-
-    from .extras import item_extras_bottom
-    item_extras_bottom(cat, key, asset)
-
-    if asset["kind"] in ("script", "notebook", "sql_script"):
-        from .item_boxes import called_by_box, unknown_files_box
-        from .sources_extra import script_runs_box
-        script_runs_box(cat, key)
-        called_by_box(cat, key)
-        unknown_files_box(cat, key)
-    if asset["kind"] == "access_db":
-        from .sources_extra import access_section
-        access_section(cat, key, asset)
-    if asset["kind"] in ("script", "notebook", "sql_script"):
-        with st.expander("Data flow: where this script's data comes from and where it goes", expanded=True):
-            from .dataflow_page import flow_block
-            flow_block(cat, None, f"scriptflow-{key}", focus=key)
-    if asset["kind"] in ("script", "notebook") and attrs.get("function_info"):
-        from .code import functions_section
-        functions_section(cat, key, asset)
-
-    if asset["kind"] in ("database", "project"):
+    if kind in ("database", "project"):
         from .naming_box import naming_box
         naming_box(cat, key)
-    if asset["kind"] == "project":
-        from .code import diagram_block, environment_section
-        environment_section(cat, asset)
-        from .sources_extra import project_env_box
-        project_env_box(cat, key)
+    if kind == "folder":
+        from .documents_page import folder_documents_box
+        folder_documents_box(cat, key, asset)
+    if children:
+        st.subheader(f"Contains ({len(children)})")
+        if kind == "folder":
+            from .item_boxes import contains_table
+            contains_table(cat, key, children)
+        else:
+            from .item_tabs import limited
+            shown, footer = limited(children, f"children-{key}", text=lambda c: f"{c['name']} {c['kind']}",
+                                    noun="items")
+            result_list([{**dict(c), "source": "", "note_count": 0} for c in shown], "child")
+            footer()
+
+
+def connections_tab(cat: Catalogue, key: str, asset: dict, links: tuple, hints: list, joins: list) -> None:
+    """What it uses, what makes it, what reads it, what it joins to, and the diagrams."""
+    kind = asset["kind"]
+    lineage_section(cat, key, asset, links)
+    if kind in ("table", "view"):
+        from .extras import item_joins
+        item_joins(cat, key, hints, joins)
+    if kind in ("script", "notebook", "sql_script"):
+        from .item_boxes import called_by_box
+        called_by_box(cat, key)
+    from .sql_pages import renames_box, using_table_box
+    renames_box(cat, key)
+    if kind in ("table", "view", "procedure"):
+        using_table_box(cat, key)
+    if kind in ("table", "view"):
+        from .extras import item_erd
+        item_erd(cat, key, asset, bool(joins))
+    if kind in ("script", "notebook", "sql_script"):
+        st.subheader("Data flow")
+        st.caption("Where this script's data comes from and where it goes.")
+        from .dataflow_page import flow_block
+        flow_block(cat, None, f"scriptflow-{key}", focus=key)
+    if kind == "project":
+        from .code import diagram_block
         with st.expander("Code map: how this connects to your libraries and data"):
             diagram_block(cat, asset["source"], f"proj-{key}")
         with st.expander("Data flow: where this project's data comes from and where it goes"):
             from .dataflow_page import flow_block
             flow_block(cat, asset["source"], f"projflow-{key}")
 
-    if asset["kind"] == "folder":
-        from .documents_page import folder_documents_box
-        folder_documents_box(cat, key, asset)
-    children = [c for c in cat.children(key) if c["kind"] != "series_file"]
-    if children:
-        st.subheader("Contains")
-        if asset["kind"] == "folder":
-            from .item_boxes import contains_table
-            contains_table(cat, key, children)
-        else:
-            result_list([{**dict(c), "source": "", "note_count": 0} for c in children], "child")
 
+def inside_tab(cat: Catalogue, key: str, asset: dict) -> None:
+    """What's inside the file: functions and SQL, report pages and measures, sheets, queries, environment."""
+    kind, attrs = asset["kind"], asset["attrs"]
+    if kind in ("report", "workbook"):
+        from .office_pages import office_section
+        office_section(cat, key, asset)
+    if kind in ("view", "procedure") and attrs.get("definition"):
+        with st.expander("Definition (SQL)"):
+            st.code(attrs["definition"], language="sql")
+    if kind == "sql_snippet":
+        from .sql_pages import snippet_box
+        snippet_box(cat, asset)
+    if kind in ("script", "notebook") and attrs.get("function_info"):
+        from .code import functions_section
+        functions_section(cat, key, asset)
+    if kind in ("script", "notebook", "sql_script", "workbook", "report", "access_db", "view", "procedure"):
+        from .sql_pages import queries_in_box
+        queries_in_box(cat, key)
+    if kind in ("script", "notebook", "sql_script"):
+        from .item_boxes import unknown_files_box
+        unknown_files_box(cat, key)
+    if kind == "access_db":
+        from .sources_extra import access_section
+        access_section(cat, key, asset)
+    if kind == "project":
+        from .code import environment_section
+        environment_section(cat, asset)
+        from .sources_extra import project_env_box
+        project_env_box(cat, key)
+
+
+def history_tab(cat: Catalogue, key: str, asset: dict) -> None:
+    """How it changed: versions over time, scan changes, git log and runs, your edits, and the raw scan facts."""
+    kind, attrs = asset["kind"], asset["attrs"]
+    if kind in ("report", "workbook"):
+        from .office_pages import over_time
+        over_time(cat, key, kind)
+    if kind in ("script", "notebook", "sql_script"):
+        from .sources_extra import script_runs_box
+        script_runs_box(cat, key)
+    from .extras import change_history_box
+    change_history_box(cat, key)
     from .item_boxes import history_box
     history_box(cat, key)
     with st.expander("Details"):
@@ -487,9 +598,16 @@ def compare_frame(left, right) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
+def _link_text(l: dict) -> str:
+    return " ".join(str(l.get(f) or "") for f in ("src_name", "src_key", "dst_name", "dst_key", "dst_ref", "relation",
+                                                  "evidence"))
+
+
+def lineage_section(cat: Catalogue, key: str, asset: dict, links: tuple[list, list, list] | None = None) -> None:
     from pdcat.links import links_for
-    uses, made_by, read_by = links_for(cat, key, asset)
+
+    from .item_tabs import limited
+    uses, made_by, read_by = links or links_for(cat, key, asset)
     if not uses and not made_by and not read_by:
         if asset["kind"] in TABLE_LIKE:
             from .extras import manual_link_form
@@ -497,13 +615,15 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
                 manual_link_form(cat, key)
         return
     if uses:
-        st.subheader("Uses")
-        seen = set()
-        for i, l in enumerate(uses):
+        seen, unique = set(), []
+        for l in uses:
             ident = (l["relation"], l["dst_key"] or l["dst_ref"])
-            if ident in seen:
-                continue
-            seen.add(ident)
+            if ident not in seen:
+                seen.add(ident)
+                unique.append(l)
+        st.subheader(f"Uses ({len(unique)})")
+        shown, uses_footer = limited(unique, f"uses-{key}", text=_link_text, noun="items it uses")
+        for i, l in enumerate(shown):
             rel = RELATION_LABELS.get(l["relation"], l["relation"])
             c1, c2, c3, c4 = st.columns([1, 4, 2, 0.4])
             c1.caption(rel)
@@ -521,13 +641,15 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
             c3.caption(_how(l))
             with c4:
                 link_menu(cat, l, l["src_key"], l["relation"], l["dst_key"] or l["dst_ref"], f"uses-m-{i}")
+        uses_footer()
     left, right = st.columns(2)
     with left:
         if made_by or asset["kind"] in TABLE_LIKE:
-            st.subheader("Created or loaded by")
+            st.subheader(f"Created or loaded by ({len(made_by)})" if made_by else "Created or loaded by")
             if not made_by:
                 st.caption("Nothing found.")
-            for i, l in enumerate(made_by):
+            shown, made_footer = limited(made_by, f"madeby-{key}", text=_link_text, noun="scripts")
+            for i, l in enumerate(shown):
                 a, b = st.columns([6, 1])
                 with a:
                     link_button(l["src_key"], l["src_name"] or l["src_key"], l["src_kind"] or "script", f"madeby-{i}",
@@ -535,14 +657,16 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
                     st.caption(_how(l))
                 with b:
                     link_menu(cat, l, l["src_key"], l["relation"], key, f"madeby-m-{i}")
+            made_footer()
             if asset["kind"] in TABLE_LIKE:
                 from .extras import manual_link_form
                 with st.popover("➕ Link a script"):
                     manual_link_form(cat, key)
     with right:
         if read_by:
-            st.subheader("Read by" if asset["kind"] in TABLE_LIKE else "Used by")
-            for i, l in enumerate(read_by):
+            st.subheader(("Read by" if asset["kind"] in TABLE_LIKE else "Used by") + f" ({len(read_by)})")
+            shown, read_footer = limited(read_by, f"readby-{key}", text=_link_text, noun="readers")
+            for i, l in enumerate(shown):
                 rel = RELATION_LABELS.get(l["relation"], l["relation"]).lower()
                 a, b = st.columns([6, 1])
                 with a:
@@ -551,6 +675,7 @@ def lineage_section(cat: Catalogue, key: str, asset: dict) -> None:
                     st.caption(f"{rel} {l['evidence']}" if l["relation"] == "imports" and l["evidence"] else _how(l))
                 with b:
                     link_menu(cat, l, l["src_key"], l["relation"], key, f"readby-m-{i}")
+            read_footer()
 
 
 def link_button(key: str, label: str, kind: str, widget_key: str, unimportant: bool) -> None:

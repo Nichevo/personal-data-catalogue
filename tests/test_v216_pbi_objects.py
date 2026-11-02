@@ -105,6 +105,8 @@ def test_report_page_has_clickable_tables_and_queries(catalogue, report, monkeyp
     app = _app(catalogue, monkeypatch)
     app.query_params["asset"] = report
     app.run()
+    from tests.test_app import open_tab
+    open_tab(app, "inside")
     assert not app.exception
     assert any(s.value.startswith("Model tables (2)") for s in app.subheader)
     labels = [b.label for b in app.button]

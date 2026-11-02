@@ -89,7 +89,6 @@ def report_section(cat: Catalogue, key: str, asset: dict) -> None:
                                         else "inactive"} for r in a["relationships"]]), hide_index=True,
                          width="stretch")
     queries_block(a, key)
-    over_time(cat, key, "report")
 
 
 def over_time(cat: Catalogue, key: str, kind: str) -> None:
@@ -135,8 +134,11 @@ def _changes_md(changes: dict) -> None:
 def pages_section(cat: Catalogue, key: str, a: dict) -> None:
     from pdcat import screenshots
     from pdcat.measures import wireframe_svg
+
+    from .item_tabs import limited
     st.subheader(f"Pages ({len(a['pages'])})")
-    for pi, p in enumerate(a["pages"]):
+    pages, footer = limited(list(enumerate(a["pages"])), f"pages-{key}", text=lambda x: x[1]["name"], noun="pages")
+    for pi, p in pages:
         with st.expander(f"📄 {p['name']} · {len(p['visuals'])} visuals"):
             visuals = p["visuals"]
             has_layout = any((v.get("pos") or [0, 0, 0, 0])[2] for v in visuals)
@@ -183,6 +185,7 @@ def pages_section(cat: Catalogue, key: str, a: dict) -> None:
             if up is not None and st.button("Save screenshot", key=f"shot-save-{key}-{pi}"):
                 screenshots.add(cat, key, p["name"], up.getvalue(), up.type or "image/png")
                 st.rerun()
+    footer()
 
 
 def measures_table(cat: Catalogue, key: str) -> None:
@@ -297,7 +300,6 @@ def workbook_section(cat: Catalogue, key: str, asset: dict) -> None:
             st.code(v["sql"], language="sql")
     elif a.get("macros"):
         st.caption("Macros: " + ", ".join(a["macros"]) + " (no SQL found in them)")
-    over_time(cat, key, "workbook")
 
 
 def measures_across_page(cat: Catalogue) -> None:

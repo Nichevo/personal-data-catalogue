@@ -22,6 +22,8 @@ def app(catalogue, monkeypatch):
 def test_item_page_marks_a_link_not_important(app, catalogue):
     app.query_params["asset"] = STORE
     app.run()
+    from tests.test_app import open_tab
+    open_tab(app, "connections")
     assert not app.exception
     [b for b in app.button if b.label == "Not important"][0].click().run()
     assert not app.exception
@@ -85,6 +87,8 @@ def test_sql_queries_page_and_query_page(app, catalogue):
     assert ok_marks(catalogue, uid)
     app.query_params["asset"] = STORE
     app.run()
+    from tests.test_app import open_tab
+    open_tab(app, "connections")
     assert not app.exception
     assert any("SQL using this table" in e.label for e in app.expander)
 
@@ -95,6 +99,8 @@ def test_database_page_naming_rules(app, catalogue):
     assert catalogue.get_asset(db)
     app.query_params["asset"] = db
     app.run()
+    from tests.test_app import open_tab
+    open_tab(app, "data")
     assert not app.exception
     app.text_area(key=f"nr-text-{db}").input("Tables are PascalCase")
     [b for b in app.button if b.label == "Read the rules"][0].click().run()
@@ -124,6 +130,8 @@ def test_item_page_rule_checks(app, catalogue):
     from pdcat import rulechecks
     app.query_params["asset"] = SALES
     app.run()
+    from tests.test_app import open_tab
+    open_tab(app, "data")
     assert not app.exception
     app.text_input(key=f"rc-text-{SALES}").input("Units is never negative")
     [b for b in app.button if b.label == "Add the check"][0].click().run()
@@ -184,6 +192,8 @@ def test_folder_page_contains_table(app, catalogue, tmp_path):
     scan_folder(catalogue, "share", root)
     app.query_params["asset"] = "files://share"
     app.run()
+    from tests.test_app import open_tab
+    open_tab(app, "data")
     assert not app.exception
     df = app.dataframe(key="contains-files://share").value
     assert len(df) == 2 and "dated series" in set(df["type"])

@@ -317,5 +317,7 @@ def test_script_page_shows_its_data_flow(flows, monkeypatch):
     for key in ("py://weather/pull.py", "py://reporting/report.py", "py://forecasting/src/features.py"):
         app.query_params["asset"] = key
         app.run()
+        from tests.test_app import open_tab
+        open_tab(app, "connections")
         assert not app.exception, (key, app.exception)
-        assert any(e.label.startswith("Data flow") for e in app.expander), key
+        assert any(h.value == "Data flow" for h in app.subheader), key
