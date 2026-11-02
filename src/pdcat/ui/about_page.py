@@ -29,7 +29,7 @@ LINES = {
     "catalogue": ("The catalogue (one SQLite file)", "table"),
     "notes": ("Your notes, tags and answers", "table"),
     "todo": ("Follow-ups and To review items", "table"),
-    "exports": ("CSV / JSON exports and packs", "file"),
+    "exports": ("CSV and JSON exports and packs", "file"),
 }
 ROUTES = [("sql", "scan", "reads"), ("python", "scan", "reads"), ("office", "scan", "reads"),
           ("folders", "scan", "reads"), ("scan", "catalogue", "writes"),
@@ -39,6 +39,78 @@ ROUTES = [("sql", "scan", "reads"), ("python", "scan", "reads"), ("office", "sca
           ("review", "notes", "writes"), ("todo", "home", "reads"), ("catalogue", "home", "reads"),
           ("catalogue", "map", "reads"), ("catalogue", "share", "reads"), ("notes", "share", "reads"),
           ("share", "exports", "writes")]
+
+
+# The detailed view: the same journey, one station per part of the code, named as module.function so you can
+# find it. A test checks every name below still exists, so the drawing can't drift from the code.
+DETAIL_STATIONS = {
+    "sqlscan": ("SQL Server scan", "scan_sqlserver.scan_server"),
+    "pyscan": ("Python, notebook and .sql scan", "scan_python.scan_project"),
+    "pbiscan": ("Power BI scan", "scan_powerbi.read_report"),
+    "xlscan": ("Excel and Access scan", "scan_excel.read_workbook"),
+    "filescan": ("Data folder scan", "scan_files.scan_folder"),
+    "after": ("After-scan steps: links, groups, suggestions", "postscan.after_scan"),
+    "joins": ("Join finder", "relationships.find_suggestions"),
+    "keys": ("Company-wide keys", "keys.suggest_keys"),
+    "sap": ("SAP meanings", "sapterms.suggest_sap"),
+    "metrics": ("Metric finder", "metricfind.find_metrics"),
+    "triage": ("Likely, check or unlikely", "triage.triage"),
+    "decide": ("Accept or reject suggestions", "suggestions.accept"),
+    "notes": ("Notes and About boxes", "curation.set_item_info"),
+    "knowledge": ("Knowledge, questions, glossary", "knowledge.save_knowledge"),
+    "rules": ("Rule checks and naming audits", "rulechecks.run_check"),
+    "review": ("To review list", "review.refresh_tasks"),
+    "home": ("Follow-ups and what changed", "followups.follow_ups"),
+    "codemap": ("Code map", "codemap.build_graph"),
+    "flow": ("Data flow and subway maps", "dataflow.flow_graph"),
+    "pbimap": ("Power BI map and impact", "powerbimap.report_map"),
+    "erd": ("Table diagrams", "erd.erd_elements"),
+    "export": ("CSV and JSON export", "export.export_data"),
+    "pack": ("Copilot pack", "aipack.build"),
+    "sharefile": ("Share with colleagues", "sharing.make_share"),
+}
+DETAIL_LINES = {
+    "sql": ("🛢️ SQL Server tables and views", "outside"),
+    "python": ("Python projects and notebooks", "file"),
+    "pbi": ("Power BI files", "file"),
+    "excel": ("Excel and Access files", "file"),
+    "folders": ("Data folders (CSV, Parquet...)", "file"),
+    "assets": ("Catalogue items and links", "table"),
+    "sugg": ("Suggestions waiting", "table"),
+    "mine": ("Your notes, tags and answers", "table"),
+    "todo": ("Follow-ups and To review items", "table"),
+    "exports": ("Exports, packs and share files", "file"),
+}
+DETAIL_ROUTES = [
+    ("sql", "sqlscan", "reads"), ("python", "pyscan", "reads"), ("pbi", "pbiscan", "reads"),
+    ("excel", "xlscan", "reads"), ("folders", "filescan", "reads"),
+    *[(s, "assets", "writes") for s in ("sqlscan", "pyscan", "pbiscan", "xlscan", "filescan")],
+    ("assets", "after", "reads"), ("after", "sugg", "writes"),
+    *[(s, "after", "runs") for s in ("sqlscan", "pyscan", "pbiscan", "xlscan", "filescan")],
+    *[("assets", s, "reads") for s in ("joins", "keys", "sap", "metrics")],
+    *[("after", s, "runs") for s in ("joins", "keys", "sap", "metrics")],
+    *[(s, "sugg", "writes") for s in ("joins", "keys", "sap", "metrics")],
+    ("sugg", "triage", "reads"), ("sugg", "decide", "reads"), ("mine", "triage", "reads"), ("triage", "decide", "runs"),
+    ("decide", "mine", "writes"), ("assets", "notes", "reads"), ("notes", "mine", "writes"),
+    ("assets", "knowledge", "reads"), ("knowledge", "mine", "writes"),
+    ("assets", "rules", "reads"), ("rules", "todo", "writes"), ("assets", "review", "reads"),
+    ("review", "todo", "writes"), ("todo", "home", "reads"), ("mine", "home", "reads"),
+    *[("assets", s, "reads") for s in ("codemap", "flow", "pbimap", "erd")],
+    *[("assets", s, "reads") for s in ("export", "pack", "sharefile")],
+    *[("mine", s, "reads") for s in ("export", "pack", "sharefile")],
+    *[(s, "exports", "writes") for s in ("export", "pack", "sharefile")],
+]
+
+
+def detailed_map() -> Graph:
+    g = Graph()
+    for k, (label, where) in DETAIL_STATIONS.items():
+        g.nodes[k] = {"label": f"{label} · {where}", "kind": "code", "group": None, "key": None}
+    for k, (label, kind) in DETAIL_LINES.items():
+        g.nodes[k] = {"label": label, "kind": kind, "group": None, "key": None}
+    for a, b, rel in DETAIL_ROUTES:
+        g.edges[(a, b, rel)]
+    return g
 
 
 def app_map() -> Graph:
@@ -77,9 +149,16 @@ def about_page(cat: Catalogue) -> None:
                 "workbooks and data folders, keeps what it finds in one SQLite file, and lets you add what only "
                 "you know. Nothing leaves your computer unless you export it.")
     st.subheader("How it fits together")
+    level = st.segmented_control("Show", ["High level", "Detailed"], default="High level", key="about-level",
+                                 label_visibility="collapsed") or "High level"
     st.caption("Each coloured line is something the app works with, running top to bottom through the parts of "
-               "the app that use it. ▶ is where it comes in or is made, ■ where it ends.")
-    show_svg(subway_svg(app_map(), width=760), key="about-map", max_height=1400)
+               "the app that use it. ▶ is where it comes in or is made, ■ where it ends."
+               + (" Detailed: one stop per part of the code, named module.function so you can find it."
+                  if level == "Detailed" else ""))
+    if level == "Detailed":
+        show_svg(subway_svg(detailed_map(), width=900), key="about-map-detail", max_height=2400)
+    else:
+        show_svg(subway_svg(app_map(), width=760), key="about-map", max_height=1400)
     st.subheader("What's new")
     notes = releases()
     if not notes:

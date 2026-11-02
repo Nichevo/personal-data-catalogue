@@ -58,3 +58,25 @@ def test_about_page_and_subway_data_flow_render(catalogue, monkeypatch):
     assert not app.exception
     app.checkbox(key="flow-versions").check().run()
     assert not app.exception
+
+
+def test_about_detailed_map_names_real_functions(catalogue, monkeypatch):
+    import importlib
+
+    from pdcat.subway import subway_svg
+    from pdcat.ui.about_page import DETAIL_ROUTES, DETAIL_STATIONS, detailed_map
+    for _, where in DETAIL_STATIONS.values():
+        module, func = where.rsplit(".", 1)
+        assert hasattr(importlib.import_module(f"pdcat.{module}"), func), where
+    names = set(detailed_map().nodes)
+    assert all(a in names and b in names for a, b, _ in DETAIL_ROUTES)
+    assert subway_svg(detailed_map()).startswith("<svg")
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+    from test_app import APP, goto
+    monkeypatch.setenv("PDCAT_DB", str(catalogue.path))
+    app = AppTest.from_file(APP, default_timeout=20)
+    app.run()
+    goto(app, "About")
+    app.button_group(key="about-level").set_value("Detailed").run()
+    assert not app.exception
