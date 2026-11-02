@@ -43,6 +43,8 @@ def resolve_imports(cat: Catalogue) -> int:
         if attrs.get("import_details"):
             scripts.append((row["key"], row["source"], attrs))
 
+    from .groups import older_versions
+    files, older = code_files(cat), older_versions(cat)
     links = []
     for key, source, attrs in scripts:
         own = (attrs.get("modules") or [""])[0]
@@ -63,9 +65,12 @@ def resolve_imports(cat: Catalogue) -> int:
                     plain_names.append(n)
             if not absolute:
                 continue
-            target = _longest_match(absolute, modules)
-            if not target and imp.get("managed"):
-                target = by_last_name(absolute, modules)
+            if imp.get("managed"):
+                # Loader-named modules: several scanned files may share the name; the loader's folders decide.
+                target = pick_managed(absolute, imp.get("folders") or [], files, older)[0] or \
+                    _longest_match(absolute, modules) or by_last_name(absolute, modules)
+            else:
+                target = _longest_match(absolute, modules)
             if target and (plain_names or not names):
                 targets[target].update(plain_names)
         for target, used in targets.items():
@@ -165,6 +170,42 @@ def _absolute(module: str, level: int, own: str, is_package: bool) -> str | None
         return None
     base = package[: len(package) - (level - 1)]
     return ".".join([*base, module] if module else base)
+
+
+def _norm_folder(p: str) -> str:
+    return p.replace("\\", "/").rstrip("/").lower()
+
+
+def managed_candidates(module: str, files: dict[str, str]) -> list[str]:
+    """Scanned scripts whose file name is the module a loader names (Management -> .../Management.py)."""
+    want = module.rsplit(".", 1)[-1].lower()
+    return sorted(k for k, path in files.items() if Path(path.replace("\\", "/")).stem.lower() == want)
+
+
+def pick_managed(module: str, folders: list[str], files: dict[str, str], older: set[str]) -> tuple[str | None, list[str]]:
+    """(the script a home-built loader loads for `module`, every same-named script found).
+
+    The loader's dict names the module and the folders it is loaded from, so when several scanned files share
+    the name (copies, old versions, a backup folder) the one in a named folder wins, then the current version."""
+    hits = managed_candidates(module, files)
+    if len(hits) > 1 and folders:
+        wanted = [_norm_folder(f) for f in folders]
+        tails = ["/".join(w.split("/")[-2:]) for w in wanted]
+
+        def in_folder(k: str) -> bool:
+            parent = _norm_folder(str(Path(files[k].replace("\\", "/")).parent))
+            return any(parent == w or parent.endswith("/" + t) for w, t in zip(wanted, tails, strict=True))
+
+        hits = [k for k in hits if in_folder(k)] or hits
+    if len(hits) > 1:
+        hits = [k for k in hits if k not in older] or hits
+    return (hits[0] if len(hits) == 1 else None), managed_candidates(module, files)
+
+
+def code_files(cat: Catalogue) -> dict[str, str]:
+    """Scanned script key -> its full path (or key), for matching loader-named modules by file name."""
+    return {r[0]: (json.loads(r[1] or "{}").get("full_path") or r[0]) for r in cat.conn.execute(
+        "SELECT key, attrs FROM assets WHERE kind IN ('script', 'notebook') AND status = 'active'")}
 
 
 def by_last_name(module: str, modules: dict[str, str]) -> str | None:
@@ -567,6 +608,13 @@ class CodeIndex:
     def functions(self, key: str) -> dict[str, dict]:
         return (self.assets.get(key) or {}).get("attrs", {}).get("function_info") or {}
 
+    def managed_key(self, module: str, folders: list[str]) -> str | None:
+        if not hasattr(self, "_files"):
+            from .groups import older_versions
+            self._files = {k: a["attrs"].get("full_path") or k for k, a in self.assets.items()}
+            self._older = older_versions(self.cat)
+        return pick_managed(module, folders, self._files, self._older)[0]
+
     def resolve(self, key: str, call: str, scope: str | None = None) -> tuple:
         """("local", key, fn) | ("lib", key, fn) | ("other", call)."""
         info = self.functions(key)
@@ -593,10 +641,14 @@ class CodeIndex:
             if absolute:
                 dotted = f"{absolute}.{rest}" if rest else absolute
                 parts = dotted.split(".")
-                managed = {d["module"] for d in attrs.get("import_details") or [] if d.get("managed")}
+                managed = {d["module"]: d for d in attrs.get("import_details") or [] if d.get("managed")}
                 for i in range(len(parts) - 1, 0, -1):
                     mod = ".".join(parts[:i])
-                    mod_key = self.modules.get(mod) or (by_last_name(mod, self.modules) if mod in managed else None)
+                    if mod in managed:
+                        mod_key = self.managed_key(mod, managed[mod].get("folders") or []) or \
+                            self.modules.get(mod) or by_last_name(mod, self.modules)
+                    else:
+                        mod_key = self.modules.get(mod)
                     if mod_key:
                         return ("lib", mod_key, ".".join(parts[i:]))
         return ("other", call)

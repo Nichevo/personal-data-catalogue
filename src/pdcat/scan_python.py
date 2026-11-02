@@ -1175,7 +1175,14 @@ def managed_imports(tree: ast.Module, with_instances: bool = False):
         module = module.removesuffix(".py").replace("/", ".").strip(".")
         if not module:
             return None
-        return {"module": module, "names": sorted(set(names)), "level": 0, "line": line, "managed": True}
+        folders = []
+        for k, val in d.items():
+            val = deref(val)
+            if any(w in k.lower() for w in ("folder", "path", "dir", "location")) and isinstance(val, ast.Constant) \
+                    and isinstance(val.value, str) and val.value.strip():
+                folders.append(val.value.strip())
+        return {"module": module, "names": sorted(set(names)), "level": 0, "line": line, "managed": True,
+                "folders": folders}
 
     found: dict[str, dict] = {}
     holders: set[int] = set()   # ids of dict / list nodes that turned out to describe managed modules
@@ -1188,6 +1195,7 @@ def managed_imports(tree: ast.Module, with_instances: bool = False):
         have = found.get(sp["module"])
         if have:
             have["names"] = sorted(set(have["names"]) | set(sp["names"]))
+            have["folders"] = list(dict.fromkeys(have["folders"] + sp["folders"]))
         else:
             found[sp["module"]] = sp
 

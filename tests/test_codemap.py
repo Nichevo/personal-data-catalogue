@@ -320,6 +320,12 @@ def test_module_manager_dict_in_other_shapes():
         more = [{"module": r"C:\\code\\tools\\Stock.py", "functions": {"soh": "stock_on_hand"}}]
         ModuleManager(to_load)
     ''')[0] == {"Management": ["f1"], "Stock": ["soh"]}
+    # The loader's own shape: for module, details in modules_to_load.items(): for name in details["function"].
+    assert found('''
+        modules_to_load = {"Management": {"local_folder": "C:/code", "sys_folder": "//srv/code",
+                                          "function": ["function1", "function2"]}}
+        ModuleManager(modules_to_load)
+    ''')[0] == {"Management": ["function1", "function2"]}
     # Ordinary dicts are left alone.
     assert found('cfg = {"server": {"name": "x", "timeout": 3}}')[0] == {}
 
@@ -343,3 +349,45 @@ def test_module_manager_inside_main_with_instance_calls(libs, project, tmp_path)
     key, lib = "py://forecasting/src/managed2.py", "py://shared/tools/Management.py"
     assert any(l["dst_key"] == lib for l in libs.links_from(key) if l["relation"] == "imports")
     assert ("lib", lib, "function1") in set(CodeIndex(libs).calls(key, "main"))
+
+
+def test_module_manager_picks_the_copy_in_its_folder(libs, project, tmp_path):
+    from pdcat.codemap import CodeIndex
+
+    shared = tmp_path / "shared-code"
+    for folder in ("live", "backup"):
+        write(shared, f"{folder}/Management.py", '''
+            def function1(df):
+                return df
+        ''')
+    live = str(shared / "live").replace("\\", "/")
+    write(project, "src/managed3.py", f'''
+        modules_to_load = {{"Management": {{"local_folder": r"{live}", "function": ["function1"]}}}}
+        ModuleManager(modules_to_load)
+
+        def main(df):
+            return function1(df)
+    ''')
+    scan_project(libs, PythonSource(name="shared", path=shared, role="library"))
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    key, lib = "py://forecasting/src/managed3.py", "py://shared/live/Management.py"
+    assert any(l["dst_key"] == lib for l in libs.links_from(key) if l["relation"] == "imports")
+    assert ("lib", lib, "function1") in set(CodeIndex(libs).calls(key, "main"))
+
+
+def test_script_page_lists_modules_loaded_by_a_helper(libs, project, tmp_path, monkeypatch):
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+    from test_app import APP, open_tab
+    write(project, "src/managed4.py", '''
+        modules_to_load = {"Missing": {"local_folder": "C:/code", "function": ["f1"]}}
+        ModuleManager(modules_to_load)
+    ''')
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    monkeypatch.setenv("PDCAT_DB", str(libs.path))
+    app = AppTest.from_file(APP, default_timeout=15)
+    app.query_params["asset"] = "py://forecasting/src/managed4.py"
+    app.run()
+    open_tab(app, "inside")
+    assert any(h.value.startswith("Loaded by a helper") for h in app.subheader)
+    assert any("No scanned file is called Missing.py" in m.value for m in app.info)

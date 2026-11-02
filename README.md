@@ -177,6 +177,14 @@ one at a time, and every query is logged:
   (`C:\code\tools\Management.py`) is matched by its file name. When the loader's result is kept
   (`mm = ModuleManager(modules_to_load)`), calls like `mm.function1()` count as calls to
   function1. Rescan your Python projects (`pdcat scan --force`) to pick this up.
+- **The right copy of a loaded module.** When several scanned files share the loaded module's name
+  (a live copy, a backup folder, an old version), the one in the dict's `local_folder` /
+  `sys_folder` now wins, then the current version. Before, whichever copy was scanned first was
+  used, so calls could link to the wrong file or to none.
+- **Loaded by a helper.** A script's **Inside** tab lists each module its loader brings in, the
+  functions, the folders, and the scanned file it was matched to, or why not: no file of that name
+  was scanned (add the folder as a Python source with role library), or several were and none sits
+  in the named folders.
 
 ## New in version 2.5.1
 
