@@ -976,6 +976,26 @@ def _own_nodes(fn: ast.AST):
     return sorted(found, key=lambda n: (getattr(n, "lineno", 0), getattr(n, "col_offset", 0)))
 
 
+_LOOPS = (ast.For, ast.AsyncFor, ast.While, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _loops(fn: ast.AST) -> tuple[int, list[str]]:
+    """(how many loops a function has, the calls made inside them), not counting nested functions.
+    for / while loops and comprehensions count; a call in the loop's own header (`for x in load():`) runs once."""
+    count, inside = 0, []
+    for node in _own_nodes(fn):
+        if not isinstance(node, _LOOPS):
+            continue
+        count += 1
+        once = {id(n) for n in ast.walk(node.iter)} if isinstance(node, (ast.For, ast.AsyncFor)) else set()
+        for sub in _own_nodes(node):
+            if isinstance(sub, ast.Call) and id(sub) not in once:
+                c = _call_name(sub)
+                if c and c not in inside:
+                    inside.append(c)
+    return count, inside
+
+
 def _src(node: ast.AST | None, limit: int = 80) -> str:
     if node is None:
         return ""
@@ -1026,7 +1046,13 @@ def _describe(fn: ast.AST, name: str) -> dict:
         elif isinstance(node, (ast.Yield, ast.YieldFrom)):
             yields = True
     doc = ast.get_docstring(fn) or ""
+    loops, loop_calls = _loops(fn)
+    short = name.rsplit(".", 1)[-1]
+    # A method calling a bare name of its own calls a module function, not itself.
+    recursive = any(c == name or (c == short and "." not in name)
+                    or (c.split(".", 1)[0] in ("self", "cls") and c.endswith(f".{short}")) for c in calls)
     return {
+        "loops": loops, "loop_calls": loop_calls[:20], "recursive": recursive,
         "params": params, "returns_annotation": _src(fn.returns), "returns": returns[:6], "yields": yields,
         "calls": calls[:60], "doc": doc[:3000], "line": fn.lineno, "end_line": getattr(fn, "end_lineno", fn.lineno),
         "is_async": isinstance(fn, ast.AsyncFunctionDef), "decorators": [_src(d, 40) for d in fn.decorator_list],

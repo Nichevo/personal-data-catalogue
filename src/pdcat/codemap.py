@@ -649,7 +649,9 @@ def function_graph(cat: Catalogue, key: str, focus: str | None = None, *, depth:
         group = (a["name"] if k == key else f"{a['source']}: {a['name']}") + (" (older version)" if k in older else "")
         kind = "focus" if is_focus else ("function" if k == key else "libfn")
         if nid not in g.nodes or is_focus:
-            g.nodes[nid] = {"label": fn, "kind": kind, "group": group}
+            info = idx.functions(k).get(fn) or {}
+            g.nodes[nid] = {"label": fn, "kind": kind, "group": group, "loops": info.get("loops") or 0,
+                            "loop_calls": info.get("loop_calls") or [], "recursive": bool(info.get("recursive"))}
         return nid
 
     def add_data(k: str, fn: str, nid: str) -> None:

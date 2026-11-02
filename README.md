@@ -165,6 +165,15 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.5.1
+
+- **Loops on the function subway map.** A function's card on Inside this script › Subway map now
+  says "↻ in a loop: load, clean" when it calls those functions inside a `for` / `while` loop or a
+  comprehension (a call in the loop's own header, like `for x in load():`, runs once and doesn't
+  count), or "↻ 2 loops" when its loops call nothing else. A function that calls itself gets
+  "↻ calls itself" and a dashed loop beside its stop. Rescan your Python projects once to fill this
+  in (Add › Sources, or `pdcat scan --force`).
+
 ## New in version 2.5
 
 - **Tidier item pages.** Every item page (table, view, file, script, report, folder, project) now

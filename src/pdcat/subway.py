@@ -166,6 +166,22 @@ def layout(g: Graph, rows: dict[str, int] | None = None) -> dict[str, Any]:
             "nodes": g.nodes}
 
 
+def loop_note(n: dict) -> str:
+    """"↻ calls itself", "↻ loop: load, clean" or "↻ 2 loops" for a function station; "" otherwise."""
+    if n.get("kind") not in FUNCTION_KINDS:
+        return ""
+    bits = []
+    if n.get("recursive"):
+        bits.append("↻ calls itself")
+    names = [c.rsplit(".", 1)[-1] for c in n.get("loop_calls") or []]
+    names = list(dict.fromkeys(names))
+    if names:
+        bits.append("↻ in a loop: " + ", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else ""))
+    elif n.get("loops"):
+        bits.append(f"↻ {n['loops']} loop{'s' if n['loops'] != 1 else ''}")
+    return " · ".join(bits)
+
+
 def _short(n: int | None) -> str:
     if n is None:
         return ""
@@ -250,8 +266,13 @@ def subway_svg(g: Graph, rows: dict[str, int] | None = None, *, width: int = 900
         wr = len(lay["writes"][s])
         calls = sum(1 for (a, _, rel) in g.edges if rel == "runs" and a == s) if n["kind"] in FUNCTION_KINDS else 0
         sub = " · ".join(p for p in (f"calls {calls}" if calls else "", f"reads {r}" if r else "",
-                                     f"writes {wr}" if wr else "",
+                                     f"writes {wr}" if wr else "", loop_note(n),
                                      (n.get("group") or "").lstrip("📁📊 ").strip()) if p)
+        if n.get("recursive"):  # calls itself: a grey loop beside the station
+            out.append(f'<path d="M{xs[0] - 12},{y - 14} C{xs[0] - 44},{y - 22} {xs[0] - 44},{y + 22} '
+                       f'{xs[0] - 12},{y + 14}" stroke="#3a3a4a" stroke-width="2.5" fill="none" '
+                       f'stroke-dasharray="4 3"><title>Calls itself</title></path>'
+                       f'<path d="M{xs[0] - 11},{y + 14} l-8,-5 l0,9 z" fill="#3a3a4a"/>')
         title = n["label"] if n["kind"] in FUNCTION_KINDS else n["label"].rsplit("/", 1)[-1]
         card_w = max(len(title) * 8.4, len(sub) * 6.6) + 28
         edge = ' stroke="#b45309" stroke-width="2"' if n["kind"] == "focus" else ' stroke="#e2e2ea"'
