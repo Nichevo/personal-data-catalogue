@@ -303,6 +303,7 @@ def scan_python_source(text: str) -> Found:
                 found.attrs["import_map"].setdefault(fn, f"{d['module']}.{fn}")
     found.attrs["function_info"] = _function_info(tree)
     unwrap_managed_calls(found.attrs["function_info"], instances, managed)
+    add_managed_mentions(tree, found.attrs["function_info"], managed)
     paths = _sys_path_additions(tree, consts)
     if paths:
         found.attrs["sys_path"] = paths
@@ -1020,6 +1021,11 @@ def _call_name(call: ast.Call) -> str | None:
     return None
 
 
+# Calls kept per function. Was 60, which cut off calls near the end of long scripts (a script whose code is
+# mostly at the top level easily makes 60 different pandas/print calls before the ones that matter).
+MAX_CALLS = 500
+
+
 def _describe(fn: ast.AST, name: str) -> dict:
     """Signature, docstring, what a function calls and what it returns."""
     a = fn.args
@@ -1055,7 +1061,7 @@ def _describe(fn: ast.AST, name: str) -> dict:
     return {
         "loops": loops, "loop_calls": loop_calls[:20], "recursive": recursive,
         "params": params, "returns_annotation": _src(fn.returns), "returns": returns[:6], "yields": yields,
-        "calls": calls[:60], "doc": doc[:3000], "line": fn.lineno, "end_line": getattr(fn, "end_lineno", fn.lineno),
+        "calls": calls[:MAX_CALLS], "doc": doc[:3000], "line": fn.lineno, "end_line": getattr(fn, "end_lineno", fn.lineno),
         "is_async": isinstance(fn, ast.AsyncFunctionDef), "decorators": [_src(d, 40) for d in fn.decorator_list],
     }
 
@@ -1074,7 +1080,7 @@ def _function_info(tree: ast.Module) -> dict[str, dict]:
                     module_calls.append(c)
     if module_calls:
         info["(script)"] = {"params": [], "returns_annotation": "", "returns": [], "yields": False,
-                            "calls": module_calls[:60], "doc": "Code that runs when the script itself is run.",
+                            "calls": module_calls[:MAX_CALLS], "doc": "Code that runs when the script itself is run.",
                             "line": 1, "end_line": len(tree.body), "is_async": False, "decorators": []}
     return info
 
@@ -1231,6 +1237,38 @@ def managed_imports(tree: ast.Module, with_instances: bool = False):
             if any(id(a) in holders or (isinstance(a, ast.Name) and a.id in holder_names) for a in args):
                 instances |= {t.id for t in node.targets if isinstance(t, ast.Name)}
     return out, instances
+
+
+def add_managed_mentions(tree: ast.Module, info: dict[str, dict], managed: list[dict]) -> None:
+    """A function loaded by the loader counts as used wherever its name appears in the code, not only where
+    it is called by name: passed on (`df.pipe(clean)`, `apply(fn)`, `pool.map(train, xs)`), stored
+    (`steps = [load, train]`), or called in a way that isn't a plain call. Strings don't count, since the
+    loader's own dict lists every name as a string."""
+    loaded = {n for d in managed for n in d["names"]}
+    if not loaded:
+        return
+
+    def mentions(nodes) -> list[str]:
+        out = []
+        for n in nodes:
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in loaded and n.id not in out:
+                out.append(n.id)
+        return out
+
+    scopes = [(name, _own_nodes(node)) for name, node in _functions(tree)]
+    top = []
+    for stmt in tree.body:
+        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom)):
+            top += [stmt, *_own_nodes(stmt)]
+    scopes.append(("(script)", top))
+    for name, nodes in scopes:
+        found = [m for m in mentions(nodes) if m != name]
+        if not found:
+            continue
+        f = info.setdefault(name, {"params": [], "returns_annotation": "", "returns": [], "yields": False,
+                                   "calls": [], "doc": "Code that runs when the script itself is run.",
+                                   "line": 1, "end_line": len(tree.body), "is_async": False, "decorators": []})
+        f["calls"] = [*f.get("calls", []), *(m for m in found if m not in f.get("calls", []))]
 
 
 def unwrap_managed_calls(info: dict[str, dict], instances: set[str], managed: list[dict]) -> None:

@@ -165,6 +165,17 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.5.3
+
+- **Calls far down a long script are found.** Only the first 60 different calls in a function (or in a
+  script's top-level code) were kept, so in a long script a call like `model_configs = train_sub_models()`
+  near the bottom could be missed. Up to 500 are kept now. Rescan your Python projects
+  (`pdcat scan --force`) to pick this up.
+- **Loaded functions stay on the map.** With helpers hidden, a function from another file (such as one
+  brought in by ModuleManager) was counted as a helper when it reached no table or file one level
+  down. Those functions are often a script's main steps, so they now only count as helpers by name or
+  when used from three or more places.
+
 ## New in version 2.5.2
 
 - **ModuleManager dictionaries found in more shapes.** Scripts that load functions with a home-built

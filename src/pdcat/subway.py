@@ -175,8 +175,8 @@ def helper_functions(g) -> dict[str, str]:
 
     A function is a process step when it is the one you zoomed into, nothing here calls it (an entry point
     such as main or the script's own code), or it reads or writes a table or file itself. Of the rest, a
-    helper is one that never leads to any table or file, one called from three or more places, or one named
-    like a helper (_private, get_, is_, format_, parse_, log...)."""
+    helper is one that never leads to any table or file (not judged for functions from other files, which are
+    only looked at one level deep), one called from three or more places, or one named like a helper (_private, get_, is_, format_, parse_, log...)."""
     funcs = {n for n, d in g.nodes.items() if d["kind"] in FUNCTION_KINDS and d["kind"] != "external"}
     calls: dict[str, set[str]] = defaultdict(set)
     callers: dict[str, set[str]] = defaultdict(set)
@@ -203,7 +203,9 @@ def helper_functions(g) -> dict[str, str]:
         if d["kind"] == "focus" or d.get("focus") or not callers[f] or f in touches:
             continue
         name = d["label"].rsplit(".", 1)[-1].lower()
-        if not leads_to_data(f):
+        # A function from another file was only looked at one level deep, so "no data" is unknown, not a sign
+        # of a helper: functions a script loads from its own modules are often its main steps.
+        if d["kind"] != "libfn" and not leads_to_data(f):
             out[f] = "reads and writes no tables or files, directly or through what it calls"
         elif len(callers[f]) >= 3:
             out[f] = f"used from {len(callers[f])} places"

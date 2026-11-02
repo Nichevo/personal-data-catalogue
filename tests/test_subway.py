@@ -140,3 +140,17 @@ def test_helpers_are_told_apart_from_process_steps_and_folded_in():
     assert ("s::main", "s::load", "call") in folded.edges
     svg = subway_svg(function_subway(folded, "s"))
     assert "+2 helpers" in svg and "log_step" in svg
+
+
+def test_a_function_loaded_from_another_file_is_not_a_helper_just_for_reaching_no_data():
+    from pdcat.codemap import Graph
+    from pdcat.subway import helper_functions
+    g = Graph()
+    g.nodes["s::(script)"] = {"label": "(script)", "kind": "function", "group": "s"}
+    g.nodes["lib::train_sub_models"] = {"label": "train_sub_models", "kind": "libfn", "group": "Management.py"}
+    g.nodes["lib::get_paths"] = {"label": "get_paths", "kind": "libfn", "group": "Management.py"}
+    g.edges[("s::(script)", "lib::train_sub_models", "call")]
+    g.edges[("s::(script)", "lib::get_paths", "call")]
+    h = helper_functions(g)
+    assert "lib::train_sub_models" not in h          # only seen one level deep, so it stays on the map
+    assert "lib::get_paths" in h                      # still a helper by its name
