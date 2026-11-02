@@ -391,3 +391,62 @@ def test_script_page_lists_modules_loaded_by_a_helper(libs, project, tmp_path, m
     open_tab(app, "inside")
     assert any(h.value.startswith("Loaded by a helper") for h in app.subheader)
     assert any("No scanned file is called Missing.py" in m.value for m in app.info)
+
+
+def test_module_manager_calls_far_down_a_long_script_are_found(libs, project, tmp_path):
+    """The loader's own loop, then lots of top-level code before the loaded function is called."""
+    from pdcat.codemap import CodeIndex
+
+    shared = tmp_path / "shared-code"
+    write(shared, "Management.py", '''
+        def train_sub_models():
+            return {}
+    ''')
+    busy = "\n".join(f"step{i} = df.method{i}()" for i in range(80))
+    write(project, "src/long.py", f'''
+import importlib
+modules_to_load = {{"Management": {{"local_folder": "x", "sys_folder": "y", "functions": ["train_sub_models"]}}}}
+for module, details in modules_to_load.items():
+    functions = details["functions"]
+    mod = importlib.import_module(module)
+    for function_name in functions:
+        globals()[function_name] = getattr(mod, function_name)
+{busy}
+model_configs = train_sub_models()
+''')
+    scan_project(libs, PythonSource(name="shared", path=shared, role="library"))
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    key = "py://forecasting/src/long.py"
+    lib = "py://shared/Management.py"
+    assert ("lib", lib, "train_sub_models") in set(CodeIndex(libs).calls(key, "(script)"))
+    assert (key, "(script)") in CodeIndex(libs).callers(lib, "train_sub_models")
+
+
+def test_module_manager_functions_count_wherever_their_name_is_used(libs, project, tmp_path):
+    from pdcat.codemap import CodeIndex
+
+    shared = tmp_path / "shared-code"
+    write(shared, "Management.py", '''
+        def clean(df):
+            return df
+
+        def train(x):
+            return x
+
+        def unused():
+            return 0
+    ''')
+    write(project, "src/mentions.py", '''
+        modules_to_load = {"Management": {"local_folder": "x", "functions": ["clean", "train", "unused"]}}
+        ModuleManager(modules_to_load)
+
+        def main(df, xs):
+            df = df.pipe(clean)
+            return list(map(train, xs))
+    ''')
+    scan_project(libs, PythonSource(name="shared", path=shared, role="library"))
+    scan_project(libs, PythonSource(name="forecasting", path=project, default_database="warehouse/ForecastDB"))
+    key, lib = "py://forecasting/src/mentions.py", "py://shared/Management.py"
+    calls = set(CodeIndex(libs).calls(key, "main"))
+    assert ("lib", lib, "clean") in calls and ("lib", lib, "train") in calls
+    assert ("lib", lib, "unused") not in set(CodeIndex(libs).calls(key, "(script)"))  # the dict's strings don't count
