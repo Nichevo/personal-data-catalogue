@@ -80,3 +80,38 @@ def test_about_detailed_map_names_real_functions(catalogue, monkeypatch):
     goto(app, "About")
     app.button_group(key="about-level").set_value("Detailed").run()
     assert not app.exception
+
+
+def test_function_subway_marks_loops_and_recursion():
+    import ast
+
+    from pdcat.codemap import Graph
+    from pdcat.scan_python import _function_info
+    from pdcat.subway import function_subway, loop_note, subway_svg
+    info = _function_info(ast.parse(
+        "def walk(node):\n"
+        "    for child in children(node):\n"
+        "        walk(child)\n"
+        "        clean(child)\n"
+        "def run(rows):\n"
+        "    return [score(r) for r in rows]\n"
+        "def once():\n"
+        "    load()\n"
+        "class Tree:\n"
+        "    def size(self):\n"
+        "        return 1 + sum(c.size() for c in self.kids) + self.size_of_root()\n"
+        "    def depth(self):\n"
+        "        return self.depth()\n"))
+    assert info["walk"]["recursive"] and info["walk"]["loops"] == 1
+    assert info["walk"]["loop_calls"] == ["walk", "clean"]  # children() in the for header runs once
+    assert info["run"]["loop_calls"] == ["score"] and not info["run"]["recursive"]
+    assert info["once"]["loops"] == 0 and not info["once"]["recursive"]
+    assert info["Tree.depth"]["recursive"] and not info["Tree.size"]["recursive"]
+    assert loop_note({"kind": "function", **info["walk"]}) == "↻ calls itself · ↻ in a loop: walk, clean"
+    assert loop_note({"kind": "table", **info["walk"]}) == ""
+    g = Graph()
+    for fn in ("walk", "once"):
+        g.nodes[f"s::{fn}"] = {"label": fn, "kind": "function", "group": "s", **info[fn]}
+    g.edges[("s::walk", "s::once", "call")]
+    svg = subway_svg(function_subway(g, "s"))
+    assert "↻ in a loop" in svg and "Calls itself" in svg

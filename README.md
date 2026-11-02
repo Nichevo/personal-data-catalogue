@@ -192,6 +192,12 @@ one at a time, and every query is logged:
   many places a calculation is found and whether its name looks like a working column. Key columns
   are marked by whether their data type matches the columns already confirmed. A **Group** picker
   narrows the list to one SAP field, one kind of metric or one key.
+- **Loops on the function subway map.** A function's card on Inside this script › Subway map now
+  says "↻ in a loop: load, clean" when it calls those functions inside a `for` / `while` loop or a
+  comprehension (a call in the loop's own header, like `for x in load():`, runs once and doesn't
+  count), or "↻ 2 loops" when its loops call nothing else. A function that calls itself gets
+  "↻ calls itself" and a dashed loop beside its stop. Rescan your Python projects once to fill this
+  in (Add › Sources, or `pdcat scan --force`).
 - **About page: high level or detailed.** The app map on Home › About has a switch. **Detailed**
   draws one stop per part of the code, named module.function (for example
   `scan_sqlserver.scan_server`), so you can see which piece does what and find it. A test checks
