@@ -165,6 +165,19 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.5.4
+
+- **Table descriptions from the names a table is given elsewhere.** A suggested purpose for an
+  undescribed table used to come only from its own name, so `T_MAT01` became "Mat01". Now it also
+  uses the names the table is called by in your code and reports: an alias in SQL
+  (`FROM dbo.T_MAT01 AS Materials`) and the Power Query that loads it in a Power BI report or Excel
+  workbook ("Stock on hand"). The name used most often wins, and the To review item lists the others
+  under "Called elsewhere". One-letter aliases, initials (`dp` for `dim_plant`) and generic words
+  (`src`, `cte`, `Query1`) are left out.
+- **What its columns are renamed to is added.** `SELECT MATNR AS Material, WERKS AS Plant` gives
+  "Has material and plant". Abbreviations from Knowledge › Abbreviations are spelled out. No rescan
+  needed: this uses what earlier scans already found.
+
 ## New in version 2.5.3
 
 - **Calls far down a long script are found.** Only the first 60 different calls in a function (or in a
