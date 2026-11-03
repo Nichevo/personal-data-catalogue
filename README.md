@@ -168,6 +168,15 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.8.2
+
+- **The counts at the foot of the sidebar open their lists.** Click "🗃️ 120 table" to go straight to
+  🔎 Find › Tables and datasets, "🧮 300 measure" to Find › Power BI on the Measures view, and so on for
+  Python, Power BI reports, model tables, Power Query, the report register, SQL queries, packages, conda
+  environments, business projects, knowledge, questions, metrics, ML features and keys. It works from an
+  item page too. Counts with no list page of their own stay as plain text underneath.
+- The 📝 notes and 📋 to review counts open What's new › Recent notes and To review.
+
 ## New in version 2.8
 
 Folders that keep every past file (weekly reports saved as

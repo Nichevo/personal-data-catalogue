@@ -121,6 +121,54 @@ ALIASES = {
 NEEDS_DATA = {"Search", "Packages", "Health", "Bulk edit"}
 
 
+# Sidebar counts that open a list page: kind -> (menu page, view on that page or None). Kinds not listed stay
+# plain text, because no page lists them.
+KIND_PAGES: dict[str, tuple[str, str | None]] = {
+    "table": ("Tables and datasets", None), "view": ("Tables and datasets", None),
+    "data_file": ("Tables and datasets", None), "file_series": ("Tables and datasets", None),
+    "project": ("Python", None), "script": ("Python", None), "notebook": ("Python", None),
+    "report": ("Power BI", "Reports"), "measure": ("Power BI", "Measures"),
+    "pbi_table": ("Power BI", "Model tables"), "pq_query": ("Power BI", "Queries"),
+    "report_ref": ("Power BI", "Register"),
+    "query": ("SQL queries", None), "package": ("Packages", None), "environment": ("Conda environments", None),
+    "bproject": ("Business projects", None), "knowledge": ("Knowledge", None),
+    "question": ("Question library", None), "metric": ("Metric glossary", None),
+    "feature": ("ML model features", None), "model": ("ML model features", None),
+    "key": ("Company-wide keys", None),
+}
+# Pages whose own view picker is not a combined page's: page -> the picker's widget key.
+VIEW_KEYS = {"Power BI": "browse-pbi-view"}
+
+
+def open_kind(kind: str) -> None:
+    """A sidebar count was clicked: open the page that lists that kind, on the right view."""
+    page, view = KIND_PAGES[kind]
+    go_page(page)
+    if view and page in VIEW_KEYS:
+        st.session_state[VIEW_KEYS[page]] = view
+
+
+def counts(cat: Catalogue, stats: dict) -> None:
+    """The counts at the foot of the sidebar. A count with a list page is a button that opens it; the rest are
+    one line of plain text."""
+    from pdcat.review import count_open
+    plain = []
+    for k, v in sorted(stats["kinds"].items()):
+        text = f"{icon(k)} {v:,} {kind_label(k)}"
+        if k in KIND_PAGES:
+            st.button(text, key=f"count-{k}", on_click=open_kind, args=(k,), type="tertiary",
+                      help=f"Open {KIND_PAGES[k][0]}" + (f" › {KIND_PAGES[k][1]}" if KIND_PAGES[k][1] else ""))
+        else:
+            plain.append(text)
+    if plain:
+        st.caption(" · ".join(plain))
+    c1, c2 = st.columns(2)
+    c1.button(f"📝 {stats['notes']:,} notes", key="count-notes", on_click=go_page, args=("Recent notes",),
+              type="tertiary", help="Open What's new › Recent notes")
+    c2.button(f"📋 {count_open(cat):,} to review", key="count-review", on_click=go_page, args=("To review",),
+              type="tertiary", help="Open To review")
+
+
 def leave_item() -> None:
     """Picking a page from the menu closes the item page that is open, so the page shows."""
     st.query_params.pop("asset", None)
@@ -155,7 +203,6 @@ def recently_viewed(cat: Catalogue) -> None:
 
 
 def sidebar(cat: Catalogue) -> tuple[str, Page]:
-    from pdcat.review import count_open
     secs = sections()
     with st.sidebar:
         st.header("Data catalogue")
@@ -181,10 +228,7 @@ def sidebar(cat: Catalogue) -> tuple[str, Page]:
                   help="What every page in the menu is for")
         st.divider()
         stats = cat.stats()
-        kinds = stats["kinds"]
-        if kinds:
-            st.caption(" · ".join(f"{icon(k)} {v} {kind_label(k)}" for k, v in sorted(kinds.items())))
-        st.caption(f"📝 {stats['notes']} notes · 📋 {count_open(cat)} to review")
+        counts(cat, stats)
         for source, at in stats["last_scans"].items():
             st.caption(f"{source}: scanned {at[:16].replace('T', ' ')} UTC")
     return page, pages[page]
