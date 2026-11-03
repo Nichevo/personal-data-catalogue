@@ -308,6 +308,9 @@ def _description_actions(cat: Catalogue, t: dict) -> bool:
         if not sug:
             return False
         text = st.text_input("Suggested purpose", value=sug["text"], key=f"tsug-{tid}", help=sug["source"])
+        if sug.get("names"):
+            st.caption("Called elsewhere: " + ", ".join(
+                f"{n['name']} ({n['count']}×, {', '.join(n['where'][:2])})" for n in sug["names"]))
         grain = st.text_input("One row per", value=sug["grain"] or "", key=f"tgrain-{tid}") if sug["grain"] else ""
         if st.button("Accept", key=f"tacc-{tid}", type="primary"):
             DD.accept_table(cat, key, text, grain or None)
