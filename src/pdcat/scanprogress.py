@@ -11,10 +11,12 @@ progress bar; the command line prints it. `done` and `total` are optional.
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 Report = Callable[..., None]
 
@@ -30,11 +32,44 @@ def quiet(text: str, done: int | None = None, total: int | None = None) -> None:
     """A report function that says nothing."""
 
 
+LOG_DIR = re.compile(r"^(logs?|logging|logfiles?|log[_ -]?files?|_logs?)$", re.I)
+
+
+def count_folder(path: str) -> dict[str, Any]:
+    """How many files a folder holds (at any depth) and when they were modified, without opening any of them."""
+    from datetime import datetime, timezone
+    files, first, last, size = 0, None, None, 0
+    stack = [path]
+    while stack:
+        try:
+            entries = list(os.scandir(stack.pop()))
+        except OSError:
+            continue
+        for e in entries:
+            try:
+                if e.is_dir():
+                    stack.append(e.path)
+                elif e.is_file():
+                    st = e.stat()
+                    files += 1
+                    size += st.st_size
+                    first = min(first or st.st_mtime, st.st_mtime)
+                    last = max(last or st.st_mtime, st.st_mtime)
+            except OSError:
+                continue
+
+    def day(t):
+        return datetime.fromtimestamp(t, timezone.utc).date().isoformat() if t else None
+    return {"files": files, "bytes": size, "first_modified": day(first), "last_modified": day(last)}
+
+
 def find_files(root: Path, suffixes: Iterable[str], recursive: bool = True, ignored: set[str] | None = None,
-               report: Report = quiet) -> tuple[dict[str, list[Path]], int]:
+               report: Report = quiet, dated=None, logs: list | None = None) -> tuple[dict[str, list[Path]], int]:
     """Files under root with these suffixes, by suffix (lower case), sorted; and how many folders were skipped.
 
-    `ignored` holds folders relative to root (as stored for the "ignore" role)."""
+    `ignored` holds folders relative to root (as stored for the "ignore" role). With `dated`
+    (datedfolders.DatedWalk), only the newest folders of a tree of dated folders are walked. With `logs` (a list),
+    log folders (log/, logs/ …) aren't searched: each is only counted (files, modified dates) into that list."""
     wanted = {s.lower() for s in suffixes}
     ignored = {i.lower().strip("/") for i in ignored or ()}
     found: dict[str, list[Path]] = {s: [] for s in wanted}
@@ -52,8 +87,13 @@ def find_files(root: Path, suffixes: Iterable[str], recursive: bool = True, igno
             sub = d if rel == "." else f"{rel}/{d}"
             if sub.lower() in ignored or d.lower() in JUNK_DIRS:
                 skipped += 1
+            elif logs is not None and LOG_DIR.match(d):
+                report(f"Counting the files in {sub}/ (log files are listed, not read) …")
+                logs.append({"folder": sub, **count_folder(os.path.join(folder, d))})
             else:
                 keep.append(d)
+        if dated is not None and recursive:
+            keep = dated.prune(folder, rel, keep)
         dirs[:] = keep if recursive else []
         for n in names:
             files += 1

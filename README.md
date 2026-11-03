@@ -176,6 +176,18 @@ one at a time, and every query is logged:
   environments, business projects, knowledge, questions, metrics, ML features and keys. It works from an
   item page too. Counts with no list page of their own stay as plain text underneath.
 - The 📝 notes and 📋 to review counts open What's new › Recent notes and To review.
+## New in version 2.8.1
+
+- **Daily dated folders aren't all walked.** When a folder's subfolders are named by date in any format
+  (`2026`, `05 2026`, `2026-05`, `May 2026`, `20260514`, or `2026/05/14`), and the deepest of them are days,
+  the scan finds the newest day with a few folder listings and walks only the last 31 days of folders before it
+  (Settings › Data files). Older dated folders are not opened at all; the scan says how many there were and
+  from when to when. Trees of month or year folders are small and are still walked in full.
+- **Log folders are counted, not read.** Folders named `log`, `logs`, `logging`, `logfiles` and the like get a
+  count of their files and the first and last modified dates; nothing inside is read. Each shows up as a
+  "Log folder" item. Switch it off in Settings.
+- Files that an earlier scan found in folders that are now skipped are kept, not marked missing.
+- The folder's card lists the folders that weren't opened. "Read every file" walks and reads everything.
 
 ## New in version 2.8
 

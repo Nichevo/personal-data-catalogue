@@ -54,6 +54,7 @@ def test_dated_workbooks_in_archived_folders_open_only_the_newest(tmp_path):
     _weekly_tree(root)
     write_xlsx(root / "summary.xlsx")
     cat = Catalogue(tmp_path / "c.db")
+    cat.set_setting("dated_folders_days", 0)  # walk every dated folder (2.8.1 would skip March)
     heard = []
     scan_folder(cat, "weekly", root, report=lambda t, done=None, total=None: heard.append(t))
     workbooks = [r[0] for r in cat.conn.execute("SELECT key FROM assets WHERE kind = 'workbook' AND status = 'active'")]
