@@ -235,6 +235,8 @@ def data_tab(cat: Catalogue, key: str, asset: dict, columns: list, children: lis
         columns_section(cat, key, columns)
     if kind in TABLE_LIKE:
         profile_section(cat, key, asset)
+        from .change_pages import profile_history_box
+        profile_history_box(cat, key)
         from .item_boxes import rule_checks_box
         rule_checks_box(cat, key)
         compare_section(cat, key)
@@ -329,6 +331,8 @@ def history_tab(cat: Catalogue, key: str, asset: dict) -> None:
     if kind in ("script", "notebook", "sql_script"):
         from .sources_extra import script_runs_box
         script_runs_box(cat, key)
+    from .change_pages import item_history_box
+    item_history_box(cat, key, asset)
     from .extras import change_history_box
     change_history_box(cat, key)
     from .item_boxes import history_box

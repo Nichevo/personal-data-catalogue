@@ -68,6 +68,10 @@ draft worked out from the scan):
 **Gold standards** (version 2.6): reports, measures and SQL you marked as the one to trust, and
 the related copies, same-named measures and look-alike queries that differ from them.
 
+**Change tracking** (version 2.9): every change in one list with filters, grouping and saved views; graphs of
+table growth, files in folders, report changes and catalogue growth; and your change-tracking files linked to
+the tables they track, with changes by column.
+
 **Issue hotspots** (Review › Health): which schemas, folders and tables have the most
 problems:
 
@@ -167,6 +171,67 @@ one at a time, and every query is logged:
   version 1 that keeps an untouched copy of your old catalogue.
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
+
+## New in version 2.9
+
+**Change tracking** (Review › Change tracking): every change in one place, with graphs over time and your own
+change-tracking files linked to the tables they track. Nothing needs rescanning: the first time you open it,
+the change history you already have is turned into readings for the graphs.
+
+- **All changes:** what scans found (new, dropped and changed items and columns), report and workbook changes,
+  row counts, your edits, git commits, tracked changes on the columns you watch, and profiles that moved a lot,
+  as one list. Filter by when, what, where, kind of item, business project, tag, report group, gold standards
+  or followed items, and by any word. **Hide noise** (on by default) leaves out items marked not relevant or
+  old, older versions in a version group, and row counts that moved less than 5%. Group by one or two of day,
+  week, month, what, change, kind, where, item, business project, folder or column. Save a set of filters as a
+  view, and download what you see as CSV. Click a row to open the item.
+- **Graphs:** table growth (pick tables; jumps of more than half up or down are marked, with the biggest
+  growers and shrinkers), files in folders (files and size per folder over time, files added and per week,
+  including files only listed in history folders and log folders), report changes per week by part (pages,
+  visuals, measures...), catalogue growth by kind of item and how many are described, scans (time taken and
+  items found), change volume per week, and tracked changes.
+- **Change trackers:** files and tables that record changes to another table are found by name (a prefix you
+  set, `ChangesX_` to start with, so `ChangesX_TABLEPlant.csv` tracks `TABLEPlant`; or words like changes,
+  audit, history and `_CT`) and by their columns. Two layouts are understood: one row per changed value
+  (`PlantID, ColumnName, ValueBefore, ValueAfter, FieldName, Table, ChangeDate`, SAP CDPOS, audit logs) and
+  copies of whole rows with a change date or operation (CDC, history tables, snapshots). Each is linked to the
+  table it tracks from the name after the prefix, its Table column, a key both share (PlantID) and the columns
+  it reports, as a suggestion you confirm or reject (or link by hand, or mark "Not a tracker"). Scripts that
+  write a tracker are shown as "Made by".
+- **Read change summary** counts each tracker's changes per day, column and kind: an empty value before is a
+  new addition, an empty value after a removal. Files are read in chunks; after the first read only rows from
+  the last change date onwards are read again, so a long file that keeps growing stays quick, and file
+  trackers are brought up to date after each scan. A SQL tracker gets one paced, read-only GROUP BY (in the
+  query log), only when you press Read. Only counts and the keys that changed are kept, never the values.
+- **Changes by column:** changes, share, changed / new / removed, keys affected and the last change for each
+  column, with the FieldName shown next to SAP-coded column names (and offered as the column's business
+  name in Suggestions). Star the columns you care about: watched columns feed All changes, the graphs and the
+  table's History tab. Until you pick, the two that change most are watched.
+- A tracker not linked to a table yet is on To review.
+
+**Item pages:** the History tab shows rows over time and the changes trackers recorded for the table, with
+a way into Change tracking. The Columns tab has a **Profile history** box: each profile is now kept in a
+compact form when it moves (rows, nulls, distinct values, min, max, mean), so you can see how a column moved.
+The profile you already had is kept as the first one.
+
+**Home:** "Since your last visit" counts the changes since then, by kind, from the same list.
+
+**Profiling** (Add › Sources › Profiling): every SQL Server table with its rows, whether your code uses it,
+when it was last profiled and how many profiles are kept. Tick tables and give them a rule: once, weekly,
+monthly or never. A rule only puts a table in the queue when it's due (checked after each scan); the queue
+still waits for your approval under SQL scanning, at the same careful pace. Profiles that moved a lot in the
+last 90 days are listed (null share up or down 10 points, distinct values up or down by half, a latest date
+that stopped moving).
+
+**Database size** (Settings › Database size): the catalogue file's size, what takes the space, a rough yearly
+estimate for change tracking, and **Tidy up**: every reading is kept for 90 days, then one a week to a year,
+then one a month (both can be changed), the query log keeps its newest 20,000 queries, and old row-count lines
+in the change history are thinned to one a month, then the file is compacted. A warning shows over 1 GB.
+Change tracking adds roughly 20 to 70 MB a year to a catalogue the size of yours before thinning.
+
+**Export and Copilot pack:** the export has row counts over time, scan counts, profile history, change
+trackers and tracked changes (counts only), and profile rules. The Copilot pack has a change-tracking page:
+which tables have a tracker and which columns change most.
 
 ## New in version 2.8.3
 

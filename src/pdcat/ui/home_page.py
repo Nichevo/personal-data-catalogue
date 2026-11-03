@@ -2,6 +2,8 @@
 changed since your last visit."""
 from __future__ import annotations
 
+from collections import Counter
+
 import streamlit as st
 
 from pdcat import followups, quickq, suggestions
@@ -93,7 +95,7 @@ def attention_box(cat: Catalogue) -> None:
 
 
 def since_last_visit_box(cat: Catalogue) -> None:
-    from pdcat.history import recent_changes
+    from pdcat import changes as ch
     since = st.session_state.get("_last_visit")
     with st.container(border=True):
         st.markdown("**🆕 Since your last visit**")
@@ -101,23 +103,28 @@ def since_last_visit_box(cat: Catalogue) -> None:
             st.caption("This is your first visit. Next time this shows what changed in between.")
             return
         st.caption(f"Since {since[:16].replace('T', ' ')} UTC")
-        changes = [c for c in recent_changes(cat, days=3650, limit=500) if c["at"] > since]
+        found = ch.apply_filters(cat, ch.feed(cat, since, categories={"scan", "report", "tracked", "profile"}),
+                                 {"hide_noise": True})
         notes = [dict(n) for n in cat.conn.execute("SELECT asset_key, body, updated_at FROM notes WHERE updated_at > ? "
                                                    "ORDER BY updated_at DESC LIMIT 50", (since,))]
         waiting = cat.conn.execute("SELECT COUNT(*) FROM suggestions WHERE state = 'open' AND created_at > ?",
                                    (since,)).fetchone()[0]
-        if not (changes or notes or waiting):
+        if not (found or notes or waiting):
             st.caption("Nothing new.")
             return
-        if changes:
-            st.markdown(f"{len(changes)} change(s) found by scans")
-            for i, c in enumerate(changes[:MAX_LISTED]):
-                st.button(f"{icon(c['kind'] or 'note')} {c['name'] or c['asset_key']}: {c['change']}",
-                          key=f"home-ch-{i}", on_click=go, args=(c["asset_key"],), type="tertiary",
+        if found:
+            total = sum(c.get("n", 1) for c in found)
+            by = Counter()
+            for c in found:
+                by[c["category"]] += c.get("n", 1)
+            st.markdown(f"**{total:,} change{'s' if total != 1 else ''}** since your last visit: " +
+                        ", ".join(f"{n:,} {ch.CATEGORIES[k].split(' (')[0].lower()}" for k, n in by.most_common()))
+            for i, c in enumerate(found[:MAX_LISTED]):
+                st.button(f"{icon(c['kind'] or 'note')} {c['name']}: {c['change']}",
+                          key=f"home-ch-{i}", on_click=go, args=(c["item"],), type="tertiary",
                           help=c["detail"] or None)
-            if len(changes) > MAX_LISTED:
-                st.button("All changes", key="home-ch-all", on_click=go_page, args=("Recent changes",),
-                          type="tertiary")
+            st.button("Open Change tracking", key="home-ch-all", on_click=go_page, args=("Change tracking",),
+                      type="tertiary")
         if notes:
             st.markdown(f"{len(notes)} note(s) added or changed")
             for i, n in enumerate(notes[:5]):

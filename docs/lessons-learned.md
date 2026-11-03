@@ -188,3 +188,22 @@ in the future, keys that look like folders but hold file paths.
 before a release, not only the tests. When a result depends only on some text, save it by the text's hash.
 Escape anything user-named that goes into a LIKE pattern.
 
+
+## 12. Keep history as small readings, and decide how it thins before it grows (2.9)
+
+Change tracking needed history the catalogue didn't keep: row counts over time, files per folder, every
+profile rather than the latest. Copying data would have grown a 280 MB catalogue quickly, so each kind of
+history is a small reading kept only when a number moves (one row per table per change, counts per day and
+column for change trackers, never the values), and thinning was designed with it: every reading for 90 days,
+weekly to a year, monthly after that, with a Tidy up button and a size page to see where the space goes.
+
+Two other habits paid off:
+
+- **Backfill from what you already have.** The old change history held row counts as text ("1,200 → 1,350");
+  parsing it once gave the graphs months of past readings on the first day.
+- **Read growing files incrementally, by date, not by position.** Change files grow at the end but may be
+  re-sorted or rewritten. Re-reading from the last change date read (the whole of that day again, after
+  deleting its counts) is correct either way; a file that shrank is read again in full.
+
+**For other projects:** when adding history, write down how big it gets per year and how it is thinned in
+the same change, and give the user a way to see and reclaim the space.
