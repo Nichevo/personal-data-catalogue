@@ -279,9 +279,12 @@ def scan_python_source(text: str) -> Found:
 
     # Which function touches which data, so a project calling one library function
     # can be traced to exactly the tables and files that function uses.
+    from .datasources import from_file_refs
     function_refs = {}
     for name, node in _functions(tree):
-        refs = sorted({(rel, ref) for (rel, ref) in _collect_refs(node, skip, consts, env)})
+        # web and cloud addresses become data sources (below), not files, here as for the whole script
+        local, _ = from_file_refs([(rel, ref, 0) for (rel, ref) in _collect_refs(node, skip, consts, env)])
+        refs = sorted({(rel, ref) for rel, ref, _ in local})
         if refs:
             function_refs[name] = [list(r) for r in refs]
     if function_refs:
@@ -1179,14 +1182,18 @@ def managed_imports(tree: ast.Module, with_instances: bool = False):
         if module.endswith(".py") and ("/" in module or ":" in module):
             module = module.rsplit("/", 1)[-1]   # a file path: C:/code/tools/Management.py -> Management
         module = module.removesuffix(".py").replace("/", ".").strip(".")
-        if not module:
-            return None
+        if not module or not all(part.isidentifier() for part in module.split(".")):
+            return None   # e.g. a "name" that is a label ("Management Tools"), not a module
         folders = []
         for k, val in d.items():
             val = deref(val)
             if any(w in k.lower() for w in ("folder", "path", "dir", "location")) and isinstance(val, ast.Constant) \
                     and isinstance(val.value, str) and val.value.strip():
-                folders.append(val.value.strip())
+                where = val.value.strip().replace("\\", "/")
+                if where.lower().endswith(".py"):   # the module's own file: its folder is what tells copies apart
+                    where = where.rsplit("/", 1)[0] if "/" in where else ""
+                if where:
+                    folders.append(where)
         return {"module": module, "names": sorted(set(names)), "level": 0, "line": line, "managed": True,
                 "folders": folders}
 
@@ -1205,14 +1212,20 @@ def managed_imports(tree: ast.Module, with_instances: bool = False):
         else:
             found[sp["module"]] = sp
 
+    inner_specs: set[int] = set()   # per-module dicts already read under their module's name
     for node in ast.walk(tree):
         line = getattr(node, "lineno", 0)
+        if id(node) in inner_specs:
+            continue
         if isinstance(node, (ast.Dict, ast.Call)):
             outer = as_dict(node) if not isinstance(node, ast.Call) or (
                 isinstance(node.func, ast.Name) and node.func.id == "dict") else None
             if outer:
                 for module, inner in outer.items():
-                    add(spec(module, inner, line), node)
+                    sp = spec(module, inner, line)
+                    if sp:
+                        inner_specs |= {id(inner), id(deref(inner))}
+                    add(sp, node)
                 add(spec(None, node, line), node)   # {"module": "Management", "functions": [...]}
         elif isinstance(node, (ast.List, ast.Tuple)):
             for e in node.elts:

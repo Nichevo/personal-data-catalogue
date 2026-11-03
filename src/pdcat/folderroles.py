@@ -41,8 +41,9 @@ NAME_ROLES: list[tuple[str, re.Pattern]] = [
     ("outputs", re.compile(r"^(outputs?|results?|exports?|reports?|deliverables?|figures?|plots?|predictions?)$", re.I)),
     ("design", re.compile(r"^(design|designs|specs?|specifications?|requirements?|design[_ -]?docs?)$", re.I)),
     ("docs", re.compile(r"^(docs?|documentation|notes|wiki)$", re.I)),
-    ("archive", re.compile(r"^(archive[ds]?|_?archive|old|backups?|bak|legacy|deprecated|retired|_old|zz_?old|"
-                           r"history|historic(al)?|hist|previous|superseded)$", re.I)),
+    # (the history-folder rule in historyfolders.py uses this same pattern, so the two can't drift apart)
+    ("archive", re.compile(r"^(archive[ds]?|_?archive|old|_old|zz_?old|olds?er|backups?|bak|legacy|deprecated|"
+                           r"retired|history|historic(al)?|hist|previous|prev|superseded|past|prior)$", re.I)),
     ("ignore", re.compile(r"^(tmp|temp|cache|\.cache|scratch|__pycache__|\.ipynb_checkpoints|\.git|\.venv|venv|env|"
                           r"node_modules)$", re.I)),
 ]

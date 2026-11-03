@@ -26,7 +26,7 @@ DEFAULT_STALE_DAYS = 60
 def snapshot(cat: Catalogue, source: str, exact: str = "%", inside: str = "%") -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for a in cat.conn.execute("SELECT key, kind, name, status, attrs FROM assets WHERE source = ? "
-                              "AND (key LIKE ? OR key LIKE ?)", (source, exact, inside)):
+                              "AND (key LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')", (source, exact, inside)):
         if a["kind"] not in TRACKED_KINDS:
             continue
         attrs = json.loads(a["attrs"])

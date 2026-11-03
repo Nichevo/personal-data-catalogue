@@ -6,7 +6,8 @@ from __future__ import annotations
 
 # Kinds whose name is never a path, even when it has a slash in it ("Sales / Units" is a measure's name).
 NOT_PATHS = frozenset({"table", "view", "procedure", "database", "query", "metric", "knowledge", "question",
-                       "feature", "key", "bproject", "note", "group", "measure", "column", "sql_snippet"})
+                       "feature", "key", "bproject", "note", "group", "measure", "column", "sql_snippet",
+                       "pbi_table", "pq_query", "data_source"})
 KEEP = 2  # folder parts kept when shortening
 
 

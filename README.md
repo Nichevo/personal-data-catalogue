@@ -168,6 +168,56 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.8.3
+
+A review of everything changed since 2.11, before building 2.9. No new features; the app is quicker on a big
+catalogue and twenty small bugs are fixed. Nothing needs rescanning.
+
+**Quicker** (timed on a made-up catalogue of 2,900 tables and views, 2,300 pieces of SQL and 3,300 files):
+
+- **After-scan steps take half the time:** 66 s → 30 s on a rescan, 140 s → 98 s on the first scan.
+  - SQL checks are saved, so a rescan only checks SQL that is new or changed (28 s → 4.5 s). They also no
+    longer look up each column's type and profile one query at a time.
+  - Finding descriptions in SQL comments skips lines with no comment (13 s → under 2 s).
+  - Finding metrics in SQL no longer runs a pattern on every character (14 s → 7 s).
+- **SQL queries page:** 16 s → 2 s, using the saved check results.
+- **Database diagrams:** 11 s → 5 s. Each table's keys are looked up once, not by going through every
+  relationship for every table.
+- **Gold standard boxes** on measure and report pages read every measure once per change to the catalogue,
+  not on every click.
+
+**Fixed:**
+
+- Script subway maps: functions that call each other could be hidden as "no data" helpers, depending on the
+  order Python happened to visit them. Functions at the edge of a focused map, whose calls weren't followed,
+  are no longer called helpers either.
+- Web and cloud data sources: a rescan kept the old addresses and dropped new ones once ten had built up.
+  The ten-address cap now holds when two lists are merged.
+- Functions reading a web address (`pd.read_csv("https://…")`) no longer show it as a file on the function
+  map.
+- Home-built loaders: an entry with a `file` key no longer turns into two modules, a `module_path` to the
+  file now tells copies apart by its folder, and a label such as "Management Tools" isn't taken for a
+  module. When two same-named copies can't be told apart, calls aren't linked to whichever was scanned
+  first (the script page already said they weren't).
+- Metric suggestions: names like "New customers", "Temperature" or "Sales 2024" are no longer put under
+  Unlikely as working columns, and what you accepted or rejected before now wins over that rule.
+- The Kind of metric grouping matches whole words, so "Sales percentage" isn't Time, "Latest forecast"
+  isn't Service, and "Returns" isn't Stock.
+- When pbixray is installed but can't read a report, the report says so, instead of asking you to install
+  pbixray.
+- A top-level-only folder scan no longer counts the files in log folders below it.
+- In trees of dated day folders, a folder made ahead of time (or mistyped, like 20261230) no longer counts
+  as the newest, which had left the real recent folders unread. Quarter folders (2026Q2, Q2 2026) are
+  recognised.
+- Gold standards: undoing "Remove gold standard" brings back its "OK to differ" answers. Review text keeps
+  measure names and DAX as written (it lower-cased them).
+- Power BI model tables and queries with a "/" in their name aren't split into a file name and folder.
+- A database or file whose name has `_` or `%` in it can no longer reach into another with a similar name
+  when it is rescanned or kept.
+- History folders and the Archive folder role use one list of names (prev, prior, past and older were
+  history but not archive).
+- A scan now counts as a change, so pages cached by catalogue revision refresh after it.
+
 ## New in version 2.8.2
 
 - **The counts at the foot of the sidebar open their lists.** Click "🗃️ 120 table" to go straight to

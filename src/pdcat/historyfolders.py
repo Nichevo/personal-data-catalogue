@@ -23,10 +23,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .folderroles import NAME_ROLES
 from .store import Catalogue
 
-HISTORY_NAME = re.compile(r"^(archive[ds]?|_?archive|old|_old|zz_?old|olds?er|backups?|bak|legacy|deprecated|retired|"
-                          r"history|historic(al)?|hist|previous|prev|superseded|past|prior)$", re.I)
+HISTORY_NAME = dict(NAME_ROLES)["archive"]   # one list of history-folder names, shared with Folder roles
 HISTORY_READ_NEWEST = 1  # files opened per dated series inside history folders (Settings: history_read_newest)
 
 

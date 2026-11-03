@@ -412,10 +412,10 @@ def merge(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for s in sources:
         k = (s["type"], s["name"].lower(), s["relation"])
         if k not in out:
-            out[k] = {**s, "addresses": list(s.get("addresses", []))}
+            out[k] = {**s, "addresses": list(dict.fromkeys(s.get("addresses", [])))[:MAX_ADDRESSES]}
         else:
             have = out[k]["addresses"]
-            have += [a for a in s.get("addresses", []) if a not in have][:MAX_ADDRESSES - len(have)]
+            have += [a for a in s.get("addresses", []) if a not in have][:max(0, MAX_ADDRESSES - len(have))]
     return list(out.values())
 
 
@@ -528,7 +528,11 @@ def record_sources(cat, src_key: str, source: str, sources: list[dict[str, Any]]
         old = cat.conn.execute("SELECT attrs, status FROM assets WHERE key = ?", (key,)).fetchone()
         addresses = list(s.get("addresses", []))
         used_for: list[str] = list(s.get("calls", []))
-        if old and old["status"] == "active":
+        # Merge only with what this same scan found (another script using the same source). A folder scan doesn't
+        # mark items missing up front, so "active" alone can mean "found last time", whose addresses may be stale.
+        seen = getattr(cat, "_seen", None)
+        seen_now = key in seen if seen is not None else bool(old and old["status"] == "active")
+        if old and seen_now:
             import json
             prev = json.loads(old["attrs"])
             addresses = list(dict.fromkeys(prev.get("addresses", []) + addresses))[:MAX_ADDRESSES]

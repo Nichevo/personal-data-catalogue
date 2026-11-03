@@ -207,15 +207,26 @@ def move_tables(cat: Catalogue, keys: list[str], area_uid: str) -> None:
     cat.changed()
 
 
-def _rels(cat: Catalogue, keys: set[str]) -> list[dict[str, Any]]:
+class _Rels(list):
+    """Relationships, with those from each table looked up once (an ERD asks for every table's keys)."""
+
+    def from_table(self, key: str) -> list[dict[str, Any]]:
+        if not hasattr(self, "_by_src"):
+            self._by_src: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for r in self:
+                self._by_src[r["src_key"]].append(r)
+        return self._by_src.get(key, [])
+
+
+def _rels(cat: Catalogue, keys: set[str]) -> _Rels:
     from .relationships import relationships
-    return relationships(cat, keys)
+    return _Rels(relationships(cat, keys))
 
 
 def _key_cols(cat: Catalogue, key: str, attrs: dict, rels: list[dict]) -> tuple[list[str], list[str]]:
     pk = list(attrs.get("primary_key") or [])
     fk = []
-    for r in rels:
+    for r in (rels.from_table(key) if isinstance(rels, _Rels) else rels):
         if r["src_key"] == key:
             fk += [c for c in r["src_columns"].split(",") if c and c not in pk and c not in fk]
     return pk, fk
