@@ -418,3 +418,37 @@ def test_settings_page_saves_scan_pace(app, catalogue):
     save.click().run()
     assert not app.exception
     assert catalogue.setting("sample_over_files") == 2000 and catalogue.setting("recent_scan_minutes") == 60
+
+
+def test_sidebar_counts_open_their_list_pages(app, catalogue):
+    """A sidebar count with a list page is a button that opens it, even from an item page."""
+    from pdcat.ui.main import KIND_PAGES, VIEW_KEYS, sections
+    pages = {p for s in sections().values() for p in s}
+    assert {page for page, _ in KIND_PAGES.values()} <= pages
+    assert all(page in VIEW_KEYS for page, view in KIND_PAGES.values() if view)
+    app.query_params["asset"] = SALES
+    app.run()
+    app.sidebar.button(key="count-table").click().run()
+    assert not app.exception
+    assert "asset" not in app.query_params and app.title[0].value == "Tables and datasets"
+    app.sidebar.button(key="count-script").click().run()
+    assert app.title[0].value == "Python"
+    app.sidebar.button(key="count-review").click().run()
+    assert not app.exception and app.title[0].value == "To review"
+
+
+
+def test_measure_count_opens_power_bi_on_measures(app, catalogue, tmp_path):
+    from test_office import write_pbit
+
+    from pdcat.scan_files import scan_folder
+    folder = tmp_path / "reports"
+    folder.mkdir()
+    write_pbit(folder / "Sales.pbit")
+    scan_folder(catalogue, "reports", folder)
+    app.run()
+    app.sidebar.button(key="count-measure").click().run()
+    assert not app.exception
+    assert app.title[0].value == "Power BI" and app.radio(key="browse-pbi-view").value == "Measures"
+    app.sidebar.button(key="count-report").click().run()
+    assert app.radio(key="browse-pbi-view").value == "Reports"
