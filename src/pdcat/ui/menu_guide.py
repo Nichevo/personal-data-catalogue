@@ -54,6 +54,8 @@ GUIDE = {
                  "duplicates.",
     "Suggestions": "Things the catalogue worked out for you to confirm: groups, descriptions, SAP meanings, joins, "
                    "naming habits, checks and Copilot's answers.",
+    "Gold standards": "Reports, measures and SQL you marked as the one to trust, and the copies, same-named measures "
+                      "and look-alike queries that differ from them, with how.",
     "Health": "How well documented the catalogue is (coverage) and where problems cluster (issue hotspots).",
     "What's new": "The latest notes, and what changed between scans.",
     "Bulk edit": "Describe a column once for everywhere it appears, or edit many items at once like a spreadsheet.",

@@ -40,6 +40,7 @@ def sections() -> dict[str, dict[str, Page]]:
         curation_pages,
         dataflow_page,
         erd_page,
+        gold_pages,
         groups_page,
         home_page,
         keys_pages,
@@ -76,6 +77,7 @@ def sections() -> dict[str, dict[str, Page]]:
                 "Needs notes": search.needs_notes_page, "Unmatched tables": search.unmatched_page,
                 "Unlinked data": lists.unlinked_page, "Duplicates": lists.duplicates_page}),
             "Suggestions": groups_page.suggestions_page,
+            "Gold standards": gold_pages.gold_page,
             "Health": combined("Health", "How well the catalogue is described, and where problems gather.", {
                 "Coverage": curation_pages.coverage_page, "Issue hotspots": review_pages.hotspots_page}),
             "What's new": combined("What's new", "", {
