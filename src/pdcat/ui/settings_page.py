@@ -91,7 +91,18 @@ def settings_page(cat: Catalogue) -> None:
                               value=bool(cat.setting("history_by_name", True)),
                               help="Their files are listed without being opened, except the newest of each dated "
                                    "series. Give a folder another role in Folder roles to read it in full.")
+        c7, c8, _ = st.columns(3)
+        from pdcat.datedfolders import DATED_FOLDERS_DAYS
+        dated_days = c7.number_input("Days of dated folders walked (0 = walk them all)", 0, 10 ** 5,
+                                     int(cat.setting("dated_folders_days", DATED_FOLDERS_DAYS)), 7,
+                                     help="Folders named by date (2026, 05 2026, 20260514 …): only those from the "
+                                          "last this many days before the newest are opened; older ones are counted.")
+        skip_logs = c8.checkbox("Count log folders without reading them", value=bool(cat.setting("skip_log_folders", True)),
+                                help="log/, logs/ … folders: the number of files and their dates are noted, nothing "
+                                     "inside is read.")
         if st.form_submit_button("Save scan settings"):
+            cat.set_setting("dated_folders_days", int(dated_days), quiet=True)
+            cat.set_setting("skip_log_folders", bool(skip_logs), quiet=True)
             cat.set_setting("max_office_opens", int(opens), quiet=True)
             cat.set_setting("history_read_newest", int(hist_newest), quiet=True)
             cat.set_setting("history_by_name", bool(by_name), quiet=True)

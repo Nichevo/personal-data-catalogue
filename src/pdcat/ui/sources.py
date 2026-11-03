@@ -198,8 +198,8 @@ def sampling_note(cat: Catalogue, name: str, i: int) -> None:
                      "dated series and the newest stand-alone files; list the rest without opening them."):
             cat.set_setting("read_all_sources", [n for n in read_all if n != name], quiet=True)
             st.rerun()
-    elif last and (last["summary"].get("sampled") or last["summary"].get("listed")
-                   or last["summary"].get("deferred")):
+    elif last and any(last["summary"].get(k) for k in ("sampled", "listed", "deferred", "dated_trees",
+                                                       "log_folders")):
         s = last["summary"]
         c1, c2 = st.columns([4, 1])
         c1.caption(f"📅 {'Sampled by date' if s.get('sampled') else 'History listed'}: "
@@ -213,6 +213,17 @@ def sampling_note(cat: Catalogue, name: str, i: int) -> None:
                 for line in describe(s["history"], limit=30):
                     st.caption(line)
                 st.caption("Give a folder another role in 📂 Folder roles to read it in full.")
+        if s.get("dated_trees") or s.get("log_folders"):
+            from pdcat.datedfolders import describe as describe_dated
+            from pdcat.scan_files import log_line
+            with c1.expander("Folders not opened (" + ", ".join(
+                    b for b in (f"{len(s.get('dated_trees') or [])} dated" if s.get("dated_trees") else "",
+                                f"{len(s.get('log_folders') or [])} log" if s.get("log_folders") else "") if b) + ")"):
+                for line in describe_dated(s.get("dated_trees") or [], limit=30):
+                    st.caption(f"📅 {line}")
+                for lg in s.get("log_folders") or []:
+                    st.caption(f"🧾 {log_line(lg)}")
+                st.caption("Settings › Data files: days of dated folders walked, and log folders.")
         if c2.button("Read every file", key=f"readall-{i}",
                      help="From the next scan, open every file in this folder (slow for thousands of files)."):
             cat.set_setting("read_all_sources", [*read_all, name], quiet=True)
@@ -228,12 +239,13 @@ def _analyse(path: str) -> dict:
 
 @st.cache_data(ttl=300, show_spinner="Adding up the files …")
 def _size_up(path: str) -> dict:
+    from pdcat.datedfolders import DatedWalk
     from pdcat.profiling import DATA_SUFFIXES
     from pdcat.scan_access import SUFFIXES as ACCESS_SUFFIXES
     from pdcat.scan_excel import WORKBOOK_SUFFIXES
     from pdcat.scan_powerbi import REPORT_SUFFIXES
     found, _ = find_files(Path(path), (*DATA_SUFFIXES, *REPORT_SUFFIXES, ".pbip", *WORKBOOK_SUFFIXES,
-                                       *ACCESS_SUFFIXES))
+                                       *ACCESS_SUFFIXES), dated=DatedWalk(), logs=[])  # as a default scan would
     return size_up(p for paths in found.values() for p in paths)
 
 
