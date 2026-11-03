@@ -299,6 +299,7 @@ CREATE TABLE IF NOT EXISTS schema_history (
     detail    TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_history_asset ON schema_history(asset_key);
+CREATE INDEX IF NOT EXISTS ix_history_at ON schema_history(at);
 
 -- Every query sent to a SQL Server, so you can show a DBA exactly what ran.
 CREATE TABLE IF NOT EXISTS query_log (
@@ -478,6 +479,13 @@ CREATE TABLE IF NOT EXISTS gold_ok (
 
 -- SQL queries found anywhere (scripts, notebooks, .sql files, Excel, Power BI, Access, documents)
 -- or pasted in. The same query found in several places is one row with several places.
+-- What the SQL checks found in each piece of SQL (by a hash of its text), so the checks only run on SQL that is new
+-- or changed. `version` changes whenever the checks themselves change.
+CREATE TABLE IF NOT EXISTS sql_check_cache (
+    sql_hash TEXT PRIMARY KEY,
+    version  TEXT NOT NULL,
+    found    TEXT NOT NULL              -- JSON [[rule, about], ...]
+);
 CREATE TABLE IF NOT EXISTS sql_queries (
     uid         TEXT PRIMARY KEY,           -- hash of the normalised SQL
     name        TEXT NOT NULL,
@@ -616,6 +624,11 @@ CREATE TABLE IF NOT EXISTS document_versions (
     PRIMARY KEY (doc_uid, version)
 );
 """
+
+def like_escape(text: str) -> str:
+    """Text for a LIKE pattern (used with ESCAPE '\\'), so "_" and "%" in a name match only themselves."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 
 SCHEMA_VERSION = 3  # 3 = version 2.1
 INSIDE_MIN = 3  # typed words this long or longer also match inside names
@@ -816,15 +829,16 @@ class Catalogue:
         """
         started = now()
         # A prefix limits the scan to one database ("sql://src/db") and what's inside it.
-        exact, inside = (prefix.lower(), prefix.lower() + "/%") if prefix else ("%", "%")
-        scope = "(key LIKE ? OR key LIKE ?)"
+        # (escaped, so "_" or "%" in a database name can't reach into another database with a similar name)
+        exact, inside = (like_escape(prefix.lower()), like_escape(prefix.lower()) + "/%") if prefix else ("%", "%")
+        scope = "(key LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')"
         from .history import snapshot
         before = snapshot(self, source, exact, inside)
         with self.conn:
             self.conn.execute(f"UPDATE assets SET status = 'missing' WHERE source = ? AND {scope}",
                               (source, exact, inside))
-            self.conn.execute("DELETE FROM links WHERE source = ? AND (src_key LIKE ? OR src_key LIKE ?)",
-                              (source, exact, inside))
+            self.conn.execute("DELETE FROM links WHERE source = ? AND (src_key LIKE ? ESCAPE '\\' "
+                              "OR src_key LIKE ? ESCAPE '\\')", (source, exact, inside))
             self.conn.execute(
                 f"DELETE FROM columns WHERE asset_key IN (SELECT key FROM assets WHERE source = ? AND {scope})",
                 (source, exact, inside))
@@ -845,6 +859,7 @@ class Catalogue:
         from .links import apply_manual_links
         apply_manual_links(self)
         self.rebuild_search()
+        self.changed()  # pages and lists cached by revision must see what the scan found
 
     def begin_scan(self, source: str) -> dict[str, Any]:
         """Start a scan that saves as it goes (folder scans): remember when it started and what the source held,
@@ -880,6 +895,7 @@ class Catalogue:
         from .links import apply_manual_links
         apply_manual_links(self)
         self.rebuild_search()
+        self.changed()  # pages and lists cached by revision must see what the scan found
 
     def note_stopped_scan(self, token: dict[str, Any], summary: dict[str, Any]) -> None:
         """A scan begun with `begin_scan` that was stopped or failed: logged, with what it had saved, so the
@@ -923,7 +939,7 @@ class Catalogue:
         folder), so finish_scan doesn't mark it missing. Returns how many were kept."""
         if getattr(self, "_seen", None) is None:
             return 0
-        like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        like = like_escape(prefix) + "%"
         keys = [r[0] for r in self.conn.execute(
             "SELECT key FROM assets WHERE status = 'active' AND key LIKE ? ESCAPE '\\'", (like,))]
         self._seen.update(keys)
@@ -939,7 +955,7 @@ class Catalogue:
         if getattr(self, "_seen", None) is not None:
             self._seen.add(key)
             self._seen.update(r[0] for r in self.conn.execute(
-                "SELECT key FROM assets WHERE parent = ? OR key LIKE ?", (key, key.replace("%", "") + "/%")))
+                "SELECT key FROM assets WHERE parent = ? OR key LIKE ? ESCAPE '\\'", (key, like_escape(key) + "/%")))
         self.conn.execute("UPDATE assets SET last_seen = ? WHERE key = ?", (now(), key))
         return 1
 

@@ -61,6 +61,17 @@ def _has_arithmetic(node: ast.AST) -> bool:
         or any(isinstance(n, ast.Attribute) and n.attr in ("mean", "sum", "abs") for n in ast.walk(node))
 
 
+def _starts_word(low: str, i: int) -> bool:
+    """True when "from" or "into" starts at i as a whole word (what `\bfrom\b|\binto\b` matched, without a regex
+    per character)."""
+    if i and low[i - 1].isalnum():
+        return False
+    if not (low.startswith("from", i) or low.startswith("into", i)):
+        return False
+    after = low[i + 4:i + 5]
+    return not (after.isalnum() or after == "_")
+
+
 def _select_items(sql: str) -> list[str]:
     """The items of every SELECT list, split at top-level commas."""
     out = []
@@ -78,7 +89,7 @@ def _select_items(sql: str) -> list[str]:
             elif depth == 0 and ch == ",":
                 items.append(sql[start:i])
                 start = i + 1
-            elif depth == 0 and re.match(r"\bfrom\b|\binto\b", low[i:i + 5]) and (i == 0 or not low[i - 1].isalnum()):
+            elif depth == 0 and ch in "fFiI" and _starts_word(low, i):
                 break
             i += 1
         items.append(sql[start:i])

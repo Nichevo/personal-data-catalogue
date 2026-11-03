@@ -439,6 +439,11 @@ FEATURE_CHECKS: list[Callable[..., list[Task]]] = [unknownfiles.review_tasks, fr
                                                    pbimpact.review_tasks]
 
 
+def _first_upper(text: str) -> str:
+    """Upper-case the first letter only: str.capitalize() would lower-case names and DAX later in the text."""
+    return text[:1].upper() + text[1:]
+
+
 def _gold_candidates(cat: Catalogue, task) -> list[Task]:
     """Measures, reports and SQL that differ from a gold standard you marked. A new difference (the item changed
     again) opens a new task."""
@@ -448,7 +453,7 @@ def _gold_candidates(cat: Catalogue, task) -> list[Task]:
     except Exception:  # the review list must not fail over this check
         return []
     return [task("gold", d["key"], f"{d['name']} differs from the gold standard {d['gold_name']}",
-                 (f"In {d['where']}. " if d["where"] else "") + (d["summary"] or "differs").capitalize() + ".",
+                 (f"In {d['where']}. " if d["where"] else "") + _first_upper(d["summary"] or "differs") + ".",
                  version=d["fingerprint"]) for d in found]
 
 
@@ -491,7 +496,7 @@ def _profile_candidates(cat: Catalogue, assets: dict, profiles: dict, used_by: C
     for n in all_stale(cat):
         a = assets.get(n["asset_key"])
         out.append(task("stale_note", n["asset_key"], f"Check a note on {a['name'] if a else n['asset_key']}",
-                        "; ".join(n["reasons"]).capitalize() + ". Confirm it, edit it or archive it.",
+                        _first_upper("; ".join(n["reasons"])) + ". Confirm it, edit it or archive it.",
                         version=str(n["note_id"])))
     by_table: dict[str, list[dict]] = defaultdict(list)
     skip_tables = reviewanswers.tables_not_sensitive(cat)

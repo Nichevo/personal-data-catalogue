@@ -10,6 +10,9 @@ findings show on the query's page.
 """
 from __future__ import annotations
 
+import hashlib
+import inspect
+import json
 import re
 from functools import lru_cache
 from typing import Any
@@ -119,7 +122,7 @@ def _code(sql: str) -> str:
     return re.sub(r"\s+", " ", text).lower()
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=32768)
 def check_sql(sql: str) -> tuple[tuple[str, str], ...]:
     """(rule, about) pairs found in one piece of SQL. `about` says what it's about (a table, a column)."""
     raw = re.sub(r"\s+", " ", strip_comments(sql or "")).lower()
@@ -185,6 +188,54 @@ def check_sql(sql: str) -> tuple[tuple[str, str], ...]:
     return tuple(dict.fromkeys(found))
 
 
+_CHECKS_VERSION = hashlib.sha1(inspect.getsource(check_sql).encode()).hexdigest()[:12]
+
+
+def _sql_hash(sql: str) -> str:
+    return hashlib.sha1((sql or "").encode("utf-8", "replace")).hexdigest()
+
+
+class _CheckCache:
+    """check_sql results kept in the catalogue, so a re-run only checks SQL that is new or changed."""
+
+    def __init__(self, cat: Catalogue):
+        self.cat = cat
+        self.known = {r[0]: r[1] for r in cat.conn.execute(
+            "SELECT sql_hash, found FROM sql_check_cache WHERE version = ?", (_CHECKS_VERSION,))}
+        self.new: list[tuple[str, str, str]] = []
+        self.seen: set[str] = set()
+
+    def checks(self, sql: str) -> tuple[tuple[str, str], ...]:
+        h = _sql_hash(sql)
+        self.seen.add(h)
+        if h in self.known:
+            return tuple(tuple(p) for p in json.loads(self.known[h]))
+        found = check_sql(sql)
+        self.known[h] = json.dumps(found)
+        self.new.append((h, _CHECKS_VERSION, self.known[h]))
+        return found
+
+    def save(self, *, prune: bool = False) -> None:
+        """Keep what was worked out. `prune` (after checking the whole library) drops SQL no longer in it."""
+        with self.cat.conn:
+            if self.new:
+                self.cat.conn.executemany("INSERT OR REPLACE INTO sql_check_cache (sql_hash, version, found) "
+                                          "VALUES (?, ?, ?)", self.new)
+            if prune:
+                gone = [(h,) for h in self.known if h not in self.seen]
+                self.cat.conn.executemany("DELETE FROM sql_check_cache WHERE sql_hash = ?", gone)
+                self.cat.conn.execute("DELETE FROM sql_check_cache WHERE version != ?", (_CHECKS_VERSION,))
+        self.new = []
+
+
+def cached_checks(cat: Catalogue, sqls: list[str]) -> list[tuple[tuple[str, str], ...]]:
+    """check_sql for many pieces of SQL, using (and filling) the saved results."""
+    cache = _CheckCache(cat)
+    out = [cache.checks(s) for s in sqls]
+    cache.save()
+    return out
+
+
 def _left_join_aliases(code: str) -> list[str]:
     out = []
     for m in re.finditer(r"\bleft\s+(?:outer\s+)?join\s+([\w\[\]\.]+)(?:\s+(?:as\s+)?(\w+))?", code):
@@ -212,14 +263,51 @@ def mark_ok(cat: Catalogue, uid: str, rule: str, about: str = "", *, ok: bool = 
     cat.changed()
 
 
-def findings_for(cat: Catalogue, q: dict[str, Any], marks: set | None = None) -> list[dict[str, Any]]:
+class _Lookups:
+    """What the catalogue checks look up, read once per run instead of once per query and join."""
+
+    def __init__(self, cat: Catalogue):
+        self.cat = cat
+        self._tables: dict | None = None
+        self._columns: dict[str, dict[str, str]] = {}
+        self._profiles: dict[str, dict[str, Any]] = {}
+        self._lifecycle: dict[str, str | None] = {}
+
+    @property
+    def tables(self) -> dict:
+        if self._tables is None:
+            self._tables = self.cat.table_index()
+        return self._tables
+
+    def col_type(self, key: str, column: str) -> str | None:
+        if key not in self._columns:
+            self._columns[key] = {r[0].lower(): r[1] for r in self.cat.conn.execute(
+                "SELECT name, data_type FROM columns WHERE asset_key = ?", (key,)) if r[1]}
+        t = self._columns[key].get(column.lower())
+        return t.lower().split("(")[0] if t else None
+
+    def profile(self, key: str, column: str):
+        if key not in self._profiles:
+            self._profiles[key] = {r["column_name"].lower(): r for r in self.cat.conn.execute(
+                "SELECT column_name, row_count, distinct_count, null_count FROM profiles WHERE asset_key = ?", (key,))}
+        return self._profiles[key].get(column.lower())
+
+    def lifecycle(self, key: str) -> str | None:
+        if key not in self._lifecycle:
+            r = self.cat.conn.execute("SELECT lifecycle FROM item_info WHERE asset_key = ?", (key,)).fetchone()
+            self._lifecycle[key] = r[0] if r else None
+        return self._lifecycle[key]
+
+
+def findings_for(cat: Catalogue, q: dict[str, Any], marks: set | None = None,
+                 look: _Lookups | None = None, cache: _CheckCache | None = None) -> list[dict[str, Any]]:
     """Findings for one library query (as from sqllibrary.get), with the ones you marked fine flagged ok."""
     marks = ok_marks(cat, q["uid"]) if marks is None else marks
-    pairs = list(check_sql(q["sql"]))
+    pairs = list(cache.checks(q["sql"]) if cache else check_sql(q["sql"]))
     places = q.get("places") or []
     if any(p.get("built_from_variables") for p in places):
         pairs.append(("built_from_variables", ""))
-    pairs += _catalogue_checks(cat, q)
+    pairs += _catalogue_checks(cat, q, look or _Lookups(cat))
     out = []
     for rule, about in pairs:
         sev, title, why, article = RULES[rule]
@@ -229,7 +317,7 @@ def findings_for(cat: Catalogue, q: dict[str, Any], marks: set | None = None) ->
     return sorted(out, key=lambda f: (f["ok"], order[f["severity"]]))
 
 
-def _catalogue_checks(cat: Catalogue, q: dict[str, Any]) -> list[tuple[str, str]]:
+def _catalogue_checks(cat: Catalogue, q: dict[str, Any], look: _Lookups) -> list[tuple[str, str]]:
     """Checks that need what's catalogued: missing or deprecated tables, schema names, and joins
     compared with the columns' types and profiles."""
     out: list[tuple[str, str]] = []
@@ -242,45 +330,33 @@ def _catalogue_checks(cat: Catalogue, q: dict[str, Any]) -> list[tuple[str, str]
         if "." not in name and not name.startswith(("#", "@")) and name not in ctes and t.get("relation") != "calls":
             out.append(("missing_schema", name))
     if resolved:
-        from .curation import item_info
         for t in resolved:
-            if (item_info(cat, t["key"]) or {}).get("lifecycle") in ("deprecated", "retired"):
+            if look.lifecycle(t["key"]) in ("deprecated", "retired"):
                 out.append(("deprecated_object", t["name"]))
         # a table named in the same database as ones we know, but not found there
         known_dbs = {k.rsplit("/", 1)[0] for k in (t["key"] for t in resolved)}
         for t in tables:
             if not t.get("key") and t.get("relation") != "calls" and not t["name"].startswith(("#", "@")) \
                     and t["name"] not in ctes and t["name"].count(".") <= 1 and len(known_dbs) == 1:
-                if not cat.match_table(t["name"]):
+                if not cat.match_table(t["name"], index=look.tables):
                     out.append(("missing_object", t["name"]))
     keys = {t["name"]: t.get("key") for t in tables}
     for j in analysis.get("joins", []):
         a, b = keys.get(j["left_table"]), keys.get(j["right_table"])
         if not a or not b:
             continue
-        pa, pb = _profile(cat, a, j["left_column"]), _profile(cat, b, j["right_column"])
+        pa, pb = look.profile(a, j["left_column"]), look.profile(b, j["right_column"])
         if pa and pb and _not_unique(pa) and _not_unique(pb):
             out.append(("non_unique_join", f"{j['left_column']} = {j['right_column']}"))
-        ta, tb = _col_type(cat, a, j["left_column"]), _col_type(cat, b, j["right_column"])
+        ta, tb = look.col_type(a, j["left_column"]), look.col_type(b, j["right_column"])
         if ta and tb and _type_family(ta) != _type_family(tb):
             out.append(("type_mismatch", f"{j['left_column']} ({ta}) = {j['right_column']} ({tb})"))
     return out
 
 
-def _profile(cat: Catalogue, key: str, column: str):
-    return cat.conn.execute("SELECT row_count, distinct_count, null_count FROM profiles WHERE asset_key = ? AND "
-                            "lower(column_name) = ?", (key, column.lower())).fetchone()
-
-
 def _not_unique(p) -> bool:
     rows, distinct = p["row_count"] or 0, p["distinct_count"] or 0
     return rows > 0 and distinct > 0 and distinct < rows - (p["null_count"] or 0)
-
-
-def _col_type(cat: Catalogue, key: str, column: str) -> str | None:
-    r = cat.conn.execute("SELECT data_type FROM columns WHERE asset_key = ? AND lower(name) = ?",
-                         (key, column.lower())).fetchone()
-    return (r[0] or "").lower().split("(")[0] if r and r[0] else None
 
 
 def _type_family(t: str) -> str:
@@ -301,8 +377,10 @@ def check_all(cat: Catalogue) -> int:
 
 def _all(cat: Catalogue) -> list[dict[str, Any]]:
     from .sqllibrary import all_with_places
-    marks = ok_marks(cat)
-    return [{**q, "findings": findings_for(cat, q, marks)} for q in all_with_places(cat)]
+    marks, look, cache = ok_marks(cat), _Lookups(cat), _CheckCache(cat)
+    out = [{**q, "findings": findings_for(cat, q, marks, look, cache)} for q in all_with_places(cat)]
+    cache.save(prune=True)
+    return out
 
 
 def review_tasks(cat: Catalogue, task) -> list:

@@ -81,12 +81,14 @@ def unmark(cat: Catalogue, key: str, *, record_edit: bool = True) -> None:
     old = get(cat, key)
     if old is None:
         return
+    # the "OK to differ" answers go with the mark, and come back with it on undo
+    oks = [dict(r) for r in cat.conn.execute("SELECT * FROM gold_ok WHERE gold_key = ?", (key,))]
     with cat.conn:
         cat.conn.execute("DELETE FROM gold_standards WHERE key = ?", (key,))
         cat.conn.execute("DELETE FROM gold_ok WHERE gold_key = ?", (key,))
         if record_edit:
             from .edits import record
-            record(cat, key, "gold standard", "yes", "", {"type": "gold", "key": key, "was": old})
+            record(cat, key, "gold standard", "yes", "", {"type": "gold", "key": key, "was": {**old, "ok": oks}})
     cat.changed()
 
 
@@ -98,6 +100,10 @@ def restore(cat: Catalogue, key: str, row: dict[str, Any] | None) -> None:
             cat.conn.execute("INSERT INTO gold_standards (key, kind, note, snapshot, marked_at, author) "
                              "VALUES (?, ?, ?, ?, ?, ?)", (row["key"], row["kind"], row.get("note"), row.get("snapshot"),
                                                            row.get("marked_at"), row.get("author")))
+            for ok in row.get("ok") or []:
+                cat.conn.execute("INSERT OR REPLACE INTO gold_ok (gold_key, item_key, fingerprint, note, at, author) "
+                                 "VALUES (?, ?, ?, ?, ?, ?)", (ok["gold_key"], ok["item_key"], ok.get("fingerprint"),
+                                                               ok.get("note"), ok.get("at"), ok.get("author")))
     cat.changed()
 
 
@@ -422,11 +428,30 @@ def changed_since_marked(cat: Catalogue, gold_row: dict[str, Any], item: dict[st
 
 def _old_versions(cat: Catalogue) -> set[str]:
     from .groups import older_versions
-    return older_versions(cat)
+    return _cached(cat, "old_versions", older_versions)
+
+
+_CACHE: dict[tuple[str, str], tuple[int, Any]] = {}
+
+
+def _cached(cat: Catalogue, name: str, make):
+    """`make(cat)`, worked out once per catalogue revision: a measure or report page asks for every measure on
+    each rerun, and reading them all again each time is slow on a big catalogue."""
+    rev, where = cat.revision(), str(getattr(cat, "path", id(cat)))
+    hit = _CACHE.get((where, name))
+    if hit and hit[0] == rev:
+        return hit[1]
+    value = make(cat)
+    _CACHE[(where, name)] = (rev, value)
+    return value
 
 
 def _measures(cat: Catalogue) -> list[dict[str, Any]]:
-    """Every active measure in an active report, in load()'s shape."""
+    """Every active measure in an active report, in load()'s shape (read once per catalogue revision)."""
+    return _cached(cat, "measures", _read_measures)
+
+
+def _read_measures(cat: Catalogue) -> list[dict[str, Any]]:
     reports = {r["key"]: r["name"] for r in cat.conn.execute(
         "SELECT key, name FROM assets WHERE kind = 'report' AND status = 'active'")}
     out = []

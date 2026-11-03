@@ -188,14 +188,18 @@ def helper_functions(g) -> dict[str, str]:
         elif rel in ("reads", "writes") and a in funcs:
             touches.add(a)
 
-    reach: dict[str, bool] = {}
+    # Every function that reaches a table or file, directly or through what it calls: walk back from the ones
+    # that touch data along "is called by". (A depth-first walk that remembered answers got cycles wrong.)
+    reach = set(touches)
+    todo = list(touches)
+    while todo:
+        for c in callers[todo.pop()]:
+            if c not in reach:
+                reach.add(c)
+                todo.append(c)
 
-    def leads_to_data(f: str, seen: frozenset = frozenset()) -> bool:
-        if f in reach:
-            return reach[f]
-        r = f in touches or any(leads_to_data(c, seen | {f}) for c in calls[f] if c not in seen)
-        reach[f] = r
-        return r
+    def leads_to_data(f: str) -> bool:
+        return f in reach
 
     out = {}
     for f in funcs:
@@ -205,7 +209,7 @@ def helper_functions(g) -> dict[str, str]:
         name = d["label"].rsplit(".", 1)[-1].lower()
         # A function from another file was only looked at one level deep, so "no data" is unknown, not a sign
         # of a helper: functions a script loads from its own modules are often its main steps.
-        if d["kind"] != "libfn" and not leads_to_data(f):
+        if d["kind"] != "libfn" and not d.get("unexpanded") and not leads_to_data(f):
             out[f] = "reads and writes no tables or files, directly or through what it calls"
         elif len(callers[f]) >= 3:
             out[f] = f"used from {len(callers[f])} places"

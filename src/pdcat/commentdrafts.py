@@ -50,6 +50,8 @@ def column_comments(sql: str) -> dict[str, str]:
     """Column name (or alias) -> the comment at the end of its line in a SELECT list."""
     out = {}
     for line in (sql or "").splitlines():
+        if "--" not in line:  # most lines have no comment; the pattern below is slow on long lines without one
+            continue
         m = re.match(r"^\s*,?\s*(?P<expr>[^-]+?)\s*,?\s*--\s*(?P<c>.+)$", line)
         if not m:
             continue

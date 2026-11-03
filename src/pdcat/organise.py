@@ -38,14 +38,20 @@ _AREA_OF = {name: area for area, names in SAP_AREAS.items() for name in names}
 
 # Kinds of metric, by the words in the name; the first match wins.
 METRIC_KINDS: list[tuple[str, re.Pattern]] = [
-    ("Forecast accuracy and error", re.compile(r"mape|wape|mase|rmse|mse|mae|bias|accura|error|fva|tracking", re.I)),
-    ("Service and delivery", re.compile(r"fill.?rate|otif|service|on.?time|backorder|stock.?out|late", re.I)),
-    ("Stock and coverage", re.compile(r"stock|inventor|days.?on.?hand|doh|dos|coverage|turns|soh", re.I)),
-    ("Time", re.compile(r"lead.?time|cycle.?time|days|weeks|hours|duration|age", re.I)),
+    # short words only as whole words: "age" isn't "percentage", "late" isn't "latest", "turns" isn't "returns"
+    ("Forecast accuracy and error",
+     re.compile(r"mape|wape|mase|rmse|\bmse\b|\bmae\b|bias|accura|error|\bfva\b|tracking", re.I)),
+    ("Service and delivery",
+     re.compile(r"fill.?rate|otif|service|on.?time|backorder|stock.?out|\blate\b|\blateness\b", re.I)),
+    ("Stock and coverage",
+     re.compile(r"stock|inventor|days.?on.?hand|\bdoh\b|\bdos\b|coverage|\bturns?\b|\bsoh\b", re.I)),
+    ("Time", re.compile(r"lead.?time|cycle.?time|\bdays\b|\bweeks\b|\bhours\b|duration|\bage\b|\bageing\b|\baging\b",
+                        re.I)),
     ("Money and margin", re.compile(r"margin|cost|price|revenue|sales.?value|value|profit|spend|amount|€|\$", re.I)),
-    ("Growth and change", re.compile(r"growth|change|vs|delta|diff|\bly\b|ytd|mtd|prior|last.?year", re.I)),
-    ("Rates, ratios and shares", re.compile(r"rate|ratio|share|pct|percent|%|utili[sz]|yield", re.I)),
-    ("Counts and totals", re.compile(r"count|total|sum|number|qty|quantity|units|volume", re.I)),
+    ("Growth and change",
+     re.compile(r"growth|change|\bvs\b|delta|\bdiff|\bly\b|\bytd\b|\bmtd\b|prior|last.?year", re.I)),
+    ("Rates, ratios and shares", re.compile(r"rate|ratio|share|\bpct\b|percent|%|utili[sz]|yield", re.I)),
+    ("Counts and totals", re.compile(r"count|total|\bsum\b|number|\bqty\b|quantity|units|volume", re.I)),
 ]
 OTHER = "Other"
 VIEWS = {

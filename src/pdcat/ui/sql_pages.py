@@ -41,16 +41,17 @@ def queries_page(cat: Catalogue) -> None:
              and (table == "(any)" or any(t["name"] == table for t in q["tables"]))
              and (not text or text.lower() in q["name"].lower() or text.lower() in q["sql"].lower())]
     st.caption(f"{len(shown)} of {len(rows)} queries · checks: ❗ may give wrong results, ⚠️ risky, 🐢 may be slow")
-    from pdcat.sqlchecks import RULES, SEVERITY_ICONS, check_sql
+    from pdcat.sqlchecks import RULES, SEVERITY_ICONS, cached_checks
 
-    def checks(sql: str) -> str:
-        sev = [RULES[r][0] for r, _ in check_sql(sql)]
+    def checks(found) -> str:
+        sev = [RULES[r][0] for r, _ in found]
         return " ".join(f"{SEVERITY_ICONS[s]}{sev.count(s)}" for s in ("wrong", "risky", "slow") if s in sev)
+    found = cached_checks(cat, [q["sql"] for q in shown])
     df = pd.DataFrame([{"query": q["name"], "tables": ", ".join(t["name"] for t in q["tables"][:6])
                         + (" …" if len(q["tables"]) > 6 else ""), "tables used": len(q["tables"]),
                         "places": q["places"], "status": q["status"],
-                        "checks": checks(q["sql"]), "read": sqllibrary.read_label(q.get("analysis")),
-                        "named by": "you" if q["named_by"] == "you" else "auto"} for q in shown])
+                        "checks": checks(f), "read": sqllibrary.read_label(q.get("analysis")),
+                        "named by": "you" if q["named_by"] == "you" else "auto"} for q, f in zip(shown, found)])
     if df.empty:
         st.info("Nothing matches.")
         return

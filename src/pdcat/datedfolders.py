@@ -34,7 +34,7 @@ def span(name: str, parent: tuple[date, date] | None = None) -> tuple[date, date
     day number (2026/05/14) needs the parent's span."""
     from .series import _find
     hit = _find(name)
-    if hit and re.sub(r"\{[a-z]+\}", "", hit[0]).strip(" -_.") == "":
+    if hit and re.sub(r"[Qq]?\{q\}|\{[a-z]+\}", "", hit[0]).strip(" -_.") == "":
         f = hit[1]  # the whole name is the date: 2026, 05 2026, 20260514, 2026-05, May 2026, 2026Q2
         y = f["y"]
         if "d" in f:
@@ -76,15 +76,23 @@ def _subdirs(path: str) -> list[str]:
 def newest_date(path: str, spans: dict[str, tuple[date, date]]) -> tuple[date, bool]:
     """Go down the newest dated subfolder at each level: (the newest day found or the end of the newest period,
     whether the deepest dated folders are days)."""
-    best = max(spans.values(), key=lambda s: s[1])
+    today = date.today()
+
+    def newest(spans: dict[str, tuple[date, date]]) -> tuple[date, date]:
+        # A folder made ahead of time (or a typo like 20261230) mustn't count as the newest: start from the newest
+        # one that has begun, so the real recent folders stay inside the window.
+        started = [s for s in spans.values() if s[0] <= today]
+        return max(started or spans.values(), key=lambda s: s[1])
+
+    best = newest(spans)
     for _ in range(4):
         name = next(n for n, s in spans.items() if s == best)
         path = os.path.join(path, name)
         below = {n: s for n in _subdirs(path) if (s := span(n, best))}
         if not below:
             break
-        spans, best = below, max(below.values(), key=lambda s: s[1])
-    return min(best[1], max(best[0], date.today())), best[0] == best[1]
+        spans, best = below, newest(below)
+    return min(best[1], max(best[0], today)), best[0] == best[1]
 
 
 @dataclass

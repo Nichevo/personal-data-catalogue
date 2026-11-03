@@ -87,7 +87,7 @@ def find_files(root: Path, suffixes: Iterable[str], recursive: bool = True, igno
             sub = d if rel == "." else f"{rel}/{d}"
             if sub.lower() in ignored or d.lower() in JUNK_DIRS:
                 skipped += 1
-            elif logs is not None and LOG_DIR.match(d):
+            elif logs is not None and recursive and LOG_DIR.match(d):   # a top-level-only scan never goes below
                 report(f"Counting the files in {sub}/ (log files are listed, not read) …")
                 logs.append({"folder": sub, **count_folder(os.path.join(folder, d))})
             else:

@@ -67,8 +67,7 @@ def resolve_imports(cat: Catalogue) -> int:
                 continue
             if imp.get("managed"):
                 # Loader-named modules: several scanned files may share the name; the loader's folders decide.
-                target = pick_managed(absolute, imp.get("folders") or [], files, older)[0] or \
-                    _longest_match(absolute, modules) or by_last_name(absolute, modules)
+                target = managed_target(absolute, imp.get("folders") or [], files, older, modules)
             else:
                 target = _longest_match(absolute, modules)
             if target and (plain_names or not names):
@@ -200,6 +199,16 @@ def pick_managed(module: str, folders: list[str], files: dict[str, str], older: 
     if len(hits) > 1:
         hits = [k for k in hits if k not in older] or hits
     return (hits[0] if len(hits) == 1 else None), managed_candidates(module, files)
+
+
+def managed_target(module: str, folders: list[str], files: dict[str, str], older: set[str],
+                   modules: dict[str, str]) -> str | None:
+    """The script a loader-named module resolves to. When several scanned files share its name and the loader's
+    folders don't pick one, nothing is linked (the script page says so), rather than whichever was scanned first."""
+    target, same_name = pick_managed(module, folders, files, older)
+    if target or len(same_name) > 1:
+        return target
+    return _longest_match(module, modules) or by_last_name(module, modules)
 
 
 def code_files(cat: Catalogue) -> dict[str, str]:
@@ -613,7 +622,7 @@ class CodeIndex:
             from .groups import older_versions
             self._files = {k: a["attrs"].get("full_path") or k for k, a in self.assets.items()}
             self._older = older_versions(self.cat)
-        return pick_managed(module, folders, self._files, self._older)[0]
+        return managed_target(module, folders, self._files, self._older, self.modules)
 
     def resolve(self, key: str, call: str, scope: str | None = None) -> tuple:
         """("local", key, fn) | ("lib", key, fn) | ("other", call)."""
@@ -645,8 +654,7 @@ class CodeIndex:
                 for i in range(len(parts) - 1, 0, -1):
                     mod = ".".join(parts[:i])
                     if mod in managed:
-                        mod_key = self.managed_key(mod, managed[mod].get("folders") or []) or \
-                            self.modules.get(mod) or by_last_name(mod, self.modules)
+                        mod_key = self.managed_key(mod, managed[mod].get("folders") or [])
                     else:
                         mod_key = self.modules.get(mod)
                     if mod_key:
@@ -703,7 +711,8 @@ def function_graph(cat: Catalogue, key: str, focus: str | None = None, *, depth:
         if nid not in g.nodes or is_focus:
             info = idx.functions(k).get(fn) or {}
             g.nodes[nid] = {"label": fn, "kind": kind, "group": group, "loops": info.get("loops") or 0,
-                            "loop_calls": info.get("loop_calls") or [], "recursive": bool(info.get("recursive"))}
+                            "loop_calls": info.get("loop_calls") or [], "recursive": bool(info.get("recursive")),
+                            "_kf": (k, fn)}
         return nid
 
     def add_data(k: str, fn: str, nid: str) -> None:
@@ -746,10 +755,16 @@ def function_graph(cat: Catalogue, key: str, focus: str | None = None, *, depth:
             expand(key, fn, 1, seen)
     else:
         fid = node(key, focus, is_focus=True)
-        expand(key, focus, max(depth, 1), set())
+        seen = set()
+        expand(key, focus, max(depth, 1), seen)
         for ck, cfn in idx.callers(key, focus):
             g.edges[(node(ck, cfn), fid, "call")]
         g.nodes[fid]["kind"] = "focus"
+    for d in g.nodes.values():
+        kf = d.pop("_kf", None)
+        # a function at the edge of the depth limit was not followed: what it reaches is unknown, not "nothing"
+        if kf and focus is not None and kf not in seen:
+            d["unexpanded"] = True
     return g
 
 

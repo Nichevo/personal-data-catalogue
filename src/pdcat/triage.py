@@ -14,7 +14,9 @@ from .store import Catalogue
 
 BANDS = ("likely", "check", "unlikely")
 BAND_LABELS = {"likely": "🟢 Likely", "check": "🟡 Check", "unlikely": "🔴 Unlikely"}
-_JUNK_NAME = re.compile(r"^(?:[a-z]|col\d*|x\d*|y\d*|tmp\w*|temp\w*|test\w*|new\w*|calc\w*|value\d*|\w*\d{2,})$")
+# Working-column names: one letter, col1, x2, tmp, temp3, test, new1, calc2, value4, or a short stem and a number
+# (v01, df12). Whole names only: "newcustomers", "temperature" or "sales2024" are real business names.
+_JUNK_NAME = re.compile(r"^(?:[a-z]|col\d*|x\d*|y\d*|tmp\d*|temp\d*|test\d*|new\d*|calc\d*|value\d*|[a-z]{0,3}\d{2,})$")
 
 
 def _decisions(cat: Catalogue, kind: str) -> list[dict[str, Any]]:
@@ -105,10 +107,10 @@ def _metric(cat: Catalogue, kind: str, rows: list[dict]) -> list[tuple[str, str,
         name = re.sub(r"[^a-z0-9]", "", (p.get("name") or r["title"]).lower())
         hist = _from_history(words({"payload": p, "title": r["title"]}), yes, no,
                              f"metrics ending in “{words({'payload': p, 'title': r['title']})}”")
-        if _JUNK_NAME.match(name) or len(name) <= 2:
-            band, why = "unlikely", "the name looks like a working column, not a business number"
-        elif hist:
+        if hist:   # what you decided before wins over the name rule
             band, why = hist
+        elif _JUNK_NAME.match(name) or len(name) <= 2:
+            band, why = "unlikely", "the name looks like a working column, not a business number"
         elif not p.get("formula"):
             band, why = "unlikely", "the formula couldn't be read"
         elif len(places) >= 3:

@@ -364,9 +364,17 @@ def _model_in_own_process(path: Path, timeout: int = PBIXRAY_TIMEOUT) -> tuple[d
     except OSError:
         return _model_from_pbixray(path), None
     lines = done.stdout.decode("utf-8", errors="replace").strip().splitlines()
-    if done.returncode or not lines or not lines[-1].startswith(_MODEL_MARK):
-        return None, None
-    return json.loads(lines[-1][len(_MODEL_MARK):]), None
+    model = json.loads(lines[-1][len(_MODEL_MARK):]) if lines and lines[-1].startswith(_MODEL_MARK) else None
+    if done.returncode or model is None:
+        # pbixray is installed but couldn't read this file: say so, rather than "install pbixray"
+        err = done.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        last = err[-1][:200] if err else ""
+        if not done.returncode:
+            return None, ("pbixray found no model it could read in this file (a report connected live to a shared "
+                          "dataset has none inside). Save a copy as .pbit or .pbip next to it to read the model.")
+        return None, ("pbixray couldn't read this report's model" + (f" ({last})" if last else "") +
+                      ". Save a copy as .pbit or .pbip next to it to read the model.")
+    return model, None
 
 
 _MODEL_MARK = "pdcat-model:"

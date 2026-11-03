@@ -163,3 +163,28 @@ Two more things the 20,000-file folder taught:
   for value counts, to `csv.Sniffer`, and to counting lines in files that never needed
   opening. Sampling by date took most of the time away by not reading at all; the per-file
   fixes halved what was left.
+
+## 11. Time it on something the size of the real thing, and save what you worked out (2.8.3)
+
+Every test passed and every page worked on the small test catalogue, yet on a made-up catalogue the size of
+a real warehouse the after-scan steps took over a minute even when almost nothing had changed. Profiling
+found three habits behind most of it:
+
+- **Doing the same work twice.** The SQL checks ran once as an after-scan step and again for the review
+  list, and once more for the SQL queries page. Results that only depend on a piece of text are now saved
+  by a hash of that text, so a rescan only checks what is new or changed.
+- **One query per item inside a loop.** Each join's column type and profile was looked up with its own
+  query, about 300,000 of them. Reading what a step needs once (per table, then from a dict) took that
+  part from seconds to nothing.
+- **A pattern run on every character, or on every line.** A regex per character to spot FROM, and a
+  backtracking regex on every line of SQL to find a comment that most lines don't have. A cheap check
+  first (`"--" in line`, `ch in "fi"`) keeps the regex for the few places it can match.
+
+The code review that ran alongside found bugs no test had caught because the tests used tidy inputs:
+names with `_` or `%` used in SQL LIKE patterns, functions calling each other in a cycle, folders dated
+in the future, keys that look like folders but hold file paths.
+
+**For other projects:** keep a script that builds a big fake dataset and times the slow paths, and run it
+before a release, not only the tests. When a result depends only on some text, save it by the text's hash.
+Escape anything user-named that goes into a LIKE pattern.
+
