@@ -168,6 +168,33 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.8
+
+Folders that keep every past file (weekly reports saved as
+`Files/2026/05 2026/20260414/archived/converted_REPORT20260414.xlsx`, thousands of them) took hours to scan,
+because the date sampling from 2.14 only ever covered CSV and Parquet files: every Excel workbook was opened.
+
+- **Workbooks and Power BI reports are sampled by date too.** In a big folder (more than 2,000 files of any
+  kind) workbooks and reports that differ only by a date become one **dated series** across the whole folder
+  tree, however deep the dated subfolders go. Only the newest of each series are opened; the rest are listed
+  by name, size and modified date. The series page shows the period covered, missing periods and every file,
+  with buttons to open the newest ones.
+- **History folders.** Folders named `archive`, `archived`, `old`, `backup`, `history`, `previous`,
+  `superseded` and the like are treated as history at any depth: in a dated series only the newest file is
+  opened, the rest are listed. Give a folder the role **Archive / history** in 📂 Folder roles to make it
+  history, or any other role to have it read in full. Switch name matching off in Settings.
+- **Dated folders are understood better.** Month folders with a space (`05 2026`) are read as dates, and a
+  deeper dated folder (`20260414`) wins over the ones above it, so these files form one series.
+- **A cap on workbooks and reports opened per scan** (300 by default, Settings). New or changed ones beyond
+  that are left for the next scan, newest first, and the next scan carries on where this one stopped.
+- **You can see what was skipped.** Before reading, the scan says how many files will be listed and why;
+  afterwards the folder's card shows each history folder with its file count, file types and date range.
+  "Read every file" on the folder's card turns all of this off for that folder.
+- A workbook read in an earlier scan that is now only listed keeps what was found, rather than being marked
+  missing.
+
+No rescan is forced: the next scan of a big or history folder is simply much faster.
+
 ## New in version 2.6
 
 - **Gold standards.** Mark a Power BI report, a measure, an SQL query or a view as the one to trust

@@ -198,11 +198,21 @@ def sampling_note(cat: Catalogue, name: str, i: int) -> None:
                      "dated series and the newest stand-alone files; list the rest without opening them."):
             cat.set_setting("read_all_sources", [n for n in read_all if n != name], quiet=True)
             st.rerun()
-    elif last and last["summary"].get("sampled"):
+    elif last and (last["summary"].get("sampled") or last["summary"].get("listed")
+                   or last["summary"].get("deferred")):
         s = last["summary"]
         c1, c2 = st.columns([4, 1])
-        c1.caption(f"📅 Sampled by date: {s.get('files_read', 0):,} of {s.get('files_found', 0):,} files were opened; "
-                   f"{s.get('listed', 0):,} older files in dated series are listed without being read.")
+        c1.caption(f"📅 {'Sampled by date' if s.get('sampled') else 'History listed'}: "
+                   f"{s.get('files_read', 0):,} of {s.get('files_found', 0):,} files were opened; "
+                   f"{s.get('listed', 0):,} history or older files in dated series are listed without being read."
+                   + (f" {s['deferred']:,} new or changed workbooks and reports are left for the next scan."
+                      if s.get("deferred") else ""))
+        if s.get("history"):
+            from pdcat.historyfolders import describe
+            with c1.expander(f"History folders ({len(s['history'])})"):
+                for line in describe(s["history"], limit=30):
+                    st.caption(line)
+                st.caption("Give a folder another role in 📂 Folder roles to read it in full.")
         if c2.button("Read every file", key=f"readall-{i}",
                      help="From the next scan, open every file in this folder (slow for thousands of files)."):
             cat.set_setting("read_all_sources", [*read_all, name], quiet=True)

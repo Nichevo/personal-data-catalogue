@@ -39,7 +39,7 @@ PATTERNS: list[tuple[str, re.Pattern]] = [
     ("yq", re.compile(rf"(?<!\d){_Y}{_SEP}q(?P<q>[1-4])(?!\d)", re.I)),
     ("qy", re.compile(rf"(?<![a-z\d])q(?P<q>[1-4]){_SEP}{_Y}(?!\d)", re.I)),
     ("ym", re.compile(rf"(?<!\d){_Y}{_SEP}(?P<m>0[1-9]|1[0-2])(?!\d)")),
-    ("my", re.compile(rf"(?<!\d)(?P<m>0[1-9]|1[0-2])[-_.]{_Y}(?!\d)")),
+    ("my", re.compile(rf"(?<!\d)(?P<m>0[1-9]|1[0-2])[-_. ]{_Y}(?!\d)")),  # 05-2026, 05 2026
     ("mony", re.compile(rf"(?<![a-z]){_MON}{_SEP}{_Y}(?!\d)", re.I)),
     ("ymon", re.compile(rf"(?<!\d){_Y}{_SEP}{_MON}(?![a-z])", re.I)),
     ("y", re.compile(rf"(?<![\d]){_Y}(?!\d)")),
@@ -107,8 +107,11 @@ def parse(rel: str) -> DatedPath | None:
         hit = _find(f)
         if hit:
             folder_templates.append(hit[0])
-            for k, v in hit[1].items():
-                folder_found.setdefault(k, v)
+            if len(hit[1]) >= len(folder_found):  # a deeper, as-precise folder wins: 2026/05 2026/20260414/
+                folder_found = dict(hit[1])
+            else:
+                for k, v in hit[1].items():
+                    folder_found.setdefault(k, v)
         elif re.fullmatch(r"0[1-9]|1[0-2]", f) and "y" in folder_found and "m" not in folder_found:
             folder_templates.append("{mm}")  # 2026/01/
             folder_found["m"] = int(f)

@@ -11,7 +11,8 @@ together, and each one gets a role from its name and what's in it:
   outputs   output/, outputs/, results/, exports/, reports/
   docs      docs/, doc/, documentation/
   design    design/, specs/, requirements/: design documents, read as reference documents (2.3)
-  archive   archive/, old/, backup/, bak/, legacy/, deprecated/: kept, but treated as old
+  archive   archive/, archived/, old/, backup/, history/, previous/, legacy/: history. A folder scan lists these
+            files without opening them, except the newest of each dated series (2.8, historyfolders.py)
   ignore    tmp/, temp/, cache/: not catalogued
 
 Roles apply at any depth (forecasting/data/raw_data/ is raw data inside forecasting) and are kept by
@@ -31,7 +32,7 @@ from .store import Catalogue
 
 ROLES = {"code": "Code", "raw data": "Raw data (comes in from outside)", "data": "Data", "outputs": "Outputs",
          "docs": "Docs", "design": "Design documents (read: Word, PowerPoint, Excel, PDF become reference documents)",
-         "archive": "Archive (treated as old)", "ignore": "Ignore (not catalogued)",
+         "archive": "Archive / history (listed; only the newest of each dated series is opened)", "ignore": "Ignore (not catalogued)",
          "project": "A project of its own", "": "No particular role"}
 NAME_ROLES: list[tuple[str, re.Pattern]] = [
     ("raw data", re.compile(r"^(raw[_ -]?data|raw|inputs?|landing|source[_ -]?data|incoming|external)$", re.I)),
@@ -40,7 +41,8 @@ NAME_ROLES: list[tuple[str, re.Pattern]] = [
     ("outputs", re.compile(r"^(outputs?|results?|exports?|reports?|deliverables?|figures?|plots?|predictions?)$", re.I)),
     ("design", re.compile(r"^(design|designs|specs?|specifications?|requirements?|design[_ -]?docs?)$", re.I)),
     ("docs", re.compile(r"^(docs?|documentation|notes|wiki)$", re.I)),
-    ("archive", re.compile(r"^(archive[ds]?|old|backups?|bak|legacy|deprecated|retired|_old|zz_?old)$", re.I)),
+    ("archive", re.compile(r"^(archive[ds]?|_?archive|old|backups?|bak|legacy|deprecated|retired|_old|zz_?old|"
+                           r"history|historic(al)?|hist|previous|superseded)$", re.I)),
     ("ignore", re.compile(r"^(tmp|temp|cache|\.cache|scratch|__pycache__|\.ipynb_checkpoints|\.git|\.venv|venv|env|"
                           r"node_modules)$", re.I)),
 ]

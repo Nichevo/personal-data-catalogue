@@ -918,6 +918,20 @@ class Catalogue:
                         "finished_at": r["finished_at"], "summary": json.loads(r["summary"]) if r["summary"] else {}})
         return out
 
+    def keep_seen(self, key: str) -> int:
+        """A file a folder scan didn't open this time (history, an older file in a dated series, or left for the
+        next scan): if an earlier scan read it, keep it and what it holds (measures, model tables) as they are,
+        so finish_scan doesn't mark them missing. 1 if there was something to keep, else 0."""
+        row = self.conn.execute("SELECT status FROM assets WHERE key = ?", (key,)).fetchone()
+        if row is None or row["status"] != "active":
+            return 0
+        if getattr(self, "_seen", None) is not None:
+            self._seen.add(key)
+            self._seen.update(r[0] for r in self.conn.execute(
+                "SELECT key FROM assets WHERE parent = ? OR key LIKE ?", (key, key.replace("%", "") + "/%")))
+        self.conn.execute("UPDATE assets SET last_seen = ? WHERE key = ?", (now(), key))
+        return 1
+
     def upsert_asset(self, key: str, kind: str, name: str, source: str, *, parent: str | None = None,
                      description: str | None = None, attrs: dict[str, Any] | None = None) -> None:
         ts = now()
