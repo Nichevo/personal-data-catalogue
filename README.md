@@ -176,6 +176,7 @@ one at a time, and every query is logged:
   environments, business projects, knowledge, questions, metrics, ML features and keys. It works from an
   item page too. Counts with no list page of their own stay as plain text underneath.
 - The 📝 notes and 📋 to review counts open What's new › Recent notes and To review.
+
 ## New in version 2.8.1
 
 - **Daily dated folders aren't all walked.** When a folder's subfolders are named by date in any format
