@@ -165,6 +165,30 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.7
+
+- **Long suggestion lists come in groups.** With thousands of SAP meanings or metrics found in code,
+  Suggestions now opens on a short list of groups instead of the rows (lists over 200). Pick how to
+  organise them with **Organise by**:
+  - SAP meanings: column name (“Plant → WERKS”), SAP field, SAP area (sales, purchasing, planning,
+    warehouse...), table or file, folder or database.
+  - Metrics found in code: first word of the name (Sales…, Forecast…), kind of metric (forecast accuracy
+    and error, service, stock and coverage, money...), the script, report or query it was found in, its
+    folder, and where it was found (Python, SQL, Power BI).
+  Each group shows how many are likely, to check or unlikely, with **Open** to look through it and tick
+  the wrong ones, **Accept N** / **Reject N** for the whole group, and **Likely N** to accept only the
+  likely ones in it. Each asks once before it does anything. **List** gives the old single list.
+- **Repeats merged.** The same SAP meaning on many tables (a Plant column meaning WERKS in 300 tables)
+  is one row, “the same suggestion on 300 items”, and accepting or rejecting it does all of them.
+  Switch **Merge repeats** off to see them one by one.
+- **File names apart from their folders.** Search results, the Find lists (Python, Power BI, Tables
+  and datasets) and Power BI model tables, queries and columns now have **Name** (the file name only),
+  **In** (the report a measure or table is in, file name only) and **Folder** (shortened to its last parts,
+  “…/Monthly/Archive”). Switch on **Full folder paths** to see the whole path. Measures across reports
+  shows report file names with their folders in a column of their own, and item pages show the file name
+  as the title with the folder underneath.
+- No rescan needed. SAP suggestion titles lose their folder part after the next scan.
+
 ## New in version 2.5.3
 
 - **Calls far down a long script are found.** Only the first 60 different calls in a function (or in a

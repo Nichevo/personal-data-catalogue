@@ -10,6 +10,7 @@ import json
 import re
 from typing import Any
 
+from .pathbits import file_name, place
 from .store import Catalogue
 from .textclean import as_text
 
@@ -219,13 +220,13 @@ def all_objects(cat: Catalogue, what: str, old_versions: bool = False) -> list[d
             for m in attrs.get("measures") or []:
                 homes[m.get("table")] = homes.get(m.get("table"), 0) + 1
             for t in attrs.get("tables") or []:
-                out.append({"key": table_key(r["key"], t["name"]), "name": t["name"], "in": r["name"],
-                            "where": r["source"], "columns": len(t.get("columns", [])),
+                out.append({"key": table_key(r["key"], t["name"]), "name": t["name"], "in": file_name(r["name"], "report"),
+                            **place(r), "columns": len(t.get("columns", [])),
                             "measures": homes.get(t["name"], 0), "calculated": "yes" if t.get("calculated") else ""})
         else:
             for q in attrs.get("queries") or []:
                 reads = q.get("tables", []) + q.get("files", []) + q.get("folders", []) + q.get("web", [])
-                out.append({"key": query_key(r["key"], q["name"]), "name": q["name"], "in": r["name"],
-                            "where": r["source"], "type": "parameter" if "parameter" in q else "query",
+                out.append({"key": query_key(r["key"], q["name"]), "name": q["name"], "in": file_name(r["name"], "report"),
+                            **place(r), "type": "parameter" if "parameter" in q else "query",
                             "reads": ", ".join(reads), "builds on": ", ".join(q.get("uses", []))})
     return out

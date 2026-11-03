@@ -75,27 +75,47 @@ def search_page(cat: Catalogue) -> None:
                        "search-results.csv", "text/csv")
 
 
-TABLE_COLUMNS = ["kind", "name", "where", "description", "matched on", "rows", "changed", "notes", "status",
+TABLE_COLUMNS = ["kind", "name", "in", "folder", "description", "matched on", "rows", "changed", "notes", "status",
                  "trust", "used by", "made by"]
+
+
+FOLDER_HELP = ("The folder it is in, shortened to its last parts (…/Monthly/Sales). Switch on Full folder paths to see "
+               "all of it, or open the item.")
+FOLDER_COLUMN = st.column_config.TextColumn("folder", help=FOLDER_HELP)
+
+
+def full_paths_switch(where, key: str) -> bool:
+    """A switch that shows whole folder paths instead of the shortened ones; remembered across pages."""
+    wkey = f"{key}-fullpaths"
+    if wkey not in st.session_state:
+        st.session_state[wkey] = bool(st.session_state.get("_full-paths"))
+    on = where.toggle("Full folder paths", key=wkey,
+                      help="Show the whole folder path instead of its last parts. The file name stays in Name.")
+    st.session_state["_full-paths"] = on
+    return on
 
 
 def results_table(cat: Catalogue, rows: list[dict], group_by: str, key: str = "search-table") -> None:
     """Results as sortable tables, one per group. Picking a row opens it (a file family opens to its members)."""
     from pdcat import searchview as SV
     groups = SV.grouped(rows, group_by)
-    st.caption(f"{len(rows)} result(s)" + (f" in {len(groups)} group(s)" if group_by != "Not at all" else "")
+    c1, c2 = st.columns([4, 1.3], vertical_alignment="center")
+    c1.caption(f"{len(rows)} result(s)" + (f" in {len(groups)} group(s)" if group_by != "Not at all" else "")
                + ". Click a column heading to sort, or a row to open it.")
+    full = full_paths_switch(c2, key)
     for gi, (head, items) in enumerate(groups):
         if head:
             st.markdown(f"**{head}** · {len(items)}")
         df = pd.DataFrame([{**{c: r.get(c) for c in TABLE_COLUMNS},
-                            "kind": f"{icon(r['kind'])} {kind_label(r['kind']) if r['kind'] != 'group' else 'file family'}"}
+                            "kind": f"{icon(r['kind'])} {kind_label(r['kind']) if r['kind'] != 'group' else 'file family'}",
+                            "folder": (r.get("_full_folder") or r.get("folder")) if full else r.get("folder")}
                            for r in items])
         df = df[[c for c in TABLE_COLUMNS if c in ("kind", "name") or df[c].astype(str).str.strip().replace(
             {"0": "", "None": "", "nan": ""}).any()]]
         event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                              key=f"{key}-{gi}", column_config={
                                  "rows": st.column_config.NumberColumn(format="%d"),
+                                 "folder": FOLDER_COLUMN,
                                  "description": st.column_config.TextColumn(width="large")})
         sel = event.selection.rows if event and hasattr(event, "selection") else []
         if sel:

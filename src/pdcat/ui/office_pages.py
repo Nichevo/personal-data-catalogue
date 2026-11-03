@@ -333,7 +333,8 @@ def measures_across_page(cat: Catalogue) -> None:
                 cols = st.columns(min(len(v["measures"]), 4))
                 for i, m in enumerate(v["measures"][:4]):
                     with cols[i]:
-                        asset_button(m["key"], f"{m['report']} › {m['name']}", "measure", f"mx-{m['key']}")
+                        asset_button(m["key"], f"{m['report']} › {m['name']}", "measure", f"mx-{m['key']}",
+                                     help=f"In folder {m['folder']}" if m.get("folder") else None)
     shared = found["same_dax"]
     st.subheader(f"Same calculation in several reports ({len(shared)})")
     renamed = [e for e in shared if e["different_names"]]
@@ -342,5 +343,8 @@ def measures_across_page(cat: Catalogue) -> None:
     st.dataframe(pd.DataFrame([{"": "✏️" if e["different_names"] else "", "names": ", ".join(e["names"]),
                                 "reports": e["reports"],
                                 "in": ", ".join(sorted({m["report"] for m in e["measures"]})),
+                                "folders": ", ".join(sorted({m["folder"] for m in e["measures"] if m["folder"]})),
                                 "expression": e["expression"][:160]} for e in shared]),
-                 hide_index=True, width="stretch")
+                 hide_index=True, width="stretch", column_config={
+                     "in": st.column_config.TextColumn("in reports", help="Report file names"),
+                     "folders": st.column_config.TextColumn(help="The folders those reports are in, shortened")})

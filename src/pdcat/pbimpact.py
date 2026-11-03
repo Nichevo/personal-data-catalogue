@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .measures import dax_refs
+from .pathbits import file_name, place
 from .store import Catalogue
 from .textclean import as_text
 
@@ -374,7 +375,7 @@ def column_rows(cat: Catalogue, old_versions: bool = False) -> list[dict[str, An
         u = usage(cat, r["key"], matches)
         for lab, c in u["columns"].items():
             out.append({"key": table_key(r["key"], c["table"]), "column": c["column"], "table": c["table"],
-                        "in": r["name"], "where": r["source"], "calculated": "yes" if c["calculated"] else "",
+                        "in": file_name(r["name"], "report"), **place(r), "calculated": "yes" if c["calculated"] else "",
                         "used": c["used"], "used by": c["why"], "visuals": len(c["visuals"]),
                         "in measures": ", ".join(c["in_measures"][:6]),
                         "reports": len({v[0] for v in c["visuals"]})})

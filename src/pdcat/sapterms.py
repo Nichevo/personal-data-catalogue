@@ -147,9 +147,11 @@ def suggest_sap(cat: Catalogue) -> int:
     from .curation import hidden_keys
     hidden = hidden_keys(cat, old=True)
     found = []
+    from .pathbits import file_name
     names = {r[0]: r[1] for r in cat.conn.execute(
         "SELECT key, name FROM assets WHERE status = 'active' AND kind IN ('table', 'view', 'data_file', "
         "'file_series')")}
+    shown = {k: file_name(n, "data_file") for k, n in names.items()}  # a file's name without its folders
     for r in cat.conn.execute("SELECT asset_key, name FROM columns"):
         key, col = r[0], r[1]
         if key not in names or key in hidden or (key, col.lower()) in have_cols:
@@ -159,7 +161,7 @@ def suggest_sap(cat: Catalogue) -> int:
             continue
         field, how = m
         found.append({"id": suggestions.make_id("sap", f"{key}#{col}", field), "subject": key,
-                      "title": f"{names[key]}.{col} is SAP {field} ({SAP_FIELDS[field][0]})",
+                      "title": f"{shown[key]}.{col} is SAP {field} ({SAP_FIELDS[field][0]})",
                       "detail": f"Suggested because the column name is {how}.",
                       "score": 2 if how.startswith("the SAP") else 1,
                       "payload": {"key": key, "column": col, "sap_name": field}})
@@ -169,7 +171,7 @@ def suggest_sap(cat: Catalogue) -> int:
         t = match_table(name)
         if t:
             found.append({"id": suggestions.make_id("sap", key, t), "subject": key,
-                          "title": f"{name} is an extract of SAP {t} ({SAP_TABLES[t]})",
+                          "title": f"{shown[key]} is an extract of SAP {t} ({SAP_TABLES[t]})",
                           "detail": "Suggested because its name contains the SAP table name.", "score": 2,
                           "payload": {"key": key, "sap_name": t}})
     return suggestions.sync(cat, "sap", found)

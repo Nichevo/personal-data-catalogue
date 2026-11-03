@@ -126,7 +126,7 @@ def test_search_shows_a_measures_report_and_its_dax(catalogue, tmp_path):
     scan_folder(catalogue, "reports", folder)
     rows = {r["name"]: r for r in rows_for(catalogue, [dict(r) for r in catalogue.search("units")])
             if r["kind"] == "measure"}
-    assert rows["Sales[Units vs LY]"]["where"] == "reports › Sales.pbit"
+    assert rows["Sales[Units vs LY]"]["in"] == "Sales.pbit" and rows["Sales[Units vs LY]"]["folder"] == "reports"
     assert rows["Sales[Units vs LY]"]["description"] == "[Total Units] - [Units LY]"
     assert rows["Sales[Total Units]"]["description"] == "Units sold, net of returns"  # its own description first
     [rep] = rows_for(catalogue, [dict(r) for r in catalogue.search("", kinds=("report",))])
