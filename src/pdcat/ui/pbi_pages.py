@@ -14,7 +14,10 @@ def _parent_line(parent: dict, what: str) -> None:
     c1, c2 = st.columns([1, 3])
     c1.caption(what)
     with c2:
-        asset_button(parent["key"], parent["name"], parent["kind"], f"pbi-parent-{parent['key']}")
+        from pdcat.pathbits import split_name
+        file, folder = split_name(parent["name"], parent["kind"])
+        asset_button(parent["key"], file, parent["kind"], f"pbi-parent-{parent['key']}",
+                     help=f"In folder {folder}" if folder else None)
 
 
 def _missing(view: dict, key: str, what: str) -> None:

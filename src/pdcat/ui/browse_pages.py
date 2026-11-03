@@ -113,10 +113,7 @@ def powerbi_page(cat: Catalogue) -> None:
     if not rows:
         st.info("No matches." if text else "Nothing catalogued yet. Scan a folder with Power BI reports in it.")
         return
-    st.caption(f"{len(rows)} {view.lower()}")
-    df = pd.DataFrame([{k: v for k, v in r.items() if k != "key"} for r in rows])
-    event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
-                         key=f"browse-pbi-table-{what}")
+    event = _pbi_table(rows, f"{len(rows)} {view.lower()}", f"browse-pbi-table-{what}", ("key",))
     sel = event.selection.rows if event else []
     if sel:
         go(rows[sel[0]]["key"])
@@ -147,11 +144,22 @@ def _columns_view(cat: Catalogue, old: bool) -> None:
     if not rows:
         st.info("No matches." if text else "No model columns read yet. A .pbix needs pbixray to read its model.")
         return
-    st.caption(f"{len(rows)} columns")
-    df = pd.DataFrame([{k: v for k, v in r.items() if k not in ("key", "used")} for r in rows])
-    event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
-                         key="browse-pbi-table-columns")
+    event = _pbi_table(rows, f"{len(rows)} columns", "browse-pbi-table-columns", ("key", "used"))
     sel = event.selection.rows if event else []
     if sel:
         go(rows[sel[0]]["key"])
         st.rerun()
+
+
+def _pbi_table(rows: list[dict], caption: str, key: str, drop: tuple[str, ...]):
+    """A Power BI list as a table: Name and In hold file names only, Folder the shortened folder (whole with the
+    Full folder paths switch)."""
+    from .search import FOLDER_COLUMN, full_paths_switch
+    c1, c2 = st.columns([4, 1.3], vertical_alignment="center")
+    c1.caption(caption)
+    full = full_paths_switch(c2, key)
+    df = pd.DataFrame([{k: (r.get("_full_folder") or v if full and k == "folder" else v) for k, v in r.items()
+                        if k not in drop and not k.startswith("_")} for r in rows])
+    return st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
+                        key=key, column_config={"folder": FOLDER_COLUMN, "in": st.column_config.TextColumn(
+                            "in", help="The report or workbook it is in (file name only)")})

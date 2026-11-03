@@ -176,8 +176,9 @@ def suggestion_picker(cat: Catalogue, kind: str, *, prefix: str = "sp") -> None:
     if not rows:
         st.caption("Nothing waiting.")
         return
+    from pdcat import organise
     from pdcat.triage import triage
-    rows = triage(cat, kind, rows)
+    rows = organise.organise(cat, kind, triage(cat, kind, rows))
     what, does = suggestions.help_for(kind)
     st.info(f"**What these are:** {what}  \n**Accept** {does} **Reject** means it isn't suggested again.", icon="💡")
     names: dict[str, str] = {}
@@ -186,7 +187,8 @@ def suggestion_picker(cat: Catalogue, kind: str, *, prefix: str = "sp") -> None:
         subj = s["subject"]
         if subj and "://" in subj and subj not in names:
             item = cat.get_asset(subj)
-            names[subj] = item["name"] if item else ""
+            from pdcat.pathbits import file_name
+            names[subj] = file_name(item["name"], item["kind"]) if item else ""
         return names.get(subj or "", "")
 
     def title(s: dict) -> str:
@@ -195,6 +197,14 @@ def suggestion_picker(cat: Catalogue, kind: str, *, prefix: str = "sp") -> None:
         return f"{name}: {t}" if name and name not in t.replace("**", "") else t  # "Owner: Sam" -> which item
 
     def render(s: dict) -> None:
+        if s.get("members"):  # the same suggestion on many items
+            p = s["payload"]
+            if kind == "sap" and p.get("column"):
+                from pdcat.sapterms import meaning
+                st.markdown(f"Columns named **{p['column']}** are SAP {p['sap_name']} ({meaning(p['sap_name'])})")
+            else:
+                st.markdown(s["title"])
+            return
         st.markdown(title(s))
         if s.get("detail"):
             st.caption(s["detail"])
@@ -205,6 +215,7 @@ def suggestion_picker(cat: Catalogue, kind: str, *, prefix: str = "sp") -> None:
     from .bulk import bulk_decide
     bulk_decide(rows, prefix=f"{prefix}-{kind}", row_id=lambda s: s["id"],
                 text=lambda s: f"{s['title']} {s.get('detail') or ''} {s['subject'] or ''}", render=render,
-                accept=lambda s: suggestions.accept(cat, s["id"]), reject=lambda s: suggestions.reject(cat, s["id"]))
+                accept=lambda s: suggestions.accept(cat, s["id"]), reject=lambda s: suggestions.reject(cat, s["id"]),
+                views=organise.views(kind))
 
 

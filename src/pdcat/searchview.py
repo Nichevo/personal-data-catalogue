@@ -7,6 +7,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
+from .pathbits import file_name, joined, parent_folder, short_folder, split_name
 from .store import Catalogue
 
 QUICK_FILTERS: dict[str, tuple[str, ...]] = {
@@ -79,10 +80,12 @@ def rows_for(cat: Catalogue, results: list[dict[str, Any]], *, families_as_one: 
         a = assets.get(r["key"]) or {}
         attrs = json.loads(a["attrs"]) if a.get("attrs") else {}
         report = reports.get(a.get("parent") or "") if r["kind"] == "measure" else None
+        inside, folder, full = _place(r, a, attrs, report)
         row = {
             "key": r["key"], "kind": r["kind"],
-            "name": r["name"] + (f"  (+{older_count[r['key']]} older)" if older_count.get(r["key"]) else ""),
-            "where": _where(r, a, attrs, report),
+            "name": file_name(r["name"], r["kind"])
+            + (f"  (+{older_count[r['key']]} older)" if older_count.get(r["key"]) else ""),
+            "in": inside, "folder": short_folder(folder), "_full_folder": full or folder,
             "description": _description(r, attrs),
             "matched on": _snippet(r.get("snippet")).replace("**", ""),
             "rows": attrs.get("row_count"),
@@ -132,15 +135,19 @@ def _description(r: dict[str, Any], attrs: dict[str, Any]) -> str:
     return text[:200]
 
 
-def _where(r: dict[str, Any], a: dict[str, Any], attrs: dict[str, Any], report: dict[str, Any] | None = None) -> str:
+def _place(r: dict[str, Any], a: dict[str, Any], attrs: dict[str, Any],
+           report: dict[str, Any] | None = None) -> tuple[str, str, str]:
+    """(what it is in, its folder, its full folder) for a result: a measure is in its report (file name only) and
+    has the report's folder; a table is in its database on its server; a file has the folder it is in, inside the
+    scanned folder, with the full path on disk as the full folder."""
+    source = r.get("source") or ""
     if report:
-        return f"{r.get('source') or ''} › {report['name']}"
+        file, rel = split_name(report["name"], "report")
+        return file, joined(source, rel), parent_folder(report.get("path"))
     if r["kind"] in ("table", "view", "procedure"):
-        return f"{r.get('source') or ''} › {attrs.get('database') or (a.get('parent') or '').rsplit('/', 1)[-1]}"
-    path = attrs.get("path") or attrs.get("full_path") or ""
-    if path:
-        return f"{r.get('source') or ''} › {str(path).rsplit('/', 1)[0] if '/' in str(path) else path}"
-    return r.get("source") or ""
+        return attrs.get("database") or (a.get("parent") or "").rsplit("/", 1)[-1], source, ""
+    _, rel = split_name(r["name"], r["kind"])
+    return "", joined(source, rel), parent_folder(attrs.get("path") or attrs.get("full_path"))
 
 
 def _folder(r: dict[str, Any], a: dict[str, Any], attrs: dict[str, Any]) -> str:

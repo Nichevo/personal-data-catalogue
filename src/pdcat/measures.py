@@ -148,8 +148,11 @@ def across_reports(cat: Catalogue, old_versions: bool = False) -> dict[str, list
     old = set() if old_versions else {r[0] for r in cat.conn.execute(
         "SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid "
         "WHERE g.type = 'versions' AND m.asset_key != g.main_key")}
-    reports = {r["key"]: r["name"] for r in cat.conn.execute(
-        "SELECT key, name FROM assets WHERE kind = 'report' AND status = 'active'") if r["key"] not in old}
+    from .pathbits import file_name, place
+    rows_ = [r for r in cat.conn.execute("SELECT key, name, source, attrs FROM assets WHERE kind = 'report' AND "
+                                         "status = 'active'") if r["key"] not in old]
+    reports = {r["key"]: file_name(r["name"], "report") for r in rows_}  # the file name, not its folders
+    folders = {r["key"]: place(r)["folder"] for r in rows_}
     by_dax: dict[str, list[dict]] = {}
     by_name: dict[str, list[dict]] = {}
     for r in cat.conn.execute("SELECT key, name, parent, attrs FROM assets WHERE kind = 'measure' AND status = 'active'"):
@@ -161,7 +164,8 @@ def across_reports(cat: Catalogue, old_versions: bool = False) -> dict[str, list
             continue
         row = {"key": r["key"], "measure": r["name"], "name": (as_text(a.get("name")) or r["name"]).strip(),
                "expression": expr,
-               "report": reports[r["parent"]], "report_key": r["parent"], "dax": _dax_key(expr)}
+               "report": reports[r["parent"]], "folder": folders[r["parent"]], "report_key": r["parent"],
+               "dax": _dax_key(expr)}
         by_dax.setdefault(row["dax"], []).append(row)
         by_name.setdefault(row["name"].lower(), []).append(row)
     same_dax = []

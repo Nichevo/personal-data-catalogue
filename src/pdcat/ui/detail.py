@@ -49,8 +49,10 @@ def detail(cat: Catalogue, key: str) -> None:
 
     attrs = asset["attrs"]
     info = curation.item_info(cat, key)
-    st.title(f"{icon(asset['kind'])} {asset['name']}")
-    meta = [kind_label(asset["kind"]), asset["source"]]
+    from pdcat.pathbits import split_name
+    file, folder = split_name(asset["name"], asset["kind"])
+    st.title(f"{icon(asset['kind'])} {file}")
+    meta = [kind_label(asset["kind"]), f"🗂️ {asset['source']}/{folder}" if folder else asset["source"]]
     if attrs.get("database"):
         meta.append(attrs["database"])
     if attrs.get("row_count") is not None:
