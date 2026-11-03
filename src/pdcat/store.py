@@ -918,6 +918,17 @@ class Catalogue:
                         "finished_at": r["finished_at"], "summary": json.loads(r["summary"]) if r["summary"] else {}})
         return out
 
+    def keep_under(self, prefix: str) -> int:
+        """Keep everything an earlier scan found under a folder this scan didn't walk (a skipped dated folder, a log
+        folder), so finish_scan doesn't mark it missing. Returns how many were kept."""
+        if getattr(self, "_seen", None) is None:
+            return 0
+        like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        keys = [r[0] for r in self.conn.execute(
+            "SELECT key FROM assets WHERE status = 'active' AND key LIKE ? ESCAPE '\\'", (like,))]
+        self._seen.update(keys)
+        return len(keys)
+
     def keep_seen(self, key: str) -> int:
         """A file a folder scan didn't open this time (history, an older file in a dated series, or left for the
         next scan): if an earlier scan read it, keep it and what it holds (measures, model tables) as they are,

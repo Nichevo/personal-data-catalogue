@@ -114,7 +114,18 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
     office_suffixes = (*REPORT_SUFFIXES, ".pbip", *WORKBOOK_SUFFIXES, *ACCESS_SUFFIXES)
     started = time.monotonic()
     report(f"Looking for files in {root} …")
-    found, skipped = find_files(root, (*DATA_SUFFIXES, *office_suffixes), recursive, ignored_dirs(cat, root), report)
+    from .datedfolders import DATED_FOLDERS_DAYS, DatedWalk
+    from .datedfolders import describe as describe_dated
+    read_all = name in cat.setting("read_all_sources", [])
+    dated = None if read_all else DatedWalk(int(cat.setting("dated_folders_days", DATED_FOLDERS_DAYS) or 0))
+    logs: list | None = None if read_all or not cat.setting("skip_log_folders", True) else []
+    found, skipped = find_files(root, (*DATA_SUFFIXES, *office_suffixes), recursive, ignored_dirs(cat, root), report,
+                                dated=dated, logs=logs)
+    dated_trees = dated.summaries() if dated else []
+    for line in describe_dated(dated_trees):
+        report(f"  📅 {line}")
+    for lg in logs or []:
+        report(f"  🧾 {log_line(lg)}")
     from .features import on
     if not on(cat, "access"):
         found.update({s: [] for s in ACCESS_SUFFIXES})
@@ -136,6 +147,13 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
     token = cat.begin_scan(name)
     with cat.conn:
         cat.upsert_asset(folder_key, "folder", name, name, attrs={"path": str(root), "recursive": recursive})
+        # Folders this scan didn't walk (older dated folders, log folders): what earlier scans found there stays.
+        for rel in [*(dated.skipped_rels() if dated else []), *(lg["folder"] for lg in logs or [])]:
+            cat.keep_under(f"{folder_key}/{rel}/")
+        for lg in logs or []:
+            cat.upsert_asset(f"{folder_key}/{lg['folder']}", "folder", lg["folder"], name, parent=folder_key,
+                             description="Log folder: " + log_line(lg, with_folder=False),
+                             attrs={"path": str(root / lg["folder"]), "log_folder": True, **lg})
     counts = {"files": 0, "series": 0, "reports": 0, "workbooks": 0, "access": 0, "errors": 0, "documents": 0}
     try:
         for part in scan_office(cat, root, folder_key, name, found, step, plan):
@@ -164,8 +182,16 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
                             **({"sampled": True} if plan.sampled else {}),
                             **({"listed": len(plan.listed)} if plan.listed else {}),
                             **({"deferred": len(plan.deferred)} if plan.deferred else {}),
-                            **({"history": plan.history} if plan.history else {})})
+                            **({"history": plan.history} if plan.history else {}),
+                            **({"dated_trees": dated_trees} if dated_trees else {}),
+                            **({"log_folders": logs} if logs else {})})
     return out
+
+
+def log_line(lg: dict, with_folder: bool = True) -> str:
+    """'logs/: 412 files, modified 2025-01-02 to 2026-11-02, not read.'"""
+    span = f", modified {lg['first_modified']} to {lg['last_modified']}" if lg.get("first_modified") else ""
+    return (f"{lg['folder']}/: " if with_folder else "") + f"{lg['files']:,} files{span}; listed as a log folder, not read."
 
 
 def _saved(counts: dict[str, int]) -> str:
