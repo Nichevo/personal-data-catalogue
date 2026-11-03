@@ -54,6 +54,8 @@ RULES: dict[str, tuple[str, str, int]] = {
     "rule_check": ("Rule check failed", "warning", 32),
     # version 2.3
     "broken_visual": ("Visual uses a field the model doesn't have", "warning", 30),
+    # version 2.6
+    "gold": ("Differs from the gold standard", "warning", 26),
 }
 # Checks where "dismiss" means "it's like this on purpose".
 BY_DESIGN = {"data_type", "sensitive", "stale_data", "duplicate", "odd_values"}
@@ -357,6 +359,7 @@ def _candidates(cat: Catalogue) -> list[Task]:
 
     tasks += _unmatched_candidates(cat)
     tasks += _feature_candidates(cat, task)
+    tasks += _gold_candidates(cat, task)
     from .curation import hidden_keys
     hidden = hidden_keys(cat)  # marked not relevant
     off = reviewanswers.rules_off(cat)
@@ -434,6 +437,19 @@ def _what_changed(cat: Catalogue, key: str, kind: str, attrs: dict) -> tuple[str
 FEATURE_CHECKS: list[Callable[..., list[Task]]] = [unknownfiles.review_tasks, freshness.review_tasks,
                                                    naming.review_tasks, sqlchecks.review_tasks, rulechecks.review_tasks,
                                                    pbimpact.review_tasks]
+
+
+def _gold_candidates(cat: Catalogue, task) -> list[Task]:
+    """Measures, reports and SQL that differ from a gold standard you marked. A new difference (the item changed
+    again) opens a new task."""
+    try:
+        from .gold import differences
+        found = differences(cat)
+    except Exception:  # the review list must not fail over this check
+        return []
+    return [task("gold", d["key"], f"{d['name']} differs from the gold standard {d['gold_name']}",
+                 (f"In {d['where']}. " if d["where"] else "") + (d["summary"] or "differs").capitalize() + ".",
+                 version=d["fingerprint"]) for d in found]
 
 
 def _feature_candidates(cat: Catalogue, task) -> list[Task]:
