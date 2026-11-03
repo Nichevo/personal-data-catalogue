@@ -623,6 +623,90 @@ CREATE TABLE IF NOT EXISTS document_versions (
     author      TEXT,
     PRIMARY KEY (doc_uid, version)
 );
+
+-- Version 2.9: change tracking. Kept small: one row when a number moves, counts per day, never raw data.
+-- Row counts over time (a reading when the count is new or has moved).
+CREATE TABLE IF NOT EXISTS row_counts (
+    asset_key TEXT NOT NULL,
+    at        TEXT NOT NULL,
+    rows      INTEGER NOT NULL,
+    PRIMARY KEY (asset_key, at)
+);
+CREATE INDEX IF NOT EXISTS ix_row_counts_at ON row_counts(at);
+-- What each scan found: items by kind ("kind:table"), described items ("described"), and files and bytes in each
+-- folder of a folder source ("folder:<folder inside the source>", "." for the top).
+CREATE TABLE IF NOT EXISTS scan_counts (
+    at     TEXT NOT NULL,
+    source TEXT NOT NULL,
+    what   TEXT NOT NULL,
+    n      INTEGER NOT NULL,
+    bytes  INTEGER,
+    PRIMARY KEY (at, source, what)
+);
+-- A compact copy of each column's profile, kept when it moved, so profiles aren't lost when a table is profiled again.
+CREATE TABLE IF NOT EXISTS profile_history (
+    asset_key      TEXT NOT NULL,
+    column_name    TEXT NOT NULL,
+    at             TEXT NOT NULL,
+    row_count      INTEGER,
+    null_count     INTEGER,
+    distinct_count INTEGER,
+    min_value      TEXT,
+    max_value      TEXT,
+    mean_value     REAL,
+    PRIMARY KEY (asset_key, column_name, at)
+);
+-- Which tables or files a change-tracking dataset tracks: suggested, confirmed or rejected.
+CREATE TABLE IF NOT EXISTS trackers (
+    tracker_key TEXT NOT NULL,
+    table_key   TEXT NOT NULL,
+    state       TEXT NOT NULL DEFAULT 'suggested',   -- suggested | confirmed | rejected
+    band        TEXT,                                -- likely | check | unlikely
+    reason      TEXT,
+    name_value  TEXT,                                -- the tracked table's name as the tracker writes it
+    updated_at  TEXT,
+    PRIMARY KEY (tracker_key, table_key)
+);
+-- How a tracker is laid out (its columns' jobs), the columns you watch, and how far its changes have been read.
+CREATE TABLE IF NOT EXISTS tracker_info (
+    tracker_key TEXT PRIMARY KEY,
+    shape       TEXT NOT NULL DEFAULT '{}',          -- JSON: {"layout", "date", "column", "label", "before", "after", ...}
+    watch       TEXT,                                -- JSON list of watched columns, or NULL for the default
+    not_tracker INTEGER NOT NULL DEFAULT 0,
+    read_at     TEXT,
+    read_upto   TEXT,                                -- the latest change date read so far
+    read_note   TEXT
+);
+-- Changes a tracker recorded, counted per day, tracked table, column and kind (new, changed or removed).
+-- table_name is the tracked table's name as the tracker writes it ('' when it has no table column); the
+-- trackers table links that name to a catalogue item, so a link can change without reading the changes again.
+CREATE TABLE IF NOT EXISTS tracker_counts (
+    tracker_key TEXT NOT NULL,
+    table_name  TEXT NOT NULL,
+    day         TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    kind        TEXT NOT NULL,                       -- new | changed | removed
+    n           INTEGER NOT NULL,
+    PRIMARY KEY (tracker_key, table_name, day, column_name, kind)
+);
+CREATE INDEX IF NOT EXISTS ix_tracker_counts_day ON tracker_counts(day);
+-- The keys (a plant, a material) each column changed for, so "keys affected" can be counted. Capped per tracker.
+CREATE TABLE IF NOT EXISTS tracker_keys (
+    tracker_key TEXT NOT NULL,
+    table_name  TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    key_value   TEXT NOT NULL,
+    n           INTEGER NOT NULL DEFAULT 0,
+    last_day    TEXT,
+    PRIMARY KEY (tracker_key, table_name, column_name, key_value)
+);
+-- What to profile and how often: now, weekly, monthly or never.
+CREATE TABLE IF NOT EXISTS profile_rules (
+    asset_key      TEXT PRIMARY KEY,
+    rule           TEXT NOT NULL,                    -- once | weekly | monthly | never
+    set_at         TEXT,
+    last_requested TEXT
+);
 """
 
 def like_escape(text: str) -> str:
@@ -859,7 +943,17 @@ class Catalogue:
         from .links import apply_manual_links
         apply_manual_links(self)
         self.rebuild_search()
+        self._record_growth(source)
         self.changed()  # pages and lists cached by revision must see what the scan found
+
+    def _record_growth(self, source: str) -> None:
+        """Row counts, items by kind and files per folder after a scan, for the growth graphs. Never fails a scan."""
+        try:
+            from .growth import record_scan
+            record_scan(self, source)
+        except Exception as e:  # the graphs are a nice-to-have; a scan must still finish
+            import warnings
+            warnings.warn(f"Growth counts not saved for {source}: {type(e).__name__}: {e}", stacklevel=2)
 
     def begin_scan(self, source: str) -> dict[str, Any]:
         """Start a scan that saves as it goes (folder scans): remember when it started and what the source held,
@@ -895,6 +989,7 @@ class Catalogue:
         from .links import apply_manual_links
         apply_manual_links(self)
         self.rebuild_search()
+        self._record_growth(source)
         self.changed()  # pages and lists cached by revision must see what the scan found
 
     def note_stopped_scan(self, token: dict[str, Any], summary: dict[str, Any]) -> None:
@@ -1645,7 +1740,9 @@ class Catalogue:
         columns = [c if not (whole or c["name"].lower() in hidden) else
                    {**c, "min": None, "max": None, "mean": None, "top": [], "histogram": None, "percentiles": None}
                    for c in columns]
+        from .growth import keep_profile_history
         with self.conn:
+            keep_profile_history(self, asset_key, columns, ts)
             self.conn.execute("DELETE FROM profiles WHERE asset_key = ?", (asset_key,))
             self.conn.executemany(
                 """INSERT INTO profiles (asset_key, column_name, ordinal, data_type, row_count, null_count,

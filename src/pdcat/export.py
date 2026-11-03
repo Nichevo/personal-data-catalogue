@@ -50,6 +50,17 @@ TABLES = {
     "gold_standards": "SELECT key, kind, note, marked_at, author FROM gold_standards ORDER BY kind, key",
     "gold_ok_to_differ": "SELECT gold_key, item_key, note, at, author FROM gold_ok ORDER BY gold_key, item_key",
     "change_history": "SELECT asset_key, at, change, detail FROM schema_history ORDER BY at, id",
+    # version 2.9
+    "row_counts_over_time": "SELECT asset_key, at, rows FROM row_counts ORDER BY asset_key, at",
+    "scan_counts": "SELECT at, source, what, n, bytes FROM scan_counts ORDER BY at, source, what",
+    "profile_history": "SELECT asset_key, column_name, at, row_count, null_count, distinct_count, min_value, "
+                       "max_value, mean_value FROM profile_history ORDER BY asset_key, column_name, at",
+    "change_trackers": "SELECT t.tracker_key, t.table_key, t.state, t.band, t.reason, t.name_value, i.watch, "
+                       "i.read_at, i.read_upto FROM trackers t LEFT JOIN tracker_info i ON i.tracker_key = "
+                       "t.tracker_key WHERE t.state != 'rejected' ORDER BY t.tracker_key",
+    "tracked_changes": "SELECT tracker_key, table_name, day, column_name, kind, n FROM tracker_counts "
+                       "ORDER BY tracker_key, day, column_name",
+    "profile_rules": "SELECT asset_key, rule, set_at, last_requested FROM profile_rules ORDER BY asset_key",
 }
 BOM = "\ufeff"  # Excel reads a UTF-8 CSV correctly only when it starts with this
 JSON_COLUMNS = {"top_values", "histogram", "percentiles", "hints", "pinned", "excluded", "tables", "sources",
@@ -80,6 +91,9 @@ def export_data(cat: Catalogue) -> dict[str, list[dict[str, Any]]]:
                 base, _, col = n["asset_key"].partition("#")
                 return not (n["note_type"] == "example" and is_sensitive(hidden, base, col or None))
             rows = [n for n in rows if keep(n)]
+        if name == "profile_history":
+            rows = [r if not is_sensitive(hidden, r["asset_key"], r["column_name"]) else
+                    {**r, "min_value": None, "max_value": None, "mean_value": None} for r in rows]
         if name == "profiles":
             rows = [r if not is_sensitive(hidden, r["asset_key"], r["column_name"]) else
                     {**r, "min_value": None, "max_value": None, "mean_value": None, "top_values": [],

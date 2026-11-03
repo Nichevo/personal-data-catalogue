@@ -57,6 +57,9 @@ GUIDE = {
     "Gold standards": "Reports, measures and SQL you marked as the one to trust, and the copies, same-named measures "
                       "and look-alike queries that differ from them, with how.",
     "Health": "How well documented the catalogue is (coverage) and where problems cluster (issue hotspots).",
+    "Change tracking": "Every change in one list with filters, grouping and saved views; graphs of table growth, "
+                       "files in folders, report changes and catalogue growth; and your change trackers, linked to "
+                       "the tables they track, with changes by column.",
     "What's new": "The latest notes, and what changed between scans.",
     "Bulk edit": "Describe a column once for everywhere it appears, or edit many items at once like a spreadsheet.",
     "Code map": "How your projects and home-built libraries connect, and which tables and files they read and "
@@ -70,7 +73,7 @@ GUIDE = {
     "Measures across reports": "Power BI measures that recur across reports: the same DAX under different names, "
                                "and the same name worked out differently.",
     "Sources": "Paste SQL, add data folders (one, or many at once from a list), and choose which SQL tables to "
-               "measure and how gently.",
+               "profile, how often, and how gently.",
     "Schedules": "Import a list of scheduled jobs so scripts show when they run.",
     "Conda environments": "The conda environments on this machine and which projects use them.",
     "Import from Excel": "Bring in SQL queries, metrics or knowledge notes kept in a workbook.",
@@ -82,6 +85,8 @@ GUIDE = {
     "Settings": "Your name, backups, the weekly scheduled scan, the scan scope, SQL pacing and limits, which To "
                 "review checks run, and the feature switches.",
     "Sensitive data": "Columns and items marked sensitive. Their values are never stored, shown or exported.",
+    "Database size": "How big the catalogue file is, what takes the space, and Tidy up to thin old readings and "
+                     "compact it.",
     "Get started": "Set up step by step: your SQL Servers, Python projects and data folders, then the first scan.",
 }
 

@@ -21,7 +21,7 @@ KIND_LABELS = {
     "description": "Descriptions", "owner": "Owners", "rename": "Renamed columns", "label": "Report labels",
     "schedule": "Schedule matches", "series": "Files a script writes", "folder_role": "Folder roles",
     "join": "Usual joins", "check": "Checks from rules", "copilot": "From Copilot",
-    "doc_definition": "Definitions in documents",
+    "doc_definition": "Definitions in documents", "tracker_field": "Names from change trackers",
 }
 
 # For each kind: what the suggestion is, and what Accept changes. Shown above each list and on each card.
@@ -65,6 +65,9 @@ KIND_HELP = {
     "doc_definition": ("A name and its definition found in a design document (a table of fields, or a line like "
                        "“PlantID: identifier of the plant”), matched to a column or measure with no description.",
                        "saves that definition as the column's description or the measure's purpose."),
+    "tracker_field": ("A change tracker that calls a column by a friendlier name (its FieldName next to an SAP-coded "
+                      "ColumnName).",
+                      "saves that name as the column's business name, so it can be found by either name."),
 }
 
 
@@ -226,4 +229,5 @@ def _load_handlers() -> None:
         rulechecks,
         sapterms,
         tablepairs,
+        trackers,
     )

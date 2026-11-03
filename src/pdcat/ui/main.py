@@ -37,6 +37,7 @@ def sections() -> dict[str, dict[str, Page]]:
         about_page,
         bproject_pages,
         browse_pages,
+        change_pages,
         curation_pages,
         dataflow_page,
         erd_page,
@@ -76,12 +77,13 @@ def sections() -> dict[str, dict[str, Page]]:
                 "All checks": review_pages.review_page, "Data issues": search.data_issues_page,
                 "Needs notes": search.needs_notes_page, "Unmatched tables": search.unmatched_page,
                 "Unlinked data": lists.unlinked_page, "Duplicates": lists.duplicates_page}),
+            "Change tracking": change_pages.change_tracking_page,
             "Suggestions": groups_page.suggestions_page,
             "Gold standards": gold_pages.gold_page,
             "Health": combined("Health", "How well the catalogue is described, and where problems gather.", {
                 "Coverage": curation_pages.coverage_page, "Issue hotspots": review_pages.hotspots_page}),
             "What's new": combined("What's new", "", {
-                "Recent notes": search.recent_notes_page, "Recent changes": lists.changes_page}),
+                "Recent notes": search.recent_notes_page, "Recent changes": change_pages.recent_changes_shortcut}),
             "Bulk edit": combined("Bulk edit", "", {
                 "Describe columns": curation_pages.describe_columns_page,
                 "Edit many items": curation_pages.bulk_edit_page}),
@@ -94,12 +96,14 @@ def sections() -> dict[str, dict[str, Page]]:
             "Sources": combined("Sources", "Where the catalogue reads from: SQL you paste, folders of data and code, "
                                            "and SQL Server databases.", {
                 "Add SQL": sources.add_sql_page, "Data folders": sources.folders_page,
-                "SQL scanning": scanning.scanning_page, "Scan log": scan_log.scan_log_page}),
+                "SQL scanning": scanning.scanning_page, "Profiling": change_pages.profiling_page,
+                "Scan log": scan_log.scan_log_page}),
             "Schedules": sources_extra.schedules_page, "Conda environments": sources_extra.envs_page,
             "Import from Excel": sources_extra.excel_import_page},
         "📤 Share": {"Share with colleagues": share.sharing_page, "Copilot pack": share.copilot_page,
                     "Export": share.export_page},
         "⚙️ Settings": {"Settings": settings_page.settings_page, "Sensitive data": keys_pages.sensitive_page,
+                       "Database size": change_pages.database_size_page,
                        "Get started": setup_page.setup_page},
     }
 
@@ -113,7 +117,8 @@ ALIASES = {
     "Recent changes": ("What's new", "Recent changes"), "Describe columns": ("Bulk edit", "Describe columns"),
     "Edit many items": ("Bulk edit", "Edit many items"), "Add SQL": ("Sources", "Add SQL"),
     "Data folders": ("Sources", "Data folders"), "SQL scanning": ("Sources", "SQL scanning"),
-    "Scan log": ("Sources", "Scan log"),
+    "Scan log": ("Sources", "Scan log"), "Profiling": ("Sources", "Profiling"),
+    "All changes": ("Change tracking", "All changes"), "Change trackers": ("Change tracking", "Change trackers"),
     "Feature dictionary": ("ML model features", None),
 }
 

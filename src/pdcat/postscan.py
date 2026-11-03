@@ -16,10 +16,12 @@ from . import (
     folderroles,
     freshness,
     gitinfo,
+    growth,
     labels,
     learned,
     metricfind,
     naming,
+    profilerules,
     register,
     reportgroups,
     rulechecks,
@@ -28,6 +30,7 @@ from . import (
     sqlchecks,
     sqllibrary,
     tablepairs,
+    trackers,
     versions,
 )
 from .duplicates import find_duplicates
@@ -91,7 +94,8 @@ def _extra_steps() -> list[tuple[str, Callable[[Catalogue], int]]]:
     from .features import on
     steps: list[tuple[str, Callable[[Catalogue], int]]] = [
         # before script versions, which only suggests what this didn't group; it clears its groups when off
-        ("report versions", reportgroups.sync), ("key suggestions", suggest_keys), ("feature suggestions", suggest_features), ("duplicates", find_duplicates)]
+        ("report versions", reportgroups.sync), ("key suggestions", suggest_keys), ("feature suggestions", suggest_features), ("duplicates", find_duplicates),
+        ("growth history", growth.backfill_count), ("profiling rules", profilerules.request_due)]
     for feature, step, label in SWITCHABLE_STEPS:
         steps.append((label, lambda cat, step=step, feature=feature: step(cat) if on(cat, feature) else 0))
     return steps
@@ -121,4 +125,5 @@ SWITCHABLE_STEPS: list[tuple[str, Callable[[Catalogue], int], str]] = [
     ("freshness", freshness.track, "freshness"),
     ("bproject_folders", bprojects.sync_folders, "new files in business project folders"),
     ("report_register", register.refresh, "Power BI report register"),
+    ("change_trackers", trackers.after_scan, "change trackers"),
 ]

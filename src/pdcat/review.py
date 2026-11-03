@@ -23,7 +23,7 @@ from typing import Any
 
 import pandas as pd
 
-from . import freshness, naming, pbimpact, reviewanswers, rulechecks, sqlchecks, unknownfiles
+from . import freshness, naming, pbimpact, reviewanswers, rulechecks, sqlchecks, trackers, unknownfiles
 from .profiling import HINT_TEXT
 from .store import Catalogue, now
 
@@ -56,6 +56,8 @@ RULES: dict[str, tuple[str, str, int]] = {
     "broken_visual": ("Visual uses a field the model doesn't have", "warning", 30),
     # version 2.6
     "gold": ("Differs from the gold standard", "warning", 26),
+    # version 2.9
+    "tracker_link": ("Link a change tracker to its table", "docs", 18),
 }
 # Checks where "dismiss" means "it's like this on purpose".
 BY_DESIGN = {"data_type", "sensitive", "stale_data", "duplicate", "odd_values"}
@@ -436,7 +438,7 @@ def _what_changed(cat: Catalogue, key: str, kind: str, attrs: dict) -> tuple[str
 # Checks that live next to the feature they belong to: each is function(cat, task) -> [Task].
 FEATURE_CHECKS: list[Callable[..., list[Task]]] = [unknownfiles.review_tasks, freshness.review_tasks,
                                                    naming.review_tasks, sqlchecks.review_tasks, rulechecks.review_tasks,
-                                                   pbimpact.review_tasks]
+                                                   pbimpact.review_tasks, trackers.review_tasks]
 
 
 def _first_upper(text: str) -> str:

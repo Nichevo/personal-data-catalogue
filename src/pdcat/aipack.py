@@ -479,7 +479,7 @@ def build(cat: Catalogue, *, hide_locations: bool = False, include_values: bool 
     parts = [("business-rules.md", business_rules), ("glossary.md", glossary),
              ("example-questions.md", example_questions), ("reports.md", reports),
              ("ml-features.md", features), ("code.md", code), ("naming-rules.md", naming_rules),
-             ("sap.md", sap), ("sql-queries.md", sql_queries)]
+             ("sap.md", sap), ("sql-queries.md", sql_queries), ("change-tracking.md", change_tracking)]
     if include_documents:
         parts.append(("reference-documents.md", documents))
     parts.append(("test-questions.md", test_file))
@@ -580,6 +580,26 @@ def sap(p: Pack) -> str:
                 _table([[a["item"], a["uses"], a["IBP equivalent"]] for a in apo], ["item", "APO", "IBP equivalent"]),
                 ""]
     return "\n".join(out)
+
+
+def change_tracking(p: Pack) -> str:
+    """Which tables have a change tracker, and which of their columns change most (counts only, no values)."""
+    from .trackers import column_counts, list_trackers
+    rows = []
+    for t in list_trackers(p.cat):
+        linked = [link for link in t["links"] if link["state"] == "confirmed"]
+        if not linked or not t["changes"]:
+            continue
+        cols = column_counts(p.cat, t["key"])[:6]
+        rows.append([", ".join(p.name(link["table_key"]) for link in linked), t["name"],
+                     f"{t['first_day']} to {t['last_day']}",
+                     ", ".join(f"{c['label']} ({c['changes']:,})" for c in cols)])
+    if not rows:
+        return ""
+    return "\n".join(["# Change tracking", "",
+                      "Tables whose changes are recorded in a change tracker, and the columns that change most. "
+                      "When asked how often something changes, or what changed in a table, point to its tracker.", "",
+                      _table(rows, ["table", "tracker", "changes from", "columns that change most"]), ""])
 
 
 def sql_queries(p: Pack) -> str:

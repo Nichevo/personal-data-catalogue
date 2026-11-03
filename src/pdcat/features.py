@@ -33,6 +33,8 @@ FEATURES: dict[str, str] = {
     "freshness": "Track whether output files keep refreshing",
     "bproject_folders": "Add new files to business projects that follow a folder",
     "report_register": "Read the Power BI report register again after each scan and match its rows to reports",
+    "change_trackers": "Find change-tracking files and tables, link them to the tables they track, and bring change "
+                       "summaries you've read before up to date (files only; SQL trackers are read when you ask)",
 }
 
 
