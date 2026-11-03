@@ -455,6 +455,27 @@ CREATE TABLE IF NOT EXISTS edits (
 );
 CREATE INDEX IF NOT EXISTS ix_edits_item ON edits(item);
 
+-- Gold standards (version 2.6): reports, measures and SQL marked as the one to trust. snapshot is what the item
+-- looked like when marked, so a change to the standard itself can be flagged.
+CREATE TABLE IF NOT EXISTS gold_standards (
+    key         TEXT PRIMARY KEY,           -- asset key (report, measure, view, procedure) or query://uid
+    kind        TEXT NOT NULL,              -- report | measure | sql
+    note        TEXT,
+    snapshot    TEXT,
+    marked_at   TEXT,
+    author      TEXT
+);
+-- Items that differ from a gold standard on purpose; holds while the item's fingerprint stays the same.
+CREATE TABLE IF NOT EXISTS gold_ok (
+    gold_key    TEXT NOT NULL,
+    item_key    TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    note        TEXT,
+    at          TEXT,
+    author      TEXT,
+    PRIMARY KEY (gold_key, item_key)
+);
+
 -- SQL queries found anywhere (scripts, notebooks, .sql files, Excel, Power BI, Access, documents)
 -- or pasted in. The same query found in several places is one row with several places.
 CREATE TABLE IF NOT EXISTS sql_queries (
