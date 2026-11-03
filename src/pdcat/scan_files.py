@@ -34,6 +34,8 @@ SAMPLE_NEWEST = 10        # ...reading only the newest files of each dated serie
 DATA_CHUNK = 200          # stand-alone data files are saved every this many, so a stopped scan keeps them
 OFFICE_CHUNK = 10         # ...and reports and workbooks every this many
 RECENT_MINUTES = 60       # a source scanned less than this long ago isn't scanned again unless you insist
+MAX_OFFICE_OPENS = 300    # workbooks and reports opened per scan; the rest wait for the next scan (Settings:
+                          # max_office_opens, 0 = no limit). A workbook on a network drive takes a second or two.
 
 
 def ingest_data_file(cat: Catalogue, path: Path, key: str, name: str, source: str, parent: str,
@@ -126,16 +128,17 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
     warning = size_warning(size)
     if warning:
         report(f"  This may take a while: {warning}. Files are read one by one; unchanged files are skipped.")
-    plan = plan_reads(cat, root, data, folder_key, name, stats)
-    if plan.sampled:
-        report(f"  {plan.note}")
+    office = pick(found, (*REPORT_SUFFIXES, ".pbip", *WORKBOOK_SUFFIXES))
+    plan = plan_reads(cat, root, data, folder_key, name, stats, office=office)
+    for line in plan.notes():
+        report(f"  {line}")
     step = Steps(report, total)
     token = cat.begin_scan(name)
     with cat.conn:
         cat.upsert_asset(folder_key, "folder", name, name, attrs={"path": str(root), "recursive": recursive})
     counts = {"files": 0, "series": 0, "reports": 0, "workbooks": 0, "access": 0, "errors": 0, "documents": 0}
     try:
-        for part in scan_office(cat, root, folder_key, name, found, step):
+        for part in scan_office(cat, root, folder_key, name, found, step, plan):
             for k, v in part.items():
                 counts[k] += v
         for part in scan_data(cat, root, folder_key, name, plan, max_rows, step):
@@ -158,7 +161,10 @@ def scan_folder(cat: Catalogue, name: str, path: str | Path, recursive: bool = T
                             "files_found": total, "bytes": size["bytes"], "skipped_folders": skipped,
                             "slow": step.slow[:20], "errors": out["errors"], "warning": warning,
                             "files_read": total - step.skipped, "unchanged_or_listed": step.skipped,
-                            **({"sampled": True, "listed": len(plan.listed)} if plan.sampled else {})})
+                            **({"sampled": True} if plan.sampled else {}),
+                            **({"listed": len(plan.listed)} if plan.listed else {}),
+                            **({"deferred": len(plan.deferred)} if plan.deferred else {}),
+                            **({"history": plan.history} if plan.history else {})})
     return out
 
 
@@ -175,10 +181,22 @@ class Plan:
     from the file system (name, size, modified) without being opened."""
     groups: list = field(default_factory=list)   # dated series (series.Series)
     alone: list[str] = field(default_factory=list)  # relative paths of files on their own
-    listed: set[Path] = field(default_factory=set)
+    listed: set[Path] = field(default_factory=set)  # data files, workbooks and reports listed without opening
     sampled: bool = False
     note: str = ""
     stats: dict = field(default_factory=dict)  # path -> os.stat_result, from one pass over the files
+    office_groups: list = field(default_factory=list)  # dated series of workbooks and reports (2.8)
+    deferred: set[Path] = field(default_factory=set)  # changed workbooks and reports left for the next scan
+    history: list = field(default_factory=list)  # historyfolders.summarise rows
+    extra: list[str] = field(default_factory=list)  # more lines for the scan's progress note
+
+    def notes(self) -> list[str]:
+        from .historyfolders import describe
+        lines = [self.note] if self.note else []
+        if self.history:
+            lines.append("History folders (listed, only the newest file of each dated series opened):")
+            lines += [f"• {line}" for line in describe(self.history)]
+        return lines + self.extra
 
     def stat(self, path: Path):
         st = self.stats.get(path)
@@ -188,25 +206,111 @@ class Plan:
 
 
 def plan_reads(cat: Catalogue, root: Path, data: list[Path], parent_key: str, source: str,
-               stats: dict | None = None) -> Plan:
+               stats: dict | None = None, office: list[Path] | None = None) -> Plan:
+    """Decide which files a scan opens.
+
+    * History folders (archive, old, backup …, or the role archive): only the newest file of each dated series
+      is opened; the rest are listed. Stand-alone files in history are listed in a big folder and opened
+      otherwise. See historyfolders.py.
+    * A big folder (more than `sample_over_files` data files, workbooks and reports) is sampled by date: the
+      newest files of each dated series and the newest stand-alone files are opened; the rest are listed.
+      Since 2.8 this covers Excel workbooks and Power BI reports too, grouped into dated series across the
+      whole folder tree (2026/05 2026/20260414/report_20260414.xlsx is one series however deep it goes).
+    * At most `max_office_opens` changed workbooks and reports are opened per scan, newest first; the rest are
+      left for the next scan, which carries on.
+    "Read every file" on the folder turns all three off."""
+    from . import series as S
+    from .historyfolders import HISTORY_READ_NEWEST, History, summarise
+    office = office or []
     groups, alone = plan_series(cat, root, data, parent_key, source)
     plan = Plan(groups, alone, stats=stats if stats is not None else {})
+    history = History(cat, root, source)
+    read_all = source in cat.setting("read_all_sources", [])
     over = int(cat.setting("sample_over_files", SAMPLE_OVER) or 0)
     newest = max(1, int(cat.setting("sample_newest", SAMPLE_NEWEST) or SAMPLE_NEWEST))
-    if not (0 < over <= len(data)) or source in cat.setting("read_all_sources", []):
-        return plan
-    plan.sampled = True
+    hist_newest = max(1, int(cat.setting("history_read_newest", HISTORY_READ_NEWEST) or HISTORY_READ_NEWEST))
+    plan.sampled = not read_all and 0 < over <= len(data) + len(office)
+
+    def keep(g) -> int | None:
+        """How many of a series' newest files to open (None: all of them)."""
+        if all(history.folder(m.rel) for m in g.members):
+            return hist_newest
+        return newest if plan.sampled else None
+
     for g in groups:
-        plan.listed |= {root / m.rel for m in g.sorted()[:-newest]}
-    if len(alone) > over:
-        by_age = sorted(alone, key=lambda rel: _mtime(plan, root / rel), reverse=True)
+        n = keep(g)
+        if n:
+            plan.listed |= {root / m.rel for m in g.sorted()[:-n]}
+    # Stand-alone files in history are opened in a normal folder (an old report is worth knowing) but only
+    # listed in a big one.
+    loose = alone
+    if plan.sampled:
+        loose = [rel for rel in alone if not history.folder(rel)]
+        plan.listed |= {root / rel for rel in alone if history.folder(rel)}
+    if plan.sampled and len(loose) > over:
+        by_age = sorted(loose, key=lambda rel: _mtime(plan, root / rel), reverse=True)
         plan.listed |= {root / rel for rel in by_age[over:]}
-    read = len(data) - len(plan.listed)
-    plan.note = (f"{len(data):,} data files, so this folder is sampled by date: the newest {newest} files of each "
-                 f"dated series and the newest {over:,} stand-alone files are read ({read:,} in all); the other "
-                 f"{len(plan.listed):,} are listed without being opened. Press \"Read every file\" on the folder "
-                 "to change that.")
+    data_listed = len(plan.listed)
+
+    # Workbooks and reports: grouped into dated series when the folder is sampled or they sit in history.
+    orels = {p.relative_to(root).as_posix(): p for p in office}
+    candidates = [rel for rel in orels if plan.sampled or history.folder(rel)]
+    if candidates and grouping_on(cat, source):
+        split = set(cat.setting("series_split", []))
+        ogroups, oalone = S.group(candidates)
+        for g in ogroups:
+            if S.series_key(parent_key, g.template) in split:
+                oalone += [m.rel for m in g.members]
+                continue
+            n = keep(g)
+            if n:
+                plan.office_groups.append(g)
+                plan.listed |= {root / m.rel for m in g.sorted()[:-n]}
+    else:
+        oalone = candidates
+    if plan.sampled:
+        plan.listed |= {orels[rel] for rel in oalone if history.folder(rel)}
+    office_listed = len(plan.listed) - data_listed
+
+    limit = int(cat.setting("max_office_opens", MAX_OFFICE_OPENS) or 0)
+    if limit > 0 and not read_all:
+        readers = _readers()
+        to_open = [p for p in office if p not in plan.listed
+                   and _changed(cat, parent_key, root, p, readers.get(p.suffix.lower()), plan=plan)]
+        if len(to_open) > limit:
+            by_age = sorted(to_open, key=lambda p: _mtime(plan, p), reverse=True)
+            plan.deferred = set(by_age[limit:])
+            plan.extra.append(f"{len(to_open):,} workbooks and reports are new or changed: the newest {limit:,} are "
+                              f"opened now and the other {len(plan.deferred):,} are left for the next scan, which "
+                              "carries on where this one stops (Settings: workbooks and reports opened per scan).")
+
+    rel_stats = {}
+    for p in [*data, *office]:
+        st = plan.stats.get(p)
+        if st is not None:
+            rel_stats[p.relative_to(root).as_posix()] = st
+    opened = {p.relative_to(root).as_posix() for p in [*data, *office]
+              if p not in plan.listed and p not in plan.deferred}
+    plan.history = summarise(history, [p.relative_to(root).as_posix() for p in [*data, *office]], rel_stats, opened)
+    if plan.sampled:
+        read = len(data) + len(office) - len(plan.listed)
+        plan.note = (f"{len(data) + len(office):,} data files, workbooks and reports, so this folder is sampled by "
+                     f"date: the newest {newest} files of each dated series ({hist_newest} in history folders) and the "
+                     f"newest {over:,} stand-alone "
+                     f"files are read ({read:,} in all); the other {len(plan.listed):,} are listed without being "
+                     "opened. Press \"Read every file\" on the folder to change that.")
+    elif plan.listed:
+        plan.note = (f"{len(plan.listed):,} files in history folders are listed without being opened "
+                     f"({data_listed:,} data files, {office_listed:,} workbooks and reports).")
     return plan
+
+
+def _readers() -> dict[str, int]:
+    from .scan_excel import READER_VERSION as WORKBOOK_READER
+    from .scan_excel import WORKBOOK_SUFFIXES
+    from .scan_powerbi import READER_VERSION as REPORT_READER
+    from .scan_powerbi import REPORT_SUFFIXES
+    return {**{s: REPORT_READER for s in (*REPORT_SUFFIXES, ".pbip")}, **{s: WORKBOOK_READER for s in WORKBOOK_SUFFIXES}}
 
 
 def _mtime(plan: Plan, path: Path) -> float:
@@ -233,9 +337,13 @@ def _chunks(items: list, n: int):
         yield items[i:i + n]
 
 
-def scan_office(cat: Catalogue, root: Path, parent_key: str, source: str, found: dict[str, list[Path]], step: Steps):
+def scan_office(cat: Catalogue, root: Path, parent_key: str, source: str, found: dict[str, list[Path]], step: Steps,
+                plan: Plan | None = None):
     """Read and save Power BI reports, then Excel workbooks, a few at a time, then Access databases. Yields the
-    counts of each saved batch. Unchanged files are skipped without being opened."""
+    counts of each saved batch. Unchanged files are skipped without being opened; files the plan lists (history,
+    older files of a dated series) or leaves for the next scan aren't opened either."""
+    plan = plan or Plan()
+    later = plan.listed | plan.deferred
     from .duplicates import fingerprint
     from .scan_access import SUFFIXES as ACCESS_SUFFIXES
     from .scan_excel import READER_VERSION as WORKBOOK_READER
@@ -251,6 +359,12 @@ def scan_office(cat: Catalogue, root: Path, parent_key: str, source: str, found:
             reads = Reads()
             for path in chunk:
                 rel = path.relative_to(root).as_posix()
+                if path in plan.listed:
+                    step.skip(f"{what}s", "not opened: history or older files in a dated series are listed")
+                    continue
+                if path in plan.deferred:
+                    step.skip(f"{what}s", "left for the next scan (opened per scan limit)")
+                    continue
                 if not _changed(cat, parent_key, root, path, reader):
                     step.skip(f"{what}s", "unchanged files are skipped")
                     continue
@@ -263,10 +377,17 @@ def scan_office(cat: Catalogue, root: Path, parent_key: str, source: str, found:
                 for path in chunk:
                     rel = path.relative_to(root).as_posix()
                     key = f"{parent_key}/{rel}"
+                    if path in later:  # read in an earlier scan? keep what it found; never read: the series lists it
+                        counts[counted] += cat.keep_seen(key)
+                        continue
                     cat.conn.execute("DELETE FROM links WHERE source = ? AND src_key = ?", (source, key))
                     counts["errors"] += bool(ingest(cat, path, key, rel, source, parent_key, reads))
                     counts[counted] += 1
             yield counts
+    for g in plan.office_groups:
+        with cat.conn:
+            ingest_office_series(cat, g, root, parent_key, source, plan)
+        yield {"series": 1}
     for path in pick(found, ACCESS_SUFFIXES):
         from .scan_access import ingest_access
         rel = path.relative_to(root).as_posix()
@@ -322,6 +443,47 @@ def scan_data(cat: Catalogue, root: Path, parent_key: str, source: str, plan: Pl
             errors = ingest_series(cat, g, members, parent_key, source, max_rows, reads=reads, listed=plan.listed,
                                    stats=plan.stats)
         yield {"files": len(g.members), "series": 1, "errors": errors}
+
+
+def ingest_office_series(cat: Catalogue, g, root: Path, parent_key: str, source: str, plan: Plan) -> None:
+    """One dated-series entry for workbooks or reports that differ only by a date. The opened ones (the newest)
+    are items of their own, linked from the series; the rest are listed by name, size and modified date."""
+    from datetime import datetime, timezone
+
+    from . import series as S
+    skey = S.series_key(parent_key, g.template)
+    ordered = g.sorted()
+    files, opened = [], []
+    for m in ordered:
+        path = root / m.rel
+        key = f"{parent_key}/{m.rel}"
+        try:
+            st = plan.stat(path)
+            size, modified = st.st_size, datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds")
+        except OSError:
+            size, modified = None, None
+        asset = cat.get_asset(key)
+        if asset and asset["status"] != "active":
+            asset = None
+        if asset:
+            opened.append(key)
+            if asset["attrs"].get("in_series") != skey:
+                cat.upsert_asset(key, asset["kind"], asset["name"], source, parent=asset["parent"],
+                                 description=asset.get("description"), attrs={**asset["attrs"], "in_series": skey})
+        files.append({"rel": m.rel, "key": key if asset else None, "period": S._period(m), "rows": None,
+                      "size": size, "modified": modified, "columns": [], **({} if asset else {"not_read": True})})
+    newest = opened[-1] if opened else None
+    unread = sum(1 for f in files if f.get("not_read"))
+    kind = "reports" if ordered[-1].rel.lower().endswith((".pbix", ".pbit", ".pbip")) else "workbooks"
+    attrs = {**S.describe(g), "files": files, "newest": newest, "opened": opened, "office": kind,
+             "total_rows": 0, "size_bytes": sum(f["size"] or 0 for f in files),
+             **({"files_not_read": unread} if unread else {}),
+             "modified": files[-1]["modified"], "path": str((root / ordered[-1].rel).parent), "layout_changes": [],
+             "format": Path(ordered[-1].rel).suffix.lower().lstrip(".")}
+    cat.upsert_asset(skey, "file_series", g.template, source, parent=parent_key,
+                     description=f"{len(files)} {attrs['frequency']} {kind}, {attrs['first']} to {attrs['last']}",
+                     attrs=attrs)
+    cat.set_columns(skey, [dict(c) for c in cat.columns(newest)] if newest else [])
 
 
 def scanned_recently(cat: Catalogue, source: str, minutes: int | None = None) -> str | None:

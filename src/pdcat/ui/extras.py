@@ -61,7 +61,13 @@ def series_section(cat: Catalogue, key: str, asset: dict) -> None:
         st.caption(f"⚠️ {m['file']}: {m['detail']}")
     for c in a.get("layout_changes", []):
         st.warning(f"Layout differs in {c['file']}: {c['detail']}")
-    if a.get("files_not_read"):
+    if a.get("office"):
+        st.caption(f"Dated {a['office']}: only the newest were opened, each is an item of its own; older ones are "
+                   "listed from the file system (name, size, modified).")
+        for i, k in enumerate(reversed(a.get("opened", [])[-5:])):
+            st.button(f"Open {k.rsplit('/', 1)[-1]}", key=f"series-open-{key}-{i}", on_click=go, args=(k,),
+                      type="tertiary")
+    elif a.get("files_not_read"):
         st.caption(f"Columns and values below are from the newest file. This folder is sampled by date, so only the "
                    f"newest {a['file_count'] - a['files_not_read']} files were opened; the other {a['files_not_read']} "
                    "are listed from the file system (no row counts). \"Read every file\" on the folder's card "
