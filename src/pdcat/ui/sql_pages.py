@@ -102,6 +102,8 @@ def query_page(cat: Catalogue, key: str) -> None:
                + f"  \n`{key}`")
     from .item_boxes import item_actions
     item_actions(cat, key)
+    from .gold_pages import gold_box
+    gold_box(cat, key)
     if q["status"] == "missing":
         st.warning("Not found on the latest scan: the script or file it was in may have changed.")
     with st.popover("✏️ Rename"):

@@ -65,6 +65,9 @@ draft worked out from the scan):
 
 ![Coverage page](docs/screenshots/coverage.png)
 
+**Gold standards** (version 2.6): reports, measures and SQL you marked as the one to trust, and
+the related copies, same-named measures and look-alike queries that differ from them.
+
 **Issue hotspots** (Review › Health): which schemas, folders and tables have the most
 problems:
 
@@ -191,6 +194,46 @@ because the date sampling from 2.14 only ever covered CSV and Parquet files: eve
   missing.
 
 No rescan is forced: the next scan of a big or history folder is simply much faster.
+
+## New in version 2.6
+
+- **Gold standards.** Mark a Power BI report, a measure, an SQL query or a view as the one to trust
+  (**☆ Mark as gold standard** under the item's title, with an optional note on why). Related items are
+  then checked against it, and the ones that differ say so:
+  - a **measure**: measures with the same name in other reports, and measures with the same DAX under
+    another name. Same DAX is followed one step down too: `[Total Units] / 7` in two reports only gives the
+    same number when `[Total Units]` is the same in both. The difference shows as a line-by-line DAX diff,
+    plus a different format string.
+  - a **report**: its other versions and copies that share most of its pages, measures, tables and
+    sources, with the measures, tables, sources and pages that are missing, extra or changed. Every
+    measure in a gold report counts as a gold measure too, so the same-named measure in any other report
+    is checked against it. A measure you mark yourself wins over a gold report's.
+  - **SQL** (a query from the SQL library, a view or a procedure): SQL with the same name you gave it, or
+    that reads mostly the same tables and reads alike, with the tables, columns, joins and filters (WHERE)
+    that are missing or extra, and a text diff.
+- The gold item's page lists what matches and what differs. The other item's page shows
+  "Differs from the gold standard …" with how, and a link to the standard.
+- **Review › Gold standards** lists them all with counts. **To review** gets a new check,
+  "Differs from the gold standard". **Measures across reports** has a "⭐ Make this the gold standard" button
+  for each calculation of a clashing measure.
+- **OK to differ**: a difference that is on purpose can be marked so. It shows again when that item changes.
+- **The standard itself changing** is flagged ("changed since it was marked", with the diff) until you
+  accept it as the new standard.
+- Gold standards and OK-to-differ marks are in the JSON and CSV exports, and marking one can be undone from the
+  item's edit history. No rescan is needed.
+
+## New in version 2.5.4
+
+- **Table descriptions from the names a table is given elsewhere.** A suggested purpose for an
+  undescribed table used to come only from its own name, so `T_MAT01` became "Mat01". Now it also
+  uses the names the table is called by in your code and reports: an alias in SQL
+  (`FROM dbo.T_MAT01 AS Materials`) and the Power Query that loads it in a Power BI report or Excel
+  workbook ("Stock on hand"). The name used most often wins, and the To review item lists the others
+  under "Called elsewhere". One-letter aliases, initials (`dp` for `dim_plant`) and generic words
+  (`src`, `cte`, `Query1`) are left out.
+- **What its columns are renamed to is added.** `SELECT MATNR AS Material, WERKS AS Plant` gives
+  "Has material and plant". Abbreviations from Knowledge › Abbreviations are spelled out. No rescan
+  needed: this uses what earlier scans already found.
 
 ## New in version 2.5.3
 
