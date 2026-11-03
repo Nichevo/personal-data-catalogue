@@ -79,6 +79,9 @@ def detail(cat: Catalogue, key: str) -> None:
     st.caption(" · ".join(str(m) for m in meta if m) + f"  \n`{key}`")
     from .item_boxes import item_actions
     item_actions(cat, key, info)
+    if asset["kind"] in ("report", "measure", "view", "procedure"):
+        from .gold_pages import gold_box
+        gold_box(cat, key)
     if info.get("lifecycle") in ("deprecated", "retired"):
         msg = f"This is marked **{info['lifecycle']}**."
         if info.get("replaced_by"):

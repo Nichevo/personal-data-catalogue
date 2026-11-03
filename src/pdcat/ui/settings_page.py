@@ -67,7 +67,8 @@ def settings_page(cat: Catalogue) -> None:
     if group != bool(cat.setting("series_grouping", True)):
         cat.set_setting("series_grouping", group)
         st.rerun()
-    from pdcat.scan_files import RECENT_MINUTES, SAMPLE_NEWEST, SAMPLE_OVER
+    from pdcat.historyfolders import HISTORY_READ_NEWEST
+    from pdcat.scan_files import MAX_OFFICE_OPENS, RECENT_MINUTES, SAMPLE_NEWEST, SAMPLE_OVER
     with st.form("scan-pace"):
         c1, c2, c3 = st.columns(3)
         over = c1.number_input("Sample folders with more data files than (0 = read every file)", 0, 10 ** 7,
@@ -79,7 +80,21 @@ def settings_page(cat: Catalogue) -> None:
         recent = c3.number_input("Skip a re-scan of a source scanned less than (minutes, 0 = never skip)", 0, 10 ** 5,
                                  int(cat.setting("recent_scan_minutes", RECENT_MINUTES)), 5,
                                  help="Applies to Re-scan in the app and to `pdcat scan` (use --force to override).")
+        c4, c5, c6 = st.columns(3)
+        opens = c4.number_input("Workbooks and reports opened per scan (0 = no limit)", 0, 10 ** 6,
+                                int(cat.setting("max_office_opens", MAX_OFFICE_OPENS)), 50,
+                                help="New or changed ones beyond this are left for the next scan, newest first. "
+                                     "Each takes a second or two on a network drive.")
+        hist_newest = c5.number_input("Files opened per dated series in history folders", 1, 1000,
+                                      int(cat.setting("history_read_newest", HISTORY_READ_NEWEST)))
+        by_name = c6.checkbox("Treat archive, old, backup, history … folders as history",
+                              value=bool(cat.setting("history_by_name", True)),
+                              help="Their files are listed without being opened, except the newest of each dated "
+                                   "series. Give a folder another role in Folder roles to read it in full.")
         if st.form_submit_button("Save scan settings"):
+            cat.set_setting("max_office_opens", int(opens), quiet=True)
+            cat.set_setting("history_read_newest", int(hist_newest), quiet=True)
+            cat.set_setting("history_by_name", bool(by_name), quiet=True)
             cat.set_setting("sample_over_files", int(over), quiet=True)
             cat.set_setting("sample_newest", int(newest), quiet=True)
             cat.set_setting("recent_scan_minutes", int(recent), quiet=True)

@@ -321,6 +321,8 @@ def measures_across_page(cat: Catalogue) -> None:
     if not found["same_dax"] and not found["same_name"]:
         st.info("No measure recurs across the scanned reports yet. Scan more .pbix or .pbit files to compare them.")
         return
+    from pdcat import gold
+    golds = {g["key"] for g in gold.all_golds(cat)}
     clashes = found["same_name"]
     st.subheader(f"Same name, different calculation ({len(clashes)})")
     if not clashes:
@@ -335,6 +337,14 @@ def measures_across_page(cat: Catalogue) -> None:
                     with cols[i]:
                         asset_button(m["key"], f"{m['report']} › {m['name']}", "measure", f"mx-{m['key']}",
                                      help=f"In folder {m['folder']}" if m.get("folder") else None)
+                first = v["measures"][0]
+                if first["key"] in golds:
+                    st.caption(f"⭐ {first['report']} › {first['name']} is the gold standard.")
+                elif st.button("⭐ Make this the gold standard", key=f"mx-gold-{first['key']}",
+                               help=f"Mark {first['report']} › {first['name']} as the one to trust; the others "
+                                    "are then flagged as differing from it."):
+                    gold.mark(cat, first["key"], "picked on Measures across reports")
+                    st.rerun()
     shared = found["same_dax"]
     st.subheader(f"Same calculation in several reports ({len(shared)})")
     renamed = [e for e in shared if e["different_names"]]
