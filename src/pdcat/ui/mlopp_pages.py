@@ -38,18 +38,20 @@ def _tool_label(tool: str | None) -> str:
 def ml_opportunities_page(cat: Catalogue) -> None:
     page_title("ML opportunities")
     st.caption("Supply chain machine learning projects matched against what the catalogue has scanned. Each one is "
-               "scored on six readiness signals: a target, enough history, the right grain, tables that join, "
-               "freshness, and a business pain a report already measures. Everything is read from the catalogue; "
-               "nothing is sent to your servers.")
+               "scored on seven readiness checks: a target, enough history, the right grain, tables that join, "
+               "freshness, data quality from table profiles, and a business pain a report already measures. "
+               "Everything is read from the catalogue; nothing is sent to your servers.")
     when = cat.setting("ml_checked_at")
-    tab_list, tab_chart, tab_shared, tab_recipes = st.tabs(["Opportunities", "Value and readiness", "Shared tables",
-                                                            "Recipes"])
+    tab_list, tab_chart, tab_shared, tab_prof, tab_recipes = st.tabs(["Opportunities", "Value and readiness",
+                                                                      "Shared tables", "Tables to profile", "Recipes"])
     with tab_list:
         _list(cat, when)
     with tab_chart:
         _value_chart(cat)
     with tab_shared:
         _shared(cat)
+    with tab_prof:
+        _to_profile(cat)
     with tab_recipes:
         recipes_section(cat)
 
@@ -91,8 +93,11 @@ def _list(cat: Catalogue, when: str | None) -> None:
             st.progress(r["score"] / 100)
             bits = [M.BANDS[r["band"]], _tool_label(r["tool"]), "example" if r["example"] else "",
                     ("in " + ", ".join(r["projects"])) if r["projects"] else "",
-                    M.STATUS_LABELS.get(r["status"], r["status"]) if r["status"] != "idea" else ""]
-            st.caption(" · ".join(x for x in bits if x) + f"  \n{r['hint']}")
+                    M.STATUS_LABELS.get(r["status"], r["status"]) if r["status"] != "idea" else "",
+                    f"profiled {r['profiled']} tables" if r["profiled"] else "",
+                    f"⚠️ {r['issues']} data issue(s)" if r["issues"] else ""]
+            st.caption(" · ".join(x for x in bits if x) + f"  \n{r['hint']}"
+                       + (f"  \n{r['held_back']}" if r["held_back"] else ""))
 
 
 def new_form(cat: Catalogue, prefix: str = "mlo-new") -> None:
@@ -134,19 +139,22 @@ def _table_options(cat: Catalogue) -> dict[str, str]:
 def _value_chart(cat: Catalogue) -> None:
     rows = [r for r in _overview(cat) if r["value"]]
     st.caption("Rough value (1 to 5) against data readiness. Set value and effort on each opportunity's page; bigger "
-               "dots take more effort. Top right is where to start.")
+               "dots take more effort. Where you haven't set an effort, the suggested one is used (worked out from "
+               "what is missing and the data issues profiles show). Top right is where to start.")
     if not rows:
         st.info("No opportunity has a value yet.")
         return
     import altair as alt
     df = pd.DataFrame([{"opportunity": r["title"], "readiness": r["score"], "value": r["value"],
-                        "effort": r["effort"] or 3, "group": M.BANDS[r["band"]]} for r in rows])
+                        "effort": r["effort"] or r["effort_suggested"],
+                        "effort set by": "you" if r["effort"] else "suggested",
+                        "group": M.BANDS[r["band"]]} for r in rows])
     chart = alt.Chart(df).mark_circle(opacity=0.8).encode(
         x=alt.X("readiness:Q", scale=alt.Scale(domain=[0, 100]), title="Data readiness (out of 100)"),
         y=alt.Y("value:Q", scale=alt.Scale(domain=[0, 5.5]), title="Value (1 to 5)"),
         size=alt.Size("effort:Q", scale=alt.Scale(domain=[1, 5], range=[80, 800]), title="Effort"),
         color=alt.Color("group:N", title=""),
-        tooltip=["opportunity", "readiness", "value", "effort"]).properties(height=420)
+        tooltip=["opportunity", "readiness", "value", "effort", "effort set by"]).properties(height=420)
     text = alt.Chart(df).mark_text(align="left", dx=10, fontSize=12).encode(x="readiness:Q", y="value:Q",
                                                                              text="opportunity:N")
     st.altair_chart(chart + text, width="stretch")
@@ -188,13 +196,17 @@ def opportunity_page(cat: Catalogue, key: str) -> None:
         for s in e["splits"]:
             st.button(f"↳ {s.get('variant') or s['name']}", key=f"mlo-split-{s['uid']}", type="tertiary",
                       on_click=go, args=(f"mlo://{s['uid']}",))
-    b.metric("Readiness", f"{e['score']}", help="Out of 100. Target and history count double by default (Settings).")
+    b.metric("Readiness", f"{e['score']}", help="Out of 100. Target and history count double by default (Settings). "
+                                                "Ready to start also needs a target and history that are found.")
+    if e["held_back"]:
+        st.info(e["held_back"], icon="ℹ️")
     _actions(cat, uid, o)
     _tool_box(o, e)
     _projects_row(cat, uid, e)
     _checklist(cat, uid, e)
     _tables(cat, uid, e)
     _measures(cat, uid, e)
+    _data_quality(cat, uid, e)
     _baseline(cat, uid, o, e)
     _warnings(e)
     _feature_ideas(cat, uid)
@@ -262,6 +274,11 @@ def _tool_box(o: dict[str, Any], e: dict[str, Any]) -> None:
         a, b = st.columns([2, 5])
         a.caption("Kind of tool")
         a.markdown(f"**{_tool_label(o.get('tool')) or 'Not sure yet'}**  \n{o.get('method') or ''}")
+        if o.get("effort"):
+            a.caption(f"Effort {o['effort']} of 5 (set by you; suggested {e['effort_suggested']})")
+        else:
+            a.caption(f"Suggested effort {e['effort_suggested']} of 5"
+                      + (": " + ", ".join(e["effort_why"]) if e["effort_why"] else ""))
         b.caption("Why this fits")
         b.markdown(e["recipe"].get("why") or "Pick a kind of tool under Edit. LightGBM suits forecasts and tabular "
                                                "predictions; an AI agent suits questions in plain language.")
@@ -308,6 +325,12 @@ def _checklist(cat: Catalogue, uid: str, e: dict[str, Any]) -> None:
             a.markdown(f"{STATE_ICON[s['state']]} **{s['name']}** · {M.STATE_LABELS[s['state']]}"
                        + (" (set by you)" if s.get("overridden") else ""))
             a.caption(s["evidence"] + (f"  \nNote: {s['note']}" if s.get("note") else ""))
+            if s.get("why") or s.get("raise_by"):
+                with a.expander("Why"):
+                    for w in s.get("why") or []:
+                        st.markdown(f"- {w}")
+                    if s.get("raise_by"):
+                        st.markdown(f"**To raise it:** {s['raise_by']}")
             ok = b.checkbox("Confirmed", value=s["confirmed"], key=f"mlo-ok-{uid}-{s['id']}",
                             help=M.SIGNAL_HELP[s["id"]])
             if ok != s["confirmed"]:
@@ -329,10 +352,10 @@ def _tables(cat: Catalogue, uid: str, e: dict[str, Any]) -> None:
     roles = [r for r in M.ROLES if r]
     if e["tables"]:
         df = pd.DataFrame([{"key": t["key"], "table": t["name"], "rows": t["rows"], "history": t["history"],
-                            "type": t["type"], "role": t["role"] or "feature", "state": t["state"], "why": t["why"]}
-                           for t in e["tables"]])
+                            "type": t["type"], "profile": t.get("profile", ""), "role": t["role"] or "feature",
+                            "state": t["state"], "why": t["why"]} for t in e["tables"]])
         edited = st.data_editor(df, hide_index=True, width="stretch", key=f"mlo-tables-{uid}",
-                                disabled=["key", "table", "rows", "history", "type", "why"],
+                                disabled=["key", "table", "rows", "history", "type", "profile", "why"],
                                 column_config={"key": None,
                                                "rows": st.column_config.NumberColumn(format="localized"),
                                                "role": st.column_config.SelectboxColumn(options=roles),
@@ -345,10 +368,15 @@ def _tables(cat: Catalogue, uid: str, e: dict[str, Any]) -> None:
     if e["columns"]:
         with st.expander(f"Columns ({len(e['columns'])}): friendly name with the SAP original"):
             df = pd.DataFrame([{"item": c["item"], "column": c["column"], "role": c["role"] or "feature",
-                                "state": c["state"], "why": c["why"]} for c in e["columns"]])
+                                "state": c["state"], "blank %": c.get("blank"), "distinct": c.get("distinct"),
+                                "check": c.get("check", ""), "why": c["why"]} for c in e["columns"]])
             edited = st.data_editor(df, hide_index=True, width="stretch", key=f"mlo-cols-{uid}",
-                                    disabled=["item", "column", "why"],
+                                    disabled=["item", "column", "blank %", "distinct", "check", "why"],
                                     column_config={"item": None,
+                                                   "distinct": st.column_config.NumberColumn(format="localized"),
+                                                   "check": st.column_config.TextColumn(
+                                                       help="From the column's profile: mostly blank, one value "
+                                                            "only, or stand-in blanks"),
                                                    "role": st.column_config.SelectboxColumn(options=roles),
                                                    "state": st.column_config.SelectboxColumn(options=states),
                                                    "why": st.column_config.TextColumn(width="large")})
@@ -406,11 +434,150 @@ def _measures(cat: Catalogue, uid: str, e: dict[str, Any]) -> None:
                         help="Marks it as the target and shows SQL you can save as a view yourself (never run here)"):
                 st.session_state[f"mlo-sql-{uid}"] = M.use_as_target(cat, uid, m["key"])
                 st.rerun()
+    _target_measure(cat, uid, e)
     sql = st.session_state.get(f"mlo-sql-{uid}")
     if sql:
         st.caption("Copy this, translate the DAX into the expression, and save it as a view yourself. "
                    "pdcat never runs it or creates anything on your server.")
         st.code(sql, language="sql")
+
+
+def _target_measure(cat: Catalogue, uid: str, e: dict[str, Any]) -> None:
+    """For a measure picked as the target: its original data, and the report's other measures as features."""
+    from pdcat import mlpbi
+    targets = [m for m in e["related"] if m["target"]]
+    if not targets:
+        return
+    t = targets[0]
+    src = mlpbi.measure_sources(cat, t["key"])
+    if not src:
+        return
+    have = {r["key"] for r in e["tables"]}
+    st.markdown(f"**Where the target {src['measure']} comes from**")
+    st.caption("The model columns it is built from (through every measure and calculated column it uses), and what "
+               "the Power Query of each model table reads. A model is trained on that original data, not on the "
+               "report.")
+    if src["columns"]:
+        st.caption("Built from " + ", ".join(src["columns"]))
+    if not src["sources"]:
+        st.caption("No data source found for its model tables (calculated tables, or queries pdcat couldn't read).")
+    for j, s_ in enumerate(src["sources"]):
+        a, b = st.columns([5, 1.4])
+        text = f"{s_['label']} · model table {s_['model_table']} · query {s_['query']}"
+        if s_["catalogued"]:
+            a.button(text, key=f"mlo-src-{uid}-{j}", type="tertiary", on_click=go, args=(s_["key"],))
+            if s_["key"] in have:
+                b.caption("in this opportunity")
+            elif b.button("Add as target table", key=f"mlo-src-add-{uid}-{j}"):
+                M.set_item(cat, uid, s_["key"], kind="table", role="target", state="confirmed",
+                           why=f"original data of the target measure {src['measure']}")
+                st.rerun()
+        else:
+            a.caption(text + " (not in the catalogue)")
+    others = mlpbi.other_measures(cat, t["key"])
+    if not others:
+        return
+    mine = {r["key"]: r for r in e["related"]}
+    picked = {i["item"] for i in M.items(cat, uid) if i["kind"] == "measure" and i.get("role") == "feature"}
+    with st.expander(f"Other measures in {src['report']} as feature ideas ({len(others)})"):
+        st.caption("Measures that read the same model tables as the target come first. ⚠️ marks measures the target "
+                   "is built from or that are built on it: they give the answer away, so don't use them as features.")
+        df = pd.DataFrame([{"key": m["key"], "feature": m["key"] in picked,
+                            "measure": ("⚠️ " if m["leaks"] else "") + m["measure"],
+                            "reads": ", ".join(m["tables"]), "same tables as target": ", ".join(m["shared"]),
+                            "complexity": m["level"], "shown on a page": m["shown"],
+                            "note": m["relation"]} for m in others])
+        edited = st.data_editor(df, hide_index=True, width="stretch", key=f"mlo-other-m-{uid}",
+                                disabled=[c for c in df.columns if c != "feature"], column_config={"key": None})
+        changed = False
+        for (_, old), (_, new) in zip(df.iterrows(), edited.iterrows(), strict=False):
+            if bool(old["feature"]) != bool(new["feature"]):
+                if new["feature"]:
+                    M.set_item(cat, uid, old["key"], kind="measure", role="feature", state="confirmed",
+                               why=f"in the target's report {src['report']}")
+                elif old["key"] not in mine or not mine[old["key"]]["ticked"]:
+                    M.tick_measure(cat, uid, old["key"], False)
+                else:
+                    M.set_item(cat, uid, old["key"], kind="measure", role="related", state="confirmed")
+                changed = True
+        if changed:
+            st.rerun()
+
+
+def _data_quality(cat: Catalogue, uid: str, e: dict[str, Any]) -> None:
+    from pdcat import mlquality as Q
+    from pdcat.pacing import request_profiles
+
+    from .common import go_page
+    st.subheader("Data quality")
+    st.caption("From table profiles (Add › Sources › Profiling). Queuing a table here only puts it in the profiling "
+               "queue: nothing is sent to your server until you approve and run the queue, at the usual pace.")
+    cov = e["coverage"]
+    if cov:
+        df = pd.DataFrame([{"table": r["name"], "role": r["role"], "rows": r["rows"],
+                            "profile": Q.STATE_LABELS.get(r["state"], r["state"]), "profiled on": r["profiled"],
+                            "picked columns profiled": r["columns"]} for r in cov])
+        st.dataframe(df, hide_index=True, width="stretch",
+                     column_config={"rows": st.column_config.NumberColumn(format="localized")})
+        can = [r["key"] for r in cov if r["can_queue"]]
+        files = [r["name"] for r in cov if r["state"] == "none" and r["kind"] not in Q.SQL_KINDS]
+        a, b = st.columns([2, 2])
+        if can and a.button(f"Queue {len(can)} table(s) for profiling", key=f"mlo-q-{uid}",
+                            help="Adds them to the profiling queue, waiting for your approval"):
+            n = request_profiles(cat, can)
+            st.toast(f"{n} table(s) queued; approve them on the Profiling page")
+            st.rerun()
+        b.button("Open Profiling", key=f"mlo-qp-{uid}", on_click=go_page, args=("Profiling",))
+        if files:
+            st.caption("Data files are profiled when a scan reads their folder: " + ", ".join(files[:5]))
+    for i in e["issues"]:
+        (st.warning if i["level"] == "warn" else st.caption)(i["text"])
+    if cov and not e["issues"] and any(r["state"] in ("profiled", "old") for r in cov):
+        st.caption("No issues found in the profiled columns.")
+    deeper = e.get("deeper") or []
+    if deeper:
+        st.markdown("**Deeper checks**: key facts a normal profile can't give")
+        for j, d in enumerate(deeper):
+            with st.expander(d["title"]):
+                st.caption(d["why"])
+                if d.get("full_profile"):
+                    if st.button("Queue a full-table profile", key=f"mlo-full-{uid}-{j}",
+                                 help="Counts and ranges from every row instead of a sample. It waits for your "
+                                      "approval and may be slow on a big table (the per-query time limit applies)"):
+                        request_profiles(cat, [d["full_profile"]], full_table=True)
+                        st.toast("Queued as a full-table profile; approve it on the Profiling page")
+                        st.rerun()
+                if d.get("sql"):
+                    st.code(d["sql"], language="sql")
+
+
+def _to_profile(cat: Catalogue) -> None:
+    from pdcat import mlquality as Q
+    from pdcat.pacing import request_profiles
+
+    from .common import go_page
+    st.caption("SQL tables and views that your opportunities need but that have no profile, an old one, or whose "
+               "profiling failed. Without a profile pdcat can't tell how far back their dates go or how many blanks "
+               "they hold, so their scores stay cautious. Queuing only adds them to the profiling queue; nothing is "
+               "sent to your server until you approve and run it.")
+    rows = Q.tables_to_profile(cat)
+    if not rows:
+        st.info("Every table your opportunities need has a profile.")
+        return
+    df = pd.DataFrame([{"key": r["key"], "queue": True, "table": r["name"], "rows": r["rows"],
+                        "profile": Q.STATE_LABELS.get(r["state"], r["state"]), "target table": r["role"] == "target",
+                        "needed by": r["needed_by"], "opportunities": ", ".join(r["opportunities"])} for r in rows])
+    edited = st.data_editor(df, hide_index=True, width="stretch", key="mlo-to-profile",
+                            disabled=["key", "table", "rows", "profile", "target table", "needed by", "opportunities"],
+                            column_config={"key": None, "rows": st.column_config.NumberColumn(format="localized"),
+                                           "queue": st.column_config.CheckboxColumn("queue", default=True)})
+    picked = edited.loc[edited["queue"], "key"].tolist()
+    a, b = st.columns(2)
+    if a.button(f"Queue {len(picked)} table(s)", key="mlo-to-profile-go", type="primary", disabled=not picked):
+        n = request_profiles(cat, picked)
+        st.toast(f"{n} table(s) queued; approve them on the Profiling page")
+        st.rerun()
+    b.button("Open Profiling", key="mlo-to-profile-open", on_click=go_page, args=("Profiling",))
 
 
 def _baseline(cat: Catalogue, uid: str, o: dict[str, Any], e: dict[str, Any]) -> None:

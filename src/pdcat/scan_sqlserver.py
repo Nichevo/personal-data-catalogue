@@ -307,12 +307,14 @@ def _profile_one(cat: Catalogue, pacer, cur, asset: dict[str, Any], database: st
     """Profile one table or view and save it. Raises when nothing at all could be read."""
     import pandas as pd
 
-    from .pacing import set_queue_state
+    from .pacing import full_table_asked, set_queue_state
     from .profiling import combine_sql_profile, sql_aggregates, sql_sample
 
     a = asset["attrs"]
     rows = a.get("row_count") or 0
     sample = int(s["sql_sample_rows"]) if asset["kind"] == "view" or rows > int(s["sql_sample_over_rows"]) else None
+    if sample and full_table_asked(cat, asset["key"]):
+        sample = None  # a deeper profile was asked for: counts and ranges over the whole table
     progress(f"  profiling {database}.{asset['name']}" + (f" (sample of {sample:,} rows)" if sample else ""))
     columns = [dict(c) for c in cat.columns(asset["key"])]
     schema, obj, top_rows = a["schema"], a["object"], int(s["sql_top_values_rows"])
