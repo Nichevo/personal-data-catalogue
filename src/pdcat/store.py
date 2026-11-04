@@ -464,7 +464,8 @@ CREATE TABLE IF NOT EXISTS gold_standards (
     note        TEXT,
     snapshot    TEXT,
     marked_at   TEXT,
-    author      TEXT
+    author      TEXT,
+    scope       TEXT                        -- version 2.27: which reports it is compared with (JSON), see gold.py
 );
 -- Items that differ from a gold standard on purpose; holds while the item's fingerprint stays the same.
 CREATE TABLE IF NOT EXISTS gold_ok (
@@ -774,6 +775,8 @@ ADDED_COLUMNS = {
     "documents": {"path": "TEXT", "mtime": "REAL", "describes": "TEXT", "source": "TEXT"},
     # version 2.21
     "item_info": {"relevance": "TEXT", "sap_name": "TEXT", "table_type": "TEXT"},
+    # version 2.27
+    "gold_standards": {"scope": "TEXT"},
 }
 
 
@@ -1887,13 +1890,17 @@ def _norm_path(p: str) -> str:
 
 
 # Items left out of search and lists: marked not relevant, or an older version of a script or report (and the
-# measures in an older report). `old_versions=True` on search and list_assets brings the older versions back.
+# measures in an older report), or marked old (version 2.27). `old_versions=True` on search and list_assets brings
+# the older versions and old items back.
 NOT_RELEVANT_KEYS = "SELECT asset_key FROM item_info WHERE relevance = 'not relevant'"
 OLDER_VERSION_KEYS = """SELECT m.asset_key FROM group_members m JOIN item_groups g ON g.uid = m.group_uid
     WHERE g.type = 'versions' AND g.main_key IS NOT NULL AND g.main_key != m.asset_key
     UNION SELECT a.key FROM assets a JOIN group_members m ON m.asset_key = a.parent
     JOIN item_groups g ON g.uid = m.group_uid
-    WHERE a.kind = 'measure' AND g.type = 'versions' AND g.main_key IS NOT NULL AND g.main_key != m.asset_key"""
+    WHERE a.kind = 'measure' AND g.type = 'versions' AND g.main_key IS NOT NULL AND g.main_key != m.asset_key
+    UNION SELECT asset_key FROM item_info WHERE relevance = 'old'
+    UNION SELECT a.key FROM assets a JOIN item_info i ON i.asset_key = a.parent
+    WHERE a.kind = 'measure' AND i.relevance = 'old'"""
 HIDDEN_KEYS = f"{NOT_RELEVANT_KEYS} UNION {OLDER_VERSION_KEYS}"
 
 # Display names of search hits that aren't scanned items (knowledge, questions, business projects...).

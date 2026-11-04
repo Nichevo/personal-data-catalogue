@@ -47,7 +47,7 @@ TABLES = {
     "business_projects": "SELECT * FROM bprojects ORDER BY name",
     "business_project_members": "SELECT * FROM bproject_members WHERE state = 'confirmed' ORDER BY project_uid",
     "relationships": "SELECT * FROM relationships WHERE state != 'rejected' ORDER BY src_key, dst_key",
-    "gold_standards": "SELECT key, kind, note, marked_at, author FROM gold_standards ORDER BY kind, key",
+    "gold_standards": "SELECT key, kind, note, marked_at, author, scope FROM gold_standards ORDER BY kind, key",
     "gold_ok_to_differ": "SELECT gold_key, item_key, note, at, author FROM gold_ok ORDER BY gold_key, item_key",
     "change_history": "SELECT asset_key, at, change, detail FROM schema_history ORDER BY at, id",
     # version 2.9

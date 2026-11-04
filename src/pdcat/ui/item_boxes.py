@@ -41,13 +41,23 @@ def item_actions(cat: Catalogue, key: str, info: dict | None = None) -> None:
             curation.set_relevance(cat, key, "")
             st.rerun()
     elif rel != "not relevant" and c3.button("🗄️ Mark old", key=f"old-{key}",
-                                             help="Kept with its notes, but hidden from the code map and diagrams"):
+                                             help="An old version: kept with its notes and still shown in its Versions group, "
+                                                  "but left out of search, the lists, maps, diagrams and gold "
+                                                  "standard comparisons, like an older version. "
+                                                  "\"Show older versions\" brings it back."):
         curation.set_relevance(cat, key, "old")
         st.rerun()
     if rel == "not relevant":
         st.info("Marked **not relevant**: hidden from search, review, coverage, diagrams and exports.", icon="🙈")
     elif rel == "old":
-        st.info("Marked **old**: hidden from the code map and diagrams unless you choose to show old items.", icon="🗄️")
+        st.info("Marked **old**: still shown in its Versions group, but left out of search, the lists, maps, "
+                "diagrams" + (" and gold standard comparisons" if _is_report(cat, key) else "")
+                + " unless you choose to show older versions.", icon="🗄️")
+
+
+def _is_report(cat: Catalogue, key: str) -> bool:
+    r = cat.conn.execute("SELECT kind FROM assets WHERE key = ?", (key,)).fetchone()
+    return bool(r) and r[0] in ("report", "workbook")
 
 
 def groups_box(cat: Catalogue, key: str) -> None:

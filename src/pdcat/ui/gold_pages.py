@@ -1,6 +1,7 @@
 """Gold standards (version 2.6): the box on report, measure and SQL pages, and the Review › Gold standards page."""
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import streamlit as st
@@ -37,8 +38,32 @@ def result_view(res: dict[str, Any]) -> None:
                         + (f" and {len(s['changed']) - 12} more" if len(s["changed"]) > 12 else ""))
         st.markdown(f"- **{s['title']}:** " + "; ".join(bits))
     if res.get("text_diff"):
-        st.caption("Lines starting with − are in the gold standard, + in this one.")
-        st.code(res["text_diff"], language="diff")
+        st.caption("🟩 Green lines (−) are the gold standard; 🟥 red lines (+) are where this one differs.")
+        st.markdown(diff_html(res["text_diff"]), unsafe_allow_html=True)
+
+
+GOLD_LINE = "background:rgba(40,167,69,0.22)"
+OTHER_LINE = "background:rgba(220,53,69,0.22)"
+
+
+def diff_html(text: str) -> str:
+    """A unified diff with the gold standard's lines green and the other item's red (a plain "diff" code block
+    colours them the other way round, which reads as if the gold standard were wrong)."""
+    from html import escape
+    rows = []
+    for line in text.splitlines():
+        style = ""
+        if line.startswith(("---", "+++")):
+            style = "font-weight:600"
+        elif line.startswith("-"):
+            style = GOLD_LINE
+        elif line.startswith("+"):
+            style = OTHER_LINE
+        elif line.startswith("@@"):
+            style = "opacity:0.6"
+        rows.append(f'<div style="{style};white-space:pre-wrap;padding:0 6px">{escape(line) or "&nbsp;"}</div>')
+    return ('<div style="font-family:monospace;font-size:0.82rem;max-height:420px;overflow:auto;'
+            'border:1px solid rgba(128,128,128,0.3);border-radius:6px;padding:4px 0">' + "".join(rows) + "</div>")
 
 
 def _mark_popover(cat: Catalogue, key: str, row: dict[str, Any] | None) -> None:
@@ -93,7 +118,10 @@ def own_box(cat: Catalogue, key: str, row: dict[str, Any]) -> None:
     rel = r["related"] + r["measures"]
     n_diff = sum(x["verdict"] == "differs" for x in rel)
     st.success(text + "  \n" + (f"{len(rel)} related item(s): {n_diff} differ." if rel else
-                                "Nothing related found yet."), icon="⭐")
+                                "Nothing related found yet.")
+               + f"  \nCompared with {gold.scope_label(r['scope'])}"
+               + (f"; {len(r['left_out'])} related report(s) not compared." if r["left_out"] else "."), icon="⭐")
+    scope_box(cat, key, r)
     if r["changed"]:
         with st.container(border=True):
             st.warning(f"The gold standard itself changed since it was marked: {r['changed']['summary']}.", icon="⚠️")
@@ -114,6 +142,54 @@ def own_box(cat: Catalogue, key: str, row: dict[str, Any]) -> None:
         related_list(cat, key, r["measures"], f"{key}-ms")
 
 
+def _candidates(cat: Catalogue, key: str) -> dict[str, str]:
+    """Every report (or, for SQL, query) that could be compared with a gold standard: key -> label."""
+    every = gold.related(cat, key, everything=True)
+    old = gold.old_reports(cat)
+    keys = {gold.compared_key(x["item"]) for x in every["related"] + every["measures"]}
+    out = {}
+    for k in keys:
+        a = cat.conn.execute("SELECT name, attrs FROM assets WHERE key = ?", (k,)).fetchone()
+        if a is None:
+            item = next((x["item"] for x in every["related"] if x["item"]["key"] == k), {})
+            out[k] = item.get("name") or k
+            continue
+        path = str((json.loads(a["attrs"] or "{}") or {}).get("path") or "")
+        folder = path.replace("\\", "/").rsplit("/", 1)[0] if "/" in path.replace("\\", "/") else ""
+        out[k] = a["name"] + (f" · {folder}" if folder else "") + (" · old" if k in old else "")
+    return dict(sorted(out.items(), key=lambda kv: kv[1].lower()))
+
+
+def scope_box(cat: Catalogue, key: str, r: dict[str, Any]) -> None:
+    """Choose which reports this gold standard is compared with (version 2.27)."""
+    sc = r["scope"]
+    noun = "queries" if r["gold"]["kind"] == "sql" else "reports"
+    with st.expander(f"🎯 Compare with: {gold.scope_label(sc)}"):
+        cands = _candidates(cat, key)
+        if not cands:
+            st.caption(f"No related {noun} found yet.")
+            return
+        modes = list(gold.SCOPES)
+        mode = st.radio("Compare this gold standard with", modes, index=modes.index(sc["mode"]),
+                        format_func=gold.SCOPES.get, key=f"gold-scope-mode-{key}",
+                        help="Old = an older version in a Versions group, a report marked 🗄️ old or 🙈 not "
+                             "relevant, or one in a folder whose role is archive.")
+        if mode == "picked":
+            picked = st.multiselect(f"Only these {noun}", list(cands), format_func=cands.get,
+                                    default=[k for k in sc["picked"] if k in cands], key=f"gold-scope-pick-{key}")
+            skip = sc["skip"]
+        else:
+            picked = sc["picked"]
+            skip = st.multiselect(f"Leave out these {noun}", list(cands), format_func=cands.get,
+                                  default=[k for k in sc["skip"] if k in cands], key=f"gold-scope-skip-{key}")
+            skip += [k for k in sc["skip"] if k not in cands]  # keep ones not related right now
+        st.caption(f"{len(cands)} related {noun} found. Items you leave out drop off Review › Gold standards "
+                   "and the To review list too.")
+        if st.button("Save", key=f"gold-scope-save-{key}", type="primary"):
+            gold.set_scope(cat, key, mode, skip, picked)
+            st.rerun()
+
+
 def related_list(cat: Catalogue, gold_key: str, rows: list[dict[str, Any]], wkey: str) -> None:
     """Differing items each in an expander with how they differ; matching ones in one line."""
     differ = [x for x in rows if x["verdict"] != "same"]
@@ -128,14 +204,32 @@ def related_list(cat: Catalogue, gold_key: str, rows: list[dict[str, Any]], wkey
             if x.get("standard") and x["standard"]["key"] != gold_key:
                 st.caption(f"Compared with {x['standard']['where']} › {x['standard']['name']} ({x['standard']['via']}).")
             result_view(x["result"])
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             c1.button("Open", key=f"gold-open-{wkey}-{i}", on_click=go, args=(it["key"],))
             _ok_buttons(cat, std_key, it["key"], x.get("ok"), x["verdict"], c2, f"{wkey}-{i}")
+            _leave_out_buttons(cat, gold_key, it, c3, f"{wkey}-{i}")
     if len(differ) > SHOW:
         st.caption(f"…and {len(differ) - SHOW} more. The To review list has them all (Differs from the gold standard).")
     if same:
         st.caption("✅ Match: " + ", ".join(f"{x['item']['name']} ({x['item'].get('where', '')})" for x in same[:12])
                    + (f" and {len(same) - 12} more" if len(same) > 12 else ""))
+
+
+def _leave_out_buttons(cat: Catalogue, gold_key: str, item: dict[str, Any], col, wkey: str) -> None:
+    """Stop comparing this report with the gold standard, or mark the report as an old version everywhere."""
+    target = gold.compared_key(item)
+    what = "this report" if item.get("kind") in ("measure", "report") else "this item"
+    if col.button(f"🚫 Don't compare {what}", key=f"gold-skip-{wkey}",
+                  help="Leave it out of this gold standard's comparisons (🎯 Compare with, to undo)."):
+        gold.leave_out(cat, gold_key, target)
+        st.rerun()
+    if item.get("kind") in ("measure", "report") and col.button(
+            "🗄️ Mark report old", key=f"gold-old-{wkey}",
+            help="An old version: left out of every gold standard and hidden from the Power BI lists. "
+                 "↩️ Not old on the report's page brings it back."):
+        from pdcat import curation
+        curation.set_relevance(cat, target, "old")
+        st.rerun()
 
 
 def _ok_buttons(cat: Catalogue, gold_key: str, item_key: str, ok: dict | None, verdict: str, col, wkey: str) -> None:
@@ -187,7 +281,8 @@ def gold_page(cat: Catalogue) -> None:
     table = pd.DataFrame([{"": "⚠️" if r["changed"] or r["gone"] else "", "gold standard": r["name"],
                            "kind": gold.KIND_LABELS.get(r["kind"], r["kind"]), "in": r["where"],
                            "differ": r["differs"], "other name": r["name_only"], "OK to differ": r["ok"],
-                           "match": r["same"], "note": r["note"],
+                           "match": r["same"], "compared with": r["scope"], "not compared": r["left_out"],
+                           "note": r["note"],
                            "changed since marked": r["changed"] or ("not found on the latest scan" if r["gone"] else "")}
                           for r in rows])
     pick = st.dataframe(table, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",

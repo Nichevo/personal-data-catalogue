@@ -172,6 +172,36 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.27
+
+**Choose which reports a gold standard is compared with, and mark Power BI reports as old.**
+
+- **Old versions are left out by default.** A gold standard is now compared with current reports only: older
+  versions in a Versions group, reports marked 🗄️ old or 🙈 not relevant, and reports in a folder whose role is
+  archive are no longer flagged as "differs". Before, a gold report was always compared with its own older versions.
+- **🎯 Compare with**, on every gold standard's page: *Current reports only* (the default), *All reports, old
+  versions too*, or *Only the reports I pick*, plus a list of reports to leave out. For a gold measure the list is
+  the reports holding the other measures; for SQL, the related queries and views. The box says how many related
+  reports are not compared.
+- **🚫 Don't compare this report** and **🗄️ Mark report old** buttons on each item that differs, so a stray
+  archived copy can be dropped in one click. The first only affects that gold standard; the second marks the report
+  old everywhere.
+- **🗄️ Mark old now means "old version" everywhere**, for Python scripts, notebooks, tables, views, data files and
+  Power BI reports alike. The item keeps its notes and still shows in its Versions group and on its own page, but is
+  left out of search, the Find lists, the code map, data flow, the Power BI pages and gold standard comparisons, the
+  same as an older version in a Versions group. Tick **Show older versions** (on the Tables page: **Show old
+  tables**) to list them; ↩️ Not old on the item's page brings it back for good.
+- **Data source differences are checked.** A measure with the same DAX now differs when a table it reads (directly
+  or through the measures it builds on) loads from another server, database, table, file, folder or native SQL,
+  e.g. "Sales loads from somewhere else", with the two sources side by side. A gold report gets a *Data sources*
+  section for every model table that loads from somewhere else in the other report. Power Query parameters (a
+  ServerName parameter, say) are filled in first, and queries a table builds on are followed.
+- **The gold standard is green, the item that differs is red** in the line-by-line difference view (before, a plain
+  diff coloured the gold standard's lines red).
+- Leaving reports out also takes them off Review › Gold standards (new *compared with* and *not compared*
+  columns) and the To review list. Every change can be undone from the gold standard's edit history, and the
+  gold standards export has a new *scope* column.
+
 ## New in version 2.26
 
 **Change graphs go per day, week or month, never per hour.**

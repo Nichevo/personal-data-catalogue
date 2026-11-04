@@ -1,3 +1,3 @@
 """Personal data catalogue: scan your own SQL Server databases and Python projects, then add notes."""
 
-__version__ = "2.26"
+__version__ = "2.27"

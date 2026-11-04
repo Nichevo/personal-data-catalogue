@@ -136,8 +136,10 @@ def allow_again(cat: Catalogue, type_: str, key: str) -> None:
 
 
 def older_versions(cat: Catalogue) -> set[str]:
-    """Scripts and reports that are older versions of another: hidden from the code map, search and lineage."""
-    out = set()
+    """Scripts and reports that are older versions of another, and items you marked old (🗄️ Mark old on a
+    script's, table's or report's page, version 2.27): hidden from search, the lists, the code map, lineage, the
+    Power BI pages and gold standard comparisons, unless you tick "Show older versions"."""
+    out = {r[0] for r in cat.conn.execute("SELECT asset_key FROM item_info WHERE relevance = 'old'")}
     for r in cat.conn.execute("SELECT m.asset_key, g.main_key FROM group_members m JOIN item_groups g "
                               "ON g.uid = m.group_uid WHERE g.type = 'versions' AND g.main_key IS NOT NULL"):
         if r[0] != r[1]:
