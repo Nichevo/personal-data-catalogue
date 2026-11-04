@@ -143,3 +143,52 @@ def test_diff_shows_the_gold_standard_green_and_the_other_red():
     gold_at, other_at = html.index("SUM(x) &lt;b&gt;"), html.index("SUMX(x)")
     assert html.rfind(GOLD_LINE, 0, gold_at) > html.rfind(OTHER_LINE, 0, gold_at)
     assert html.rfind(OTHER_LINE, 0, other_at) > html.rfind(GOLD_LINE, 0, other_at)
+
+
+def _pbit_on(path, server: str, measures=(("Total Units", "SUM(Sales[Units])"),)):
+    import copy
+    import json
+    import zipfile
+
+    from test_office import TMSL, layout
+    model = copy.deepcopy(TMSL)
+    model["model"]["tables"][0]["measures"] = [{"name": n, "expression": e} for n, e in measures]
+    model["model"]["expressions"][0]["expression"] = f'"{server}" meta [IsParameterQuery=true, Type="Text"]'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("Report/Layout", json.dumps(layout()).encode("utf-16-le"))
+        z.writestr("DataModelSchema", json.dumps(model).encode("utf-16-le"))
+
+
+def test_data_source_differences_are_flagged_for_measures_and_reports(tmp_path):
+    folder = tmp_path / "reports"
+    _pbit_on(folder / "Sales.pbit", "PROD-SQL01", [("Total Units", "SUM(Sales[Units])"), ("Stores", "COUNTROWS(Store)")])
+    _pbit_on(folder / "Sales test.pbit", "TEST-SQL01",
+             [("Total Units", "SUM(Sales[Units])"), ("Stores", "COUNTROWS(Store)")])
+    _pbit_on(folder / "Sales same.pbit", "PROD-SQL01",
+             [("Total Units", "SUM(Sales[Units])"), ("Stores", "COUNTROWS(Store)")])
+    cat = Catalogue(tmp_path / "c.db")
+    scan_folder(cat, "reports", folder)
+    sales = "files://reports/Sales.pbit"
+    assert "server PROD-SQL01" in gold.data_sources(gold.load(cat, sales)["attrs"])["sales"]
+    # a gold measure: same DAX, but its table loads from another server
+    std = next(r[0] for r in cat.conn.execute("SELECT key FROM assets WHERE kind = 'measure' AND parent = ? "
+                                              "AND name LIKE '%Total Units%'", (sales,)))
+    gold.mark(cat, std)
+    got = {x["item"]["where"]: x for x in gold.related(cat, std)["related"]}
+    assert got["Sales same.pbit"]["verdict"] == "same"
+    test = got["Sales test.pbit"]
+    assert test["verdict"] == "differs" and test["result"]["summary"] == "sales loads from somewhere else"
+    assert "-server PROD-SQL01" in test["result"]["text_diff"] and "+server TEST-SQL01" in test["result"]["text_diff"]
+    # a measure on a table whose source is the same everywhere (Store has no query) is not flagged
+    gold.unmark(cat, std)
+    stores = next(r[0] for r in cat.conn.execute("SELECT key FROM assets WHERE kind = 'measure' AND parent = ? "
+                                                 "AND name LIKE '%Stores%'", (sales,)))
+    gold.mark(cat, stores)
+    assert {x["verdict"] for x in gold.related(cat, stores)["related"]} == {"same"}
+    # a gold report: the data sources section
+    gold.mark(cat, sales)
+    rel = {x["item"]["name"]: x for x in gold.related(cat, sales)["related"]}
+    titles = [s["title"] for s in rel["Sales test.pbit"]["result"]["sections"]]
+    assert "Data sources" in titles and rel["Sales same.pbit"]["verdict"] == "same"
+    cat.close()

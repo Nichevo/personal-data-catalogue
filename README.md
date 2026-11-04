@@ -191,6 +191,11 @@ one at a time, and every query is logged:
   left out of search, the Find lists, the code map, data flow, the Power BI pages and gold standard comparisons, the
   same as an older version in a Versions group. Tick **Show older versions** (on the Tables page: **Show old
   tables**) to list them; ↩️ Not old on the item's page brings it back for good.
+- **Data source differences are checked.** A measure with the same DAX now differs when a table it reads (directly
+  or through the measures it builds on) loads from another server, database, table, file, folder or native SQL,
+  e.g. "Sales loads from somewhere else", with the two sources side by side. A gold report gets a *Data sources*
+  section for every model table that loads from somewhere else in the other report. Power Query parameters (a
+  ServerName parameter, say) are filled in first, and queries a table builds on are followed.
 - **The gold standard is green, the item that differs is red** in the line-by-line difference view (before, a plain
   diff coloured the gold standard's lines red).
 - Leaving reports out also takes them off Review › Gold standards (new *compared with* and *not compared*

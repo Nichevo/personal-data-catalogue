@@ -247,11 +247,12 @@ def load(cat: Catalogue, key: str) -> dict[str, Any] | None:
     attrs = a["attrs"]
     base = {"key": key, "name": a["name"], "missing": a["status"] == "missing"}
     if kind == "measure":
-        report = cat.conn.execute("SELECT name FROM assets WHERE key = ?", (a["parent"],)).fetchone()
+        report = cat.conn.execute("SELECT name, attrs FROM assets WHERE key = ?", (a["parent"],)).fetchone()
         return {**base, "kind": "measure", "name": (as_text(attrs.get("name")) or a["name"]).strip(),
                 "table": as_text(attrs.get("table")), "expression": as_text(attrs.get("expression")).strip(),
                 "format": as_text(attrs.get("format")), "report_key": a["parent"],
-                "where": report["name"] if report else ""}
+                "where": report["name"] if report else "",
+                "sources": data_sources(json.loads(report["attrs"] or "{}")) if report else {}}
     if kind == "report":
         return {**base, "kind": "report", "attrs": attrs, "where": attrs.get("path") or a["source"]}
     if kind == "sql":
@@ -351,7 +352,7 @@ def summary(sections: list[dict[str, Any]]) -> str:
 
 def _singular(word: str) -> str:
     return {"filters": "filter", "joins": "join", "columns": "column", "tables": "table", "measures": "measure",
-            "pages": "page", "sources": "source", "queries": "query"}.get(word, word)
+            "pages": "page", "sources": "source", "queries": "query", "data sources": "data source"}.get(word, word)
 
 
 def compare_measures(gold: dict[str, Any], other: dict[str, Any], lookup: dict[str, dict[str, dict]] | None = None
@@ -370,6 +371,13 @@ def compare_measures(gold: dict[str, Any], other: dict[str, Any], lookup: dict[s
         if under:
             sections.append({"title": "Builds on", "text": "same DAX, but " + ", ".join(f"[{n}]" for n in under)
                              + (" differs" if len(under) == 1 else " differ") + " underneath", "changed": under})
+    if gold.get("sources") is not None and other.get("sources") is not None:
+        changes = _source_changes(gold["sources"], other["sources"],
+                                  _tables_used(gold, lookup) | _tables_used(other, lookup))
+        src, src_text = _source_section(changes, gold["where"], other["where"])
+        if src:
+            sections.append(src)
+            text = (text + "\n" + src_text).strip()
     if (gold.get("format") or "") != (other.get("format") or "") and gold.get("format") and other.get("format"):
         sections.append({"title": "Format", "text": f"format {other['format']!r} instead of {gold['format']!r}"})
     if gold["name"].lower() != other["name"].lower():
@@ -404,6 +412,82 @@ def _underneath(gold: dict, other: dict, lookup: dict[str, dict[str, dict]], dep
     return out
 
 
+# ---- data sources (version 2.27) ------------------------------------------------------------------
+
+SOURCE_PARTS = (("servers", "server"), ("databases", "database"), ("tables", "table"), ("files", "file"),
+                ("folders", "folder"), ("web", "web"), ("odbc", "ODBC"))
+
+
+def data_sources(attrs: dict[str, Any]) -> dict[str, str]:
+    """model table or query name (lower) -> what it loads from, as one line ("server PROD01 · database Sales ·
+    table Sales.dbo.Orders"), following the queries it builds on. Native SQL is compared as text, tidied."""
+    from .sqllibrary import normalise_sql
+    queries = {(q.get("name") or ""): q for q in attrs.get("queries") or [] if q.get("name")}
+
+    def parts(name: str, depth: int = 0, seen: frozenset = frozenset()) -> set[str]:
+        q = queries.get(name)
+        if q is None or depth > 6 or name in seen:
+            return set()
+        out = {f"{label} {str(v).strip()}" for key, label in SOURCE_PARTS for v in q.get(key) or [] if v}
+        out |= {"SQL " + normalise_sql(sql)[:400] for sql in q.get("sql") or [] if sql}
+        for used in q.get("uses") or []:
+            out |= parts(used, depth + 1, seen | {name})
+        return out
+
+    out = {}
+    for name in queries:
+        p = parts(name)
+        if p:
+            out[name.lower()] = " · ".join(sorted(p, key=lambda x: (x.split(" ", 1)[0] != "server", x.lower())))
+    return out
+
+
+def _source_key(text: str) -> str:
+    return re.sub(r"[\[\]\s]+", " ", (text or "").lower()).strip()
+
+
+def _source_changes(gold_src: dict[str, str], other_src: dict[str, str], names: set[str] | None = None
+                    ) -> list[tuple[str, str, str]]:
+    """(name, gold's source, other's source) for model tables both have that load from somewhere else."""
+    out = []
+    for n in sorted((set(gold_src) & set(other_src)) if names is None else names, key=str.lower):
+        g, o = gold_src.get(n), other_src.get(n)
+        if g and o and _source_key(g) != _source_key(o):
+            out.append((n, g, o))
+    return out
+
+
+def _source_section(changes: list[tuple[str, str, str]], gold_label: str, other_label: str
+                    ) -> tuple[dict[str, Any] | None, str]:
+    if not changes:
+        return None, ""
+    names = [n for n, _, _ in changes]
+    section = {"title": "Data sources", "text": ", ".join(names[:6]) + (f" and {len(names) - 6} more" if len(names) > 6
+                                                                          else "")
+               + (" loads" if len(names) == 1 else " load") + " from somewhere else", "changed": names}
+    text = "\n".join(_text_diff(g.replace(" · ", "\n"), o.replace(" · ", "\n"), f"{gold_label} › {n} (data source)",
+                                f"{other_label} › {n} (data source)") for n, g, o in changes)
+    return section, text
+
+
+def _tables_used(m: dict[str, Any], lookup: dict[str, dict[str, dict]] | None, depth: int = 0,
+                 seen: set[str] | None = None) -> set[str]:
+    """Model tables (lower case) a measure reads columns from, through the measures it builds on too."""
+    from .measures import dax_refs
+    seen = seen if seen is not None else set()
+    mine = (lookup or {}).get(m.get("report_key"), {})
+    names = {n: f"{x.get('table', '')}[{x['name']}]" for n, x in mine.items()}
+    used_m, used_c = dax_refs(m.get("expression", ""), names)
+    out = {c.split("[", 1)[0].strip("'").lower() for c in used_c}
+    if depth < 5:
+        for label in used_m:
+            n = label.split("[", 1)[1][:-1].lower()
+            if n not in seen and n in mine:
+                seen.add(n)
+                out |= _tables_used(mine[n], lookup, depth + 1, seen)
+    return out
+
+
 def compare_reports(gold: dict[str, Any], other: dict[str, Any]) -> dict[str, Any]:
     g, o = _report_content(gold["attrs"]), _report_content(other["attrs"])
     sections = []
@@ -413,7 +497,11 @@ def compare_reports(gold: dict[str, Any], other: dict[str, Any]) -> dict[str, An
         s = _section(title, a, b, changed)
         if s:
             sections.append(s)
-    text = ""
+    src, text = _source_section(_source_changes(data_sources(gold["attrs"]), data_sources(other["attrs"])),
+                                gold["name"], other["name"])
+    if src:
+        sections.append(src)
+    text = text + "\n" if text else ""
     gm = {m.get("name", ""): as_text(m.get("expression")) for m in gold["attrs"].get("measures", [])}
     om = {m.get("name", ""): as_text(m.get("expression")) for m in other["attrs"].get("measures", [])}
     for n in sorted(set(gm) & set(om), key=str.lower):
@@ -533,8 +621,10 @@ def _measures(cat: Catalogue) -> list[dict[str, Any]]:
 
 
 def _read_measures(cat: Catalogue) -> list[dict[str, Any]]:
-    reports = {r["key"]: r["name"] for r in cat.conn.execute(
-        "SELECT key, name FROM assets WHERE kind = 'report' AND status = 'active'")}
+    reports, sources = {}, {}
+    for r in cat.conn.execute("SELECT key, name, attrs FROM assets WHERE kind = 'report' AND status = 'active'"):
+        reports[r["key"]] = r["name"]
+        sources[r["key"]] = data_sources(json.loads(r["attrs"] or "{}"))
     out = []
     for r in cat.conn.execute("SELECT key, name, parent, attrs FROM assets WHERE kind = 'measure' AND status = 'active'"):
         if r["parent"] not in reports:
@@ -545,7 +635,8 @@ def _read_measures(cat: Catalogue) -> list[dict[str, Any]]:
             continue
         out.append({"key": r["key"], "kind": "measure", "name": (as_text(a.get("name")) or r["name"]).strip(),
                     "table": as_text(a.get("table")), "expression": expr, "format": as_text(a.get("format")),
-                    "report_key": r["parent"], "where": reports[r["parent"]], "missing": False})
+                    "report_key": r["parent"], "where": reports[r["parent"]], "missing": False,
+                    "sources": sources[r["parent"]]})
     return out
 
 
