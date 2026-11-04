@@ -172,6 +172,27 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.28
+
+**Drill into the subqueries of a SQL query, and open any subquery as SQL of its own.**
+
+- **Subqueries on the field diagram.** A query with CTEs (`WITH recent AS (...)`), derived tables
+  (`FROM (SELECT ...) x`) or subqueries in WHERE, SELECT, IN and EXISTS now draws each one as a box that opens with
+  a click (or **Open all**). The tables a subquery reads sit inside its box, nested as in the SQL, so a subquery
+  inside a derived table sits inside that derived table's box. The rest of the query is the *Outer query* box.
+  Subquery boxes start closed; each says how many things are inside it.
+- Each box shows what the subquery **gives** back (its columns), a CTE points to the part of the query that **uses**
+  it, and a derived table is joined to the outer table it matches on (`Material = Material`). A table read in two
+  places is drawn in both. CTE names are no longer drawn as tables.
+- **Subqueries (N)** list under the diagram, on query pages, pasted SQL pages and view / procedure pages: each with
+  its tables, the CTEs it uses, the columns it gives, and its SQL.
+- **Open on its own** gives a subquery its own page: its SQL with the CTEs it needs put in front as a `WITH`, so it
+  reads on its own; a warning when it still refers to the outer query (a correlated subquery, e.g. `p.Material`);
+  its tables and fields, field diagram and checks; **Download .sql**; and **Save as its own SQL**, which keeps it like
+  pasted SQL, with its own name, notes and place in the query library.
+- Read from the SQL text, so it works with or without sqlglot, and nothing is run. Comments and text in quotes are
+  ignored. Nothing needs rescanning.
+
 ## New in version 2.27
 
 **Choose which reports a gold standard is compared with, and mark Power BI reports as old.**

@@ -406,37 +406,111 @@ def using_table(cat: Catalogue, table_key: str) -> list[dict[str, Any]]:
 def field_elements(q: dict[str, Any], cat: Catalogue | None = None) -> list[dict[str, Any]]:
     """A field diagram for one query: each table with the columns the query uses, joins drawn between
     them labelled with their columns (plus the database's keys between them, dashed), and the columns
-    it renames."""
+    it renames. A query with subqueries (CTEs, derived tables, IN / EXISTS / SELECT-list subqueries) draws
+    each as a box that opens: the tables it reads sit inside it, nested as in the SQL, and a CTE points to
+    the part of the query that uses it."""
+    from .sqlparts import find_parts
+    found = find_parts(q.get("sql") or "", [t["name"] for t in q["tables"]]) if q.get("sql") else {"parts": []}
+    parts = found["parts"]
     nodes, edges = [], []
-    ids = {}
+    # Where each table is drawn: the outer query and each subquery reading it gets its own box for it.
+    scopes: dict[str, list[str | None]] = {}
+    if parts:
+        for name in found["outer"]["tables"]:
+            scopes.setdefault(name, []).append(None)
+        for p in parts:
+            for name in p["tables"]:
+                scopes.setdefault(name, []).append(p["id"])
+    group_of = {p["id"]: f"grp:sq:{p['id']}" for p in parts}
+    outer = "grp:sq:outer" if parts else None
+    ids: dict[str, dict[str | None, str]] = {}  # table name -> {scope: node id}
+    ctes = {p["name"].lower(): p["id"] for p in parts if p["kind"] == "cte" and p["name"]}
     for t in q["tables"]:
+        if t["name"] in ctes:
+            continue  # a CTE the plainer reading took for a table: drawn as its own box below
         nid = t.get("key") or f"sqlname:{t['name']}"
-        ids[t["name"]] = nid
         cols = t.get("columns") or []
         label = "\n".join([t["name"] + ("" if t.get("key") else " (not scanned)")]
                           + [f"• {c}" for c in cols[:20]] + ([f"… {len(cols) - 20} more"] if len(cols) > 20 else []))
-        data = {"id": nid, "label": label, "kind": "table" if t.get("key") else "unmatched"}
-        if t.get("key"):
-            data["key"] = t["key"]
-        nodes.append({"data": data})
+        here = scopes.get(t["name"]) or ([None] if not parts else ["?"])
+        for n, scope in enumerate(here):
+            sid = nid if n == 0 else f"{nid}@{scope or 'outer'}"
+            data = {"id": sid, "label": label, "kind": "table" if t.get("key") else "unmatched"}
+            if t.get("key"):
+                data["key"] = t["key"]
+            if scope == "?":
+                scope = None  # found by the reading but not placed in a subquery: drawn on its own
+            elif parts:
+                data["parent"] = group_of[scope] if scope else outer
+            ids.setdefault(t["name"], {})[scope] = sid
+            nodes.append({"data": data})
+
+    def first(name: str) -> str | None:
+        return next(iter(ids[name].values())) if name in ids else None
+
     for i, j in enumerate(q["analysis"].get("joins", [])):
-        a, b = ids.get(j["left_table"]), ids.get(j["right_table"])
-        if a and b:
-            edges.append({"data": {"id": f"j{i}", "source": a, "target": b, "relation": "joins",
-                                   "label": f"{j['left_column']} = {j['right_column']} ({j['kind']})"}})
+        lt, rt = ids.get(j["left_table"]), ids.get(j["right_table"])
+        if not lt or not rt:
+            continue
+        both = [s for s in lt if s in rt]  # drawn where both tables are read; else between their first boxes
+        a, b = (lt[both[-1]], rt[both[-1]]) if both else (first(j["left_table"]), first(j["right_table"]))
+        edges.append({"data": {"id": f"j{i}", "source": a, "target": b, "relation": "joins",
+                               "label": f"{j['left_column']} = {j['right_column']} ({j['kind']})"}})
     joined = {(e["data"]["source"], e["data"]["target"]) for e in edges}
     keys = {t["key"] for t in q["tables"] if t.get("key")}
+    by_key = {t["key"]: first(t["name"]) for t in q["tables"] if t.get("key")}
     if cat is not None and len(keys) > 1:
         from .relationships import relationships
         for i, r in enumerate(relationships(cat, keys)):
-            if r["state"] in ("declared", "confirmed") and (r["src_key"], r["dst_key"]) not in joined \
-                    and (r["dst_key"], r["src_key"]) not in joined:
-                edges.append({"data": {"id": f"k{i}", "source": r["src_key"], "target": r["dst_key"],
+            a, b = by_key.get(r["src_key"]), by_key.get(r["dst_key"])
+            if a and b and r["state"] in ("declared", "confirmed") and (a, b) not in joined and (b, a) not in joined:
+                edges.append({"data": {"id": f"k{i}", "source": a, "target": b,
                                        "relation": "suggested", "label": f"key: {r['src_columns']} = {r['dst_columns']}"}})
+    if parts:
+        nodes.append({"data": {"id": outer, "label": "Outer query", "kind": "group", "open": True}})
+        for p in parts:
+            gid = group_of[p["id"]]
+            inside = len(p["tables"]) + sum(1 for c in parts if c["parent"] == p["id"])
+            data = {"id": gid, "label": p["label"], "kind": "group", "closed": True, "count": inside or ""}
+            if p["parent"]:
+                data["parent"] = group_of[p["parent"]]
+            elif p["kind"] != "cte":
+                data["parent"] = outer
+            nodes.append({"data": data})
+            if p["gives"] or not inside:
+                nodes.append({"data": {"id": f"sqgives:{p['id']}", "parent": gid, "kind": "query", "label": "\n".join(
+                    ["Gives"] + [f"• {c}" for c in p["gives"]]) if p["gives"] else "No tables read"}})
+        alias_of = {}  # p / dbo.Product -> its box, for how a derived table joins to the rest
+        for t in q["tables"]:
+            for a in (t.get("alias"), t["name"].split(".")[-1]):
+                if a and t["name"] in ids:
+                    alias_of.setdefault(a.lower(), ids[t["name"]])
+        for p in parts:
+            for n, link in enumerate(p.get("links", [])):
+                other = next((group_of[o["id"]] for o in parts if (o["name"] or "").lower() == link["other"].lower()
+                              and o["kind"] in ("derived", "cte")), None)
+                if other is None and (boxes := alias_of.get(link["other"].lower())):
+                    other = boxes.get(p["parent"], next(iter(boxes.values())))
+                if other:
+                    edges.append({"data": {"id": f"l-{p['id']}-{n}", "source": other, "target": group_of[p["id"]],
+                                           "relation": "joins",
+                                           "label": f"{link['other_column']} = {link['column']}"}})
+        ancestors = {p["id"]: p["parent"] for p in parts}
+        for user, uses in [(None, found["outer"]["uses"])] + [(p["id"], p["uses"]) for p in parts]:
+            up, line = user, set()
+            while up:
+                line.add(up)
+                up = ancestors.get(up)
+            for name in uses:
+                src = ctes.get(name.lower())
+                if src and src != user and src not in line:
+                    edges.append({"data": {"id": f"u-{src}-{user or 'outer'}", "source": group_of[src],
+                                           "target": group_of[user] if user else outer, "relation": "uses",
+                                           "label": f"uses {name}"}})
     renames = q["analysis"].get("renames", [])
     if renames:
         nodes.append({"data": {"id": "sqlout", "label": "\n".join(
             ["Renamed in the result"] + [f"{r['column']} → {r['alias']}" for r in renames[:20]]), "kind": "query"}})
         for t in {r.get("table") for r in renames if r.get("table") in ids}:
-            edges.append({"data": {"id": f"r-{t}", "source": ids[t], "target": "sqlout", "relation": "reads"}})
+            edges.append({"data": {"id": f"r-{t}", "source": first(t), "target": "sqlout", "relation": "reads"}})
     return nodes + edges
