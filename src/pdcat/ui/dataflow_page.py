@@ -12,6 +12,7 @@ from .common import go
 SUMMARY_NAMES = {"api": "API", "web_scraping": "scraped site", "web_file": "web download",
                  "database": "database connection", "cloud_storage": "cloud store", "sharepoint": "SharePoint site",
                  "sap": "SAP system", "table": "table", "file": "file"}
+EVERYTHING = "\0everything"  # can't clash with a real project or folder name
 
 
 def data_flow_page(cat: Catalogue) -> None:
@@ -24,11 +25,18 @@ def data_flow_page(cat: Catalogue) -> None:
     if not sources:
         st.info("Nothing scanned yet. Add a Python project or a data folder and scan it.")
         return
-    choice = st.selectbox("Start from", ["Everything", *sources], key="flow-start",
-                          help="Starting from one project or folder, the diagram also follows its data upstream to "
-                               "whatever writes it and downstream to whatever reads what it writes.")
-    flow_block(cat, None if choice == "Everything" else choice, "flow")
-
+    choice = st.selectbox(
+        "Start from", [EVERYTHING, *sources], index=None, key="flow-start",
+        placeholder="Pick a project or folder…",
+        format_func=lambda s: "Everything (can be slow on a big catalogue)" if s == EVERYTHING else s,
+        help="Starting from one project or folder, the diagram also follows its data upstream to whatever writes "
+             "it and downstream to whatever reads what it writes. Everything draws the whole catalogue at once.")
+    if choice is None:
+        st.info(f"Pick a project or folder above to draw its data flow ({len(sources)} to choose from). "
+                "Nothing is drawn until you pick one, so the page opens quickly on a big catalogue. "
+                "Pick **Everything** at the top of the list to draw the whole catalogue.")
+        return
+    flow_block(cat, None if choice == EVERYTHING else choice, "flow")
 
 def flow_block(cat: Catalogue, project: str | None, key: str, focus: str | None = None) -> None:
     """The diagram for everything, one project or folder, or (focus) one script or report, with its downloads

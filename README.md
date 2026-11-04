@@ -172,6 +172,13 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.22
+
+**Data flow opens quickly.** Map › Data flow no longer draws the whole catalogue when you open it, which was too
+slow on a big catalogue. It now waits for you to pick a project or folder in **Start from**, and the diagram and the
+*Where data comes from* table then cover just that project or folder (still followed upstream and downstream).
+To draw everything, pick **Everything** at the top of the list.
+
 ## New in version 2.21
 
 **ML opportunities** (Knowledge › ML opportunities): machine learning projects your data could support, how ready

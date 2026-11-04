@@ -284,11 +284,17 @@ def test_data_flow_page_and_source_page_render(flows, monkeypatch):
     app.run()
     goto(app, "Data flow")
     assert not app.exception
-    assert any("Where data comes from" in s.value for s in app.subheader)
+    # Nothing is drawn until a project or folder is picked: the whole catalogue is too slow on a big one.
+    assert not any("Where data comes from" in s.value for s in app.subheader)
+    assert any("Pick a project or folder" in i.value for i in app.info)
     app.selectbox(key="flow-start").set_value("weather").run()
     assert not app.exception
+    assert any("Where data comes from" in s.value for s in app.subheader)
     app.radio(key="flow-level").set_value("projects").run()
     assert not app.exception
+    app.selectbox(key="flow-start").set_value("\0everything").run()  # the explicit "show everything" choice
+    assert not app.exception
+    assert any("Where data comes from" in s.value for s in app.subheader)
     for key in ("ext://weather/api/api.weather.example.com", "py://weather"):
         app.query_params["asset"] = key
         app.run()
