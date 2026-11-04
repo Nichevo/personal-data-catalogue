@@ -125,7 +125,9 @@ HINT_TEXT = {
     "yes_no": "yes/no values stored as {type}",
     "wide_text": "declared much wider than its values",
     "midnight": "date and time, but the time is always midnight",
+    "unreadable": "could not be read: {error}",
 }
+NOT_TYPE_HINTS = {"unreadable"}  # notes kept with the hints, but not data type questions for the review list
 
 
 def type_hints(s: pd.Series, declared: str | None = None) -> list[dict[str, str]]:
@@ -332,12 +334,20 @@ def sql_profile_queries(schema: str, table: str, columns: list[dict[str, Any]], 
     The aggregates run over the whole table, or, for big tables, over the first
     `sample_for_aggregates` rows only, so a huge table never costs a full scan.
     """
+    return (sql_aggregates(schema, table, list(enumerate(columns)), sample_for_aggregates),
+            sql_sample(schema, table, sample_rows))
+
+
+def sql_aggregates(schema: str, table: str, columns: list[tuple[int, dict[str, Any]]],
+                   sample_for_aggregates: int | None = None) -> str:
+    """Counts and ranges for some of a table's columns, given as (position, column) pairs. The position names the
+    result columns (n3, d3, lo3, hi3), so the answers of several smaller queries can be put back together."""
     full = f"{_q(schema)}.{_q(table)}"
     source = f"{full} WITH (NOLOCK)"
     if sample_for_aggregates:
         source = f"(SELECT TOP ({int(sample_for_aggregates)}) * FROM {full} WITH (NOLOCK)) AS s"
     parts = ["COUNT_BIG(*) AS [__rows]"]
-    for i, c in enumerate(columns):
+    for i, c in columns:
         col = _q(c["name"])
         base = (c.get("data_type") or "").split("(")[0].lower()
         parts.append(f"COUNT_BIG({col}) AS [n{i}]" if base not in ("text", "ntext", "image", "xml") else f"NULL AS [n{i}]")
@@ -347,9 +357,27 @@ def sql_profile_queries(schema: str, table: str, columns: list[dict[str, Any]], 
         else:
             parts += [f"COUNT_BIG(DISTINCT {col}) AS [d{i}]",
                       f"CAST(MIN({col}) AS nvarchar(200)) AS [lo{i}]", f"CAST(MAX({col}) AS nvarchar(200)) AS [hi{i}]"]
-    agg = f"SELECT {', '.join(parts)} FROM {source}"
-    sample = f"SELECT TOP ({int(sample_rows)}) * FROM {full} WITH (NOLOCK)"
-    return agg, sample
+    return f"SELECT {', '.join(parts)} FROM {source}"
+
+
+def sql_sample(schema: str, table: str, sample_rows: int, names: list[str] | None = None) -> str:
+    """The first rows of a table: every column, or only the ones named."""
+    cols = ", ".join(_q(n) for n in names) if names is not None else "*"
+    return f"SELECT TOP ({int(sample_rows)}) {cols} FROM {_q(schema)}.{_q(table)} WITH (NOLOCK)"
+
+
+def safe_text(raw: bytes | None) -> str | None:
+    """Text from SQL Server char/varchar columns. The driver hands them over in the server's or Windows' code page,
+    not always UTF-8 (an "š" arrives as byte 0x9a), so UTF-8 is tried first, then the Windows code page, and any
+    byte that still doesn't fit becomes "?" instead of stopping the run."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        return raw
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
 
 
 def typed_sample(columns: list[dict[str, Any]], sample: pd.DataFrame) -> pd.DataFrame:
@@ -379,8 +407,12 @@ def sample_profile(columns: list[dict[str, Any]], sample: pd.DataFrame) -> dict[
     return out
 
 
-def combine_sql_profile(columns: list[dict[str, Any]], agg: dict[str, Any], sample: pd.DataFrame) -> list[dict[str, Any]]:
-    """Merge the aggregates with the sample-based profile (used for mean, top values and range charts)."""
+def combine_sql_profile(columns: list[dict[str, Any]], agg: dict[str, Any], sample: pd.DataFrame,
+                        problems: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Merge the aggregates with the sample-based profile (used for mean, top values and range charts).
+    `problems` are the columns that could not be read, with the server's message; they keep their place in the
+    list with a "could not read" note instead of values."""
+    problems = problems or {}
     sampled = sample_profile(columns, sample)
     rows = int(agg["__rows"])
     out = []
@@ -394,6 +426,14 @@ def combine_sql_profile(columns: list[dict[str, Any]], agg: dict[str, Any], samp
             "distinct": agg.get(f"d{i}"),
             "min": agg.get(f"lo{i}"), "max": agg.get(f"hi{i}"),
             "mean": s.get("mean"), "top": s.get("top", []),
-            "histogram": s.get("histogram"), "percentiles": s.get("percentiles"), "hints": s.get("hints"),
+            "histogram": s.get("histogram"), "percentiles": s.get("percentiles"),
+            "hints": ([_hint("unreadable", error=_short_error(problems[c["name"]]))] if c["name"] in problems
+                      else s.get("hints")),
         })
     return out
+
+
+def _short_error(error: str) -> str:
+    """The useful part of an ODBC message: "[Microsoft][ODBC Driver 17 ...][SQL Server]Error converting ..." """
+    text = str(error).split("]")[-1].strip() or str(error)
+    return text.split(" (")[0][:200]

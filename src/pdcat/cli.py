@@ -152,7 +152,7 @@ def cmd_profile(args: argparse.Namespace) -> int:
             else:
                 print("The queue is empty. Add tables on the app's Profiling page, or name them here.")
             return 0
-        result = run_queue(cat, cfg.sqlserver)
+        result = run_queue(cat, cfg.sqlserver, max_tables=args.max)
     print(f"Profiled {result['done']} table(s), {result['failed']} failed, {result['left']} still waiting.")
     if result["skipped"]:
         print(f"{result['skipped']} table(s) were skipped because their SQL Server source isn't in your config.")
@@ -322,11 +322,14 @@ def main(argv: list[str] | None = None) -> int:
                  "  pdcat profile --used             every table your code uses\n"
                  "  pdcat profile --queue            the tables approved on the app's SQL scanning page\n"
                  "  pdcat profile --queue --approve  approve what's waiting in the queue, then run it\n"
+                 "  pdcat profile --queue --max 800  this run may profile up to 800 tables\n"
                  "  pdcat profile --used --plan      show the queries, send nothing", cmd_profile)
     pr.add_argument("tables", nargs="*", metavar="TABLE", help="table names like dbo.SalesDaily")
     pr.add_argument("--used", action="store_true", help="every table your code or pasted SQL uses")
     pr.add_argument("--source", action="append", metavar="NAME", help="only this SQL Server source (repeatable)")
     pr.add_argument("--queue", action="store_true", help="run the tables approved in the app's queue")
+    pr.add_argument("--max", type=int, metavar="N",
+                    help="profile up to N tables in this run (default: 'Most tables profiled per run' in Settings)")
     pr.add_argument("--approve", action="store_true",
                     help="with --queue: approve the tables still waiting in the queue, then run them")
     pr.add_argument("--plan", action="store_true", help="print the queries that would run, without connecting")

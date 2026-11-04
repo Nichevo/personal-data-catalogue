@@ -453,3 +453,13 @@ def test_measure_count_opens_power_bi_on_measures(app, catalogue, tmp_path):
     assert app.title[0].value == "Power BI" and app.radio(key="browse-pbi-view").value == "Measures"
     app.sidebar.button(key="count-report").click().run()
     assert app.radio(key="browse-pbi-view").value == "Reports"
+
+
+def test_scanning_page_lets_one_run_take_more_tables(app, catalogue):
+    from pdcat import pacing
+    pacing.request_profiles(catalogue, [SALES], approve=True)
+    app.run()
+    goto(app, "SQL scanning")
+    assert not app.exception
+    assert app.number_input(key="tables-this-run").value == 1
+    assert any(b.label == "▶️ Run 1 approved" for b in app.button)

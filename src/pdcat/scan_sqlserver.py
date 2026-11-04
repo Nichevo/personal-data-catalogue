@@ -107,7 +107,19 @@ def plan_scan(cat: Catalogue, src: SqlServerSource, databases: list[str] | None 
 
 def connect(src: SqlServerSource, database: str):
     import pyodbc  # imported here so the rest of the tool works without an ODBC driver
-    return pyodbc.connect(connection_string(src, database), timeout=15, readonly=True)
+    conn = pyodbc.connect(connection_string(src, database), timeout=15, readonly=True)
+    safe_decoding(conn, pyodbc)
+    return conn
+
+
+def safe_decoding(conn, pyodbc) -> None:
+    """Read char/varchar text without stopping on bytes that aren't UTF-8 (see profiling.safe_text)."""
+    from .profiling import safe_text
+    for sql_type in (pyodbc.SQL_CHAR, pyodbc.SQL_VARCHAR, pyodbc.SQL_LONGVARCHAR):
+        try:
+            conn.add_output_converter(sql_type, safe_text)
+        except Exception:  # an odd driver: keep pyodbc's own decoding
+            pass
 
 
 def fetch(src: SqlServerSource, database: str, pacer, connector=None) -> dict[str, list[dict[str, Any]]]:
@@ -214,21 +226,25 @@ def _type_label(c: dict[str, Any]) -> str:
 
 
 def profile_tables(cat: Catalogue, src: SqlServerSource, keys: list[str], progress=print,
-                   connector=None, pacer=None) -> dict[str, str]:
-    """Profile scanned tables/views on this server, at the controlled pace.
+                   connector=None, pacer=None, max_tables: int | None = None) -> dict[str, str]:
+    """Profile scanned tables/views on this server, at the controlled pace. `max_tables` overrides the
+    "Most tables profiled per run" setting for this run only.
 
     Counts and ranges come from one aggregate query: over the whole table, or
     over a TOP (N) sample when the table is bigger than the limit on the
     Settings page. Common values and range charts come from a smaller sample.
-    Read-only, with NOLOCK so it never blocks other work. Returns {key: error}
-    for any that failed; raises PacingStopped when the run stops early.
-    """
-    import pandas as pd
+    Read-only, with NOLOCK so it never blocks other work.
 
+    One table never stops the run: a column the server can't read (a view that
+    casts bad text to a number, say) is found and left out, the rest of the
+    table is profiled, and a table that fails as a whole is marked failed while
+    the run moves on. Returns {key: error} for tables that failed; raises
+    PacingStopped when the run stops early (time-out, run limit, Stop button).
+    """
     from .pacing import Pacer, PacingStopped, _is_timeout, set_queue_state, settings
-    from .profiling import combine_sql_profile, sql_profile_queries
 
     s = settings(cat)
+    limit = int(max_tables) if max_tables else int(s["sql_max_tables_per_run"])
     pacer = pacer or Pacer(cat, src.name)
     by_db: dict[str, list[dict[str, Any]]] = {}
     for key in keys:
@@ -238,56 +254,175 @@ def profile_tables(cat: Catalogue, src: SqlServerSource, keys: list[str], progre
 
     errors: dict[str, str] = {}
     done = 0
+
+    def failed(asset: dict[str, Any], e: BaseException | str) -> None:
+        text = e if isinstance(e, str) else f"{type(e).__name__}: {e}" if isinstance(e, UnicodeError) else str(e)
+        errors[asset["key"]] = text
+        set_queue_state(cat, [asset["key"]], "failed", text[:500])
+        progress(f"    failed: {text}")
+
     try:
         for database, assets in by_db.items():
-            conn = (connector or connect)(src, database)
+            try:
+                conn = (connector or connect)(src, database)
+            except Exception as e:  # this database can't be reached: its tables fail, the others carry on
+                progress(f"  could not connect to {database}: {e}")
+                for asset in assets:
+                    failed(asset, f"Could not connect to {database}: {e}")
+                continue
             try:
                 cur = conn.cursor()
                 for asset in assets:
-                    if done >= int(s["sql_max_tables_per_run"]):
-                        raise PacingStopped(f"Reached the limit of {s['sql_max_tables_per_run']} tables for one run. "
+                    if done >= limit:
+                        raise PacingStopped(f"Reached the limit of {limit} tables for one run. "
                                             "The rest stay in the queue for next time.")
-                    a = asset["attrs"]
-                    rows = a.get("row_count") or 0
-                    sample = int(s["sql_sample_rows"]) if asset["kind"] == "view" or rows > int(s["sql_sample_over_rows"]) \
-                        else None
-                    progress(f"  profiling {database}.{asset['name']}" + (f" (sample of {sample:,} rows)" if sample else ""))
-                    columns = [dict(c) for c in cat.columns(asset["key"])]
-                    agg_sql, top_sql = sql_profile_queries(a["schema"], a["object"], columns,
-                                                           int(s["sql_top_values_rows"]), sample_for_aggregates=sample)
                     try:
-                        names, got = pacer.query(cur, agg_sql, purpose=f"profile {asset['name']}: counts and ranges",
-                                                 database=database)
-                        agg = dict(zip(names, got[0]))
-                        names, got = pacer.query(cur, top_sql, purpose=f"profile {asset['name']}: common values",
-                                                 database=database)
-                        frame = pd.DataFrame.from_records(got, columns=names)
+                        _profile_one(cat, pacer, cur, asset, database, s, progress)
                     except PacingStopped:
                         raise
                     except Exception as e:
-                        errors[asset["key"]] = str(e)
-                        set_queue_state(cat, [asset["key"]], "failed", str(e)[:500])
-                        progress(f"    failed: {e}")
+                        failed(asset, e)
                         if _is_timeout(e) and s["sql_stop_on_timeout"]:
                             raise PacingStopped(f"{asset['name']} timed out, so the run stopped to go easy on the "
                                                 "server. Raise the time limit or sample size on the Settings page, "
                                                 "or skip this table.") from e
                         continue
-                    profile = combine_sql_profile(columns, agg, frame)
-                    method = (f"sample of {sample:,} rows for counts and ranges" if sample else
-                              "whole table for counts and ranges") + f"; common values and charts from first {len(frame):,} rows"
-                    cat.save_profile(asset["key"], profile, method)
-                    set_queue_state(cat, [asset["key"]], "done")
                     done += 1
             finally:
-                conn.close()
+                try:
+                    conn.close()
+                except Exception:
+                    pass
     finally:
         cat.rebuild_search()
     return errors
 
 
-def run_queue(cat: Catalogue, sources: list[SqlServerSource], progress=print, connector=None) -> dict[str, Any]:
-    """Profile every approved table in the queue. Returns {"done", "failed", "stopped"}."""
+# How many extra queries one table may take to find the columns the server can't read.
+MAX_RETRY_QUERIES = 40
+
+
+def _profile_one(cat: Catalogue, pacer, cur, asset: dict[str, Any], database: str, s: dict[str, Any],
+                 progress) -> None:
+    """Profile one table or view and save it. Raises when nothing at all could be read."""
+    import pandas as pd
+
+    from .pacing import set_queue_state
+    from .profiling import combine_sql_profile, sql_aggregates, sql_sample
+
+    a = asset["attrs"]
+    rows = a.get("row_count") or 0
+    sample = int(s["sql_sample_rows"]) if asset["kind"] == "view" or rows > int(s["sql_sample_over_rows"]) else None
+    progress(f"  profiling {database}.{asset['name']}" + (f" (sample of {sample:,} rows)" if sample else ""))
+    columns = [dict(c) for c in cat.columns(asset["key"])]
+    schema, obj, top_rows = a["schema"], a["object"], int(s["sql_top_values_rows"])
+    problems: dict[str, str] = {}
+    budget = [MAX_RETRY_QUERIES]
+
+    def query(sql: str, purpose: str):
+        return pacer.query(cur, sql, purpose=f"profile {asset['name']}: {purpose}", database=database)
+
+    def agg_of(part: list[tuple[int, dict[str, Any]]]) -> dict[str, Any]:
+        names, got = query(sql_aggregates(schema, obj, part, sample),
+                           "counts and ranges" if len(part) == len(columns) else f"counts and ranges, {_cols(part)}")
+        return dict(zip(names, got[0]))
+
+    indexed = list(enumerate(columns))
+    try:
+        agg = agg_of(indexed)
+    except Exception as e:
+        if _stops(e):
+            raise
+        # Is it the table, or some columns? A plain row count answers that in one query.
+        names, got = query(sql_aggregates(schema, obj, [], sample), "row count only")
+        agg = dict(zip(names, got[0]))
+        progress(f"    some columns can't be read ({_first_line(e)}); finding which")
+        for part in _split_until_read(indexed, agg_of, problems, budget, lambda p: p[1]["name"], e):
+            agg.update(part)
+
+    good = [c["name"] for c in columns if c["name"] not in problems]
+    try:
+        names, got = query(sql_sample(schema, obj, top_rows), "common values")
+        frame = pd.DataFrame.from_records(got, columns=names)
+    except Exception as e:
+        if _stops(e):
+            raise
+        if not problems:
+            progress(f"    some columns can't be read for common values ({_first_line(e)}); finding which")
+
+        def sample_of(part: list[str]) -> pd.DataFrame:
+            names, got = query(sql_sample(schema, obj, top_rows, part), f"common values, {_cols(part)}")
+            return pd.DataFrame.from_records(got, columns=names)
+
+        whole = len(good) == len(columns)  # SELECT * already failed for exactly these columns
+        parts = _split_until_read(good, sample_of, problems, budget, lambda n: n, e if whole else None) if good else []
+        frame = pd.concat([p.reset_index(drop=True) for p in parts], axis=1) if parts else pd.DataFrame()
+
+    profile = combine_sql_profile(columns, agg, frame, problems)
+    method = (f"sample of {sample:,} rows for counts and ranges" if sample else
+              "whole table for counts and ranges") + f"; common values and charts from first {len(frame):,} rows"
+    note = None
+    if problems:
+        method += f"; {len(problems)} column(s) could not be read"
+        note = "Could not read " + "; ".join(f"{c}: {_first_line(m)}" for c, m in problems.items())
+        progress(f"    {len(problems)} column(s) left out: {', '.join(problems)}")
+    cat.save_profile(asset["key"], profile, method)
+    set_queue_state(cat, [asset["key"]], "done", note[:500] if note else None)
+
+
+def _split_until_read(items: list, read, problems: dict[str, str], budget: list[int], name_of, first_error=None):
+    """Read `items` in halves, and halves of halves, until the ones that fail on their own are found.
+    Each failing item goes into `problems` with the server's message. Returns what the reads gave.
+    `first_error` says `items` as a whole already failed, so it isn't sent again."""
+    out = []
+    todo = [items]
+    errors = {id(items): first_error} if first_error is not None else {}
+    while todo:
+        part = todo.pop(0)
+        if len(part) == 1 and id(part) in errors:  # already failed on its own
+            problems[name_of(part[0])] = _first_line(errors[id(part)])
+            continue
+        if id(part) not in errors:
+            if budget[0] <= 0:
+                for item in part:
+                    problems[name_of(item)] = "not read: too many columns failed, so pdcat stopped looking"
+                continue
+            budget[0] -= 1
+            try:
+                out.append(read(part))
+                continue
+            except Exception as e:
+                if _stops(e):
+                    raise
+                if len(part) == 1:
+                    problems[name_of(part[0])] = _first_line(e)
+                    continue
+        half = len(part) // 2
+        todo += [part[:half], part[half:]]
+    return out
+
+
+def _stops(e: BaseException) -> bool:
+    """Errors that end this table's attempt rather than pointing at a column: the Stop button, run limits and
+    time-outs (a time-out on a slow server is not fixed by sending more queries)."""
+    from .pacing import PacingStopped, _is_timeout
+    return isinstance(e, PacingStopped) or _is_timeout(e)
+
+
+def _first_line(e) -> str:
+    text = f"{type(e).__name__}: {e}" if isinstance(e, UnicodeError) else str(e)
+    return text.strip().splitlines()[0][:300] if text.strip() else type(e).__name__
+
+
+def _cols(part: list) -> str:
+    names = [p[1]["name"] if isinstance(p, tuple) else p for p in part]
+    return names[0] if len(names) == 1 else f"{len(names)} columns from {names[0]}"
+
+
+def run_queue(cat: Catalogue, sources: list[SqlServerSource], progress=print, connector=None,
+              max_tables: int | None = None) -> dict[str, Any]:
+    """Profile every approved table in the queue, up to `max_tables` (default: the setting) in this run.
+    Returns {"done", "failed", "stopped"}."""
     from .pacing import Pacer, PacingStopped, queue
     cat.set_setting("sql_stop_requested", False, quiet=True)
     approved = [q["asset_key"] for q in queue(cat, ("approved",))]
@@ -302,7 +437,12 @@ def run_queue(cat: Catalogue, sources: list[SqlServerSource], progress=print, co
             continue
         try:
             before = cat.conn.execute("SELECT COUNT(*) FROM profile_queue WHERE state = 'done'").fetchone()[0]
-            errors = profile_tables(cat, src, mine, progress, connector, Pacer(cat, src.name))
+            left = max_tables - result["done"] if max_tables else None
+            if left is not None and left <= 0:
+                result["stopped"] = (f"Reached the limit of {max_tables} tables for one run. "
+                                     "The rest stay in the queue for next time.")
+                break
+            errors = profile_tables(cat, src, mine, progress, connector, Pacer(cat, src.name), max_tables=left)
             result["failed"] += len(errors)
         except PacingStopped as e:
             result["stopped"] = str(e)
