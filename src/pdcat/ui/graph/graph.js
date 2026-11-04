@@ -13,7 +13,7 @@
     function: ["#eef3ff", "#5b7fd6"], other: ["#f1f1f1", "#999999"], access_db: ["#f6e3e3", "#a33a3a"],
     api: ["#e0f2fe", "#0284c7"], web_scraping: ["#fce7f3", "#be185d"], web_file: ["#e0f2fe", "#0284c7"],
     database: ["#d1fae5", "#047857"], cloud_storage: ["#ede9fe", "#6d28d9"], sharepoint: ["#ccfbf1", "#0f766e"],
-    sap: ["#fef3c7", "#b45309"],
+    sap: ["#fef3c7", "#b45309"], query: ["#f3f0ff", "#8b7fd1"], unmatched: ["#f4f4f5", "#9a9aa3"],
   };
   // Shapes for the kinds of data source on the data flow diagram.
   const SHAPES = { api: "round-hexagon", web_scraping: "round-octagon", web_file: "round-tag", database: "barrel",

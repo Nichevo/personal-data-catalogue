@@ -1,6 +1,8 @@
 """The SQL query library: every query found anywhere, a page per query, and "SQL using this table"."""
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -110,6 +112,9 @@ def reading_note(analysis: dict) -> str:
 
 def query_page(cat: Catalogue, key: str) -> None:
     uid = key.removeprefix("query://")
+    if "/sub/" in uid:
+        subquery_page(cat, *uid.split("/sub/", 1))
+        return
     q = sqllibrary.get(cat, uid)
     if q is None:
         st.warning("This query isn't in the library any more.")
@@ -147,6 +152,12 @@ def query_page(cat: Catalogue, key: str) -> None:
             st.caption("⚠️ Built from variables here (an f-string or + joining). Check where those values come from.")
 
     st.subheader("Tables and fields")
+    _tables_and_fields(cat, q, uid)
+    subqueries_box(q, f"q-{uid}")
+    _findings_box(cat, q)
+
+
+def _tables_and_fields(cat: Catalogue, q: dict, uid: str) -> None:
     if not q["tables"]:
         st.caption("No tables found in this SQL.")
     for i, t in enumerate(q["tables"]):
@@ -174,7 +185,96 @@ def query_page(cat: Catalogue, key: str) -> None:
         with st.expander("Field diagram", expanded=len(q["tables"]) > 1):
             from .graphview import graph_view
             graph_view(cat, sqllibrary.field_elements(q, cat), key=f"qdiag-{uid}", height=420, name=f"query-{uid[:6]}")
-    _findings_box(cat, q)
+
+
+def subqueries_box(q: dict, key: str) -> None:
+    """The subqueries, CTEs and derived tables inside a query, nested as in the SQL, each with its own SQL.
+    On the diagram they are boxes that open with a click."""
+    from pdcat.sqlparts import find_parts
+    parts = find_parts(q.get("sql") or "", [t["name"] for t in q["tables"]])["parts"]
+    if not parts:
+        return
+    with st.expander(f"Subqueries ({len(parts)})"):
+        st.caption("Each is a box on the diagram: click it to open it and see the tables it reads, "
+                   "or use Open all. Nested ones sit inside the box they belong to.")
+        depth = {}
+        for p in parts:
+            depth[p["id"]] = depth.get(p["parent"], -1) + 1 if p["parent"] else 0
+            bits = [", ".join(p["tables"]) or "no tables of its own"]
+            if p["uses"]:
+                bits.append("uses " + ", ".join(p["uses"]))
+            if p["gives"]:
+                bits.append("gives " + ", ".join(p["gives"]))
+            c1, c2 = st.columns([4, 1])
+            c1.markdown("&nbsp;" * 6 * depth[p["id"]] + f"**{p['label']}** · " + " · ".join(bits))
+            if q.get("uid"):
+                c2.button("Open on its own", key=f"sqo-{key}-{p['id']}", type="tertiary", on_click=go,
+                          args=(f"query://{q['uid']}/sub/{p['id']}",),
+                          help="Its own page: its SQL (with the CTEs it needs), tables, diagram and checks")
+            if st.toggle("Show its SQL", key=f"sqp-{key}-{p['id']}"):
+                st.code(p["sql"], language="sql", wrap_lines=True)
+
+
+def subquery_page(cat: Catalogue, uid: str, pid: str) -> None:
+    """One subquery of a library query as SQL of its own: for someone who only needs that piece. Nothing is
+    run; it can be copied, downloaded, or saved as its own SQL (then it has its own place in the library)."""
+    from pdcat.sqlparser import analyse
+    from pdcat.sqlparts import standalone
+    parent = sqllibrary.get(cat, uid)
+    one = standalone(parent["sql"], [t["name"] for t in parent["tables"]], pid) if parent else None
+    if one is None:
+        st.warning("This subquery isn't in the query any more.")
+        if parent:
+            st.button("Open the whole query", on_click=go, args=(f"query://{uid}",))
+        return
+    st.title(f"{icon('query')} {one['label']}")
+    st.caption(f"Part of the query **{parent['name']}**")
+    st.button(f"⬆️ Open the whole query: {parent['name']}", key=f"squp-{uid}-{pid}", type="tertiary",
+              on_click=go, args=(f"query://{uid}",))
+    st.code(one["sql"], language="sql", wrap_lines=True)
+    notes = []
+    if one["ctes"]:
+        notes.append("The CTEs it uses (" + ", ".join(one["ctes"]) + ") are put in front, so it reads on its own.")
+    if one["outer"]:
+        notes.append("⚠️ It still refers to " + ", ".join(f"`{a}`" for a in one["outer"]) + " from the outer "
+                     "query (a correlated subquery), so on its own those need a table or a value.")
+    for n in notes:
+        st.caption(n)
+    safe = re.sub(r"[^\w-]+", "-", f"{parent['name']}-{one['label']}").strip("-").lower()[:80] or "subquery"
+    c1, c2 = st.columns(2)
+    c1.download_button("⬇️ Download .sql", one["sql"], file_name=f"{safe}.sql", mime="text/plain",
+                       key=f"sqdl-{uid}-{pid}")
+    with c2.popover("💾 Save as its own SQL"):
+        st.caption("Saved like SQL you paste in: it gets its own page, name, notes and place in the query library.")
+        title = st.text_input("Name", value=f"{one['label']} of {parent['name']}"[:120], key=f"sqname-{uid}-{pid}")
+        if st.button("Save", key=f"sqsave-{uid}-{pid}", type="primary"):
+            hint = next((p.get("database") for p in parent.get("places", []) if p.get("database")), None)
+            new = cat.save_snippet(title, one["sql"], description=f"Subquery ({one['label']}) taken from the query "
+                                   f"{parent['name']}.", database=hint)
+            sqllibrary.build_library(cat)
+            go(new)
+            st.rerun()
+    analysis = analyse(one["sql"])
+    known = {t["name"]: t for t in parent["tables"]}
+    tables = [{**known[t["name"]], "alias": t.get("alias"), "columns": analysis.get("columns", {}).get(t["name"], [])}
+              if t["name"] in known else {"name": t["name"], "alias": t.get("alias"), "key": None,
+                                          "relation": t.get("relation", "reads"),
+                                          "columns": analysis.get("columns", {}).get(t["name"], [])}
+              for t in analysis.get("tables", []) if t["name"] not in {c.lower() for c in one["ctes"]}]
+    q = {"uid": None, "sql": one["sql"], "tables": tables, "analysis": analysis}
+    st.subheader("Tables and fields")
+    _tables_and_fields(cat, q, f"{uid}-{pid}")
+    subqueries_box(q, f"sq-{uid}-{pid}")
+    try:
+        from pdcat import sqlchecks
+    except ImportError:
+        return
+    found = [f for f in sqlchecks.findings_for(cat, {**q, "uid": f"{uid}/sub/{pid}", "places": []}, marks=set())]
+    if found:
+        st.subheader(f"Checks ({len(found)})")
+        st.caption("Read-only here: mark a check fine on the whole query's page.")
+        for f in found:
+            st.markdown(f"{sqlchecks.SEVERITY_ICONS.get(f['severity'], '•')} **{f['title']}**  \n{f['detail']}")
 
 
 def _findings_box(cat: Catalogue, q: dict) -> None:
@@ -231,9 +331,11 @@ def snippet_box(cat: Catalogue, asset: dict) -> None:
                           args=(f"table:{t['name']}",), help="Not matched to a scanned table")
         c2.caption(f"{what} · {cols}" + ("" if t.get("key") else " · not scanned"))
     st.markdown("**Diagram**")
-    st.caption("Each table with the columns this SQL uses, and lines for its joins.")
+    st.caption("Each table with the columns this SQL uses, and lines for its joins. Subqueries are boxes: "
+               "click one to open it.")
     from .graphview import graph_view
     graph_view(cat, sqllibrary.field_elements(q, cat), key=f"sndiag-{uid}", height=420, name=f"pasted-{uid[:6]}")
+    subqueries_box(q, f"sn-{uid}")
     st.button("Open as a query (checks, places, rename)", key=f"snq-{uid}", on_click=go, args=(f"query://{uid}",),
               type="tertiary")
 
@@ -273,6 +375,7 @@ def queries_in_box(cat: Catalogue, key: str) -> None:
                 from .graphview import graph_view
                 graph_view(cat, sqllibrary.field_elements(q, cat), key=f"qdiag-{key}", height=420,
                            name=f"fields-{asset.get('name', 'sql')}")
+                subqueries_box(q, f"qi-{key}")
             st.button("Open as a query (checks, places, rename)", key=f"qi-{key}", on_click=go,
                       args=(f"query://{q['uid']}",))
         return
