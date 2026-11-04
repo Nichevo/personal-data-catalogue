@@ -117,3 +117,29 @@ def test_compare_with_box_and_buttons_on_the_report_page(copies_app, copies):
     old.click().run()
     assert not app.exception
     assert _related(copies, SALES) == {}
+
+
+def test_scripts_and_tables_marked_old_are_left_out_like_older_versions(tmp_path):
+    from pdcat.codemap import hidden_from_map
+    cat = Catalogue(tmp_path / "c.db")
+    cat.upsert_asset("sql://s/db/dbo.sales_old", "table", "dbo.sales_old", "s")
+    cat.upsert_asset("files://code/load_old.py", "script", "load_old.py", "code")
+    cat.reindex_search("sql://s/db/dbo.sales_old")
+    cat.reindex_search("files://code/load_old.py")
+    for key in ("sql://s/db/dbo.sales_old", "files://code/load_old.py"):
+        curation.set_relevance(cat, key, "old")
+        assert key in groups.older_versions(cat)
+        assert key in hidden_from_map(cat) and key not in hidden_from_map(cat, show_old=True)
+    assert not [r for r in cat.search("sales_old")]
+    assert [r["key"] for r in cat.search("sales_old", old_versions=True)] == ["sql://s/db/dbo.sales_old"]
+    assert "files://code/load_old.py" not in {r["key"] for r in cat.list_assets(kind="script")}
+    assert "files://code/load_old.py" in {r["key"] for r in cat.list_assets(kind="script", old_versions=True)}
+    cat.close()
+
+
+def test_diff_shows_the_gold_standard_green_and_the_other_red():
+    from pdcat.ui.gold_pages import GOLD_LINE, OTHER_LINE, diff_html
+    html = diff_html("--- gold standard: a\n+++ b\n@@ -1 +1 @@\n-SUM(x) <b>\n+SUMX(x)")
+    gold_at, other_at = html.index("SUM(x) &lt;b&gt;"), html.index("SUMX(x)")
+    assert html.rfind(GOLD_LINE, 0, gold_at) > html.rfind(OTHER_LINE, 0, gold_at)
+    assert html.rfind(OTHER_LINE, 0, other_at) > html.rfind(GOLD_LINE, 0, other_at)

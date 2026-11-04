@@ -55,8 +55,9 @@ def python_page(cat: Catalogue) -> None:
 
 def _old_box(key: str, what: str) -> bool:
     return st.checkbox("Show older versions", key=key,
-                       help=f"Older versions of {what} are folded under the current one (\"+2 older\"). Tick to "
-                            "list them too. A group's page lets you pick the current one or break the group up.")
+                       help=f"Older versions of {what} are folded under the current one (\"+2 older\"), and ones "
+                            "you marked 🗄️ old are left out. Tick to list them too. A group's page lets you pick the "
+                            "current one or break the group up.")
 
 
 def tables_page(cat: Catalogue) -> None:
@@ -64,8 +65,11 @@ def tables_page(cat: Catalogue) -> None:
     from pdcat import tabletypes as TT
 
     from .impact_pages import unused_switch
-    c1, c2, c3 = st.columns([3, 1.3, 1.3], vertical_alignment="center")
+    c1, c2, c3, c4 = st.columns([3, 1.3, 1.3, 1.3], vertical_alignment="center")
     c1.caption("Database tables and views, and the data files and file series in your folders. Pick a row to open it.")
+    with c4:
+        old = st.checkbox("Show old tables", key="browse-old-sql",
+                          help="Tables, views and files you marked 🗄️ old are left out of the lists. Tick to list them.")
     with c2:
         hide = unused_switch(cat, "sql", "browse-unused-sql")
     ttype = c3.selectbox("Table type", ["", *TT.TYPES], key="browse-table-type", label_visibility="collapsed",
@@ -74,7 +78,7 @@ def tables_page(cat: Catalogue) -> None:
                               "a suggestion)")
     only = {k for k, t in TT.all_types(cat).items() if t == ttype} if ttype else None
     _browse(cat, "Tables and datasets", ("table", "view", "data_file", "file_series"), "table, file or column word",
-            "Folder or database", hide=hide, only=only)
+            "Folder or database", old, hide=hide, only=only)
 
 
 def powerbi_page(cat: Catalogue) -> None:

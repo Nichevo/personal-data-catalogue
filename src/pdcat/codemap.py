@@ -389,7 +389,10 @@ def hidden_from_map(cat: Catalogue, show_old: bool = False, old_versions: bool =
     old_versions), and (unless show_old) items marked old or inside a project marked old."""
     from .curation import hidden_keys
     from .groups import older_versions
-    hidden = hidden_keys(cat, old=not show_old) | (set() if old_versions else older_versions(cat))
+    older = set() if old_versions else older_versions(cat)
+    if show_old:  # "show old items" brings back what you marked old, which older_versions holds too since 2.27
+        older -= hidden_keys(cat, old=True) - hidden_keys(cat)
+    hidden = hidden_keys(cat, old=not show_old) | older
     if not show_old:
         from .folderroles import archived
         hidden |= archived(cat)  # inside a folder whose role is archive

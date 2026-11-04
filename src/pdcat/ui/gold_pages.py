@@ -38,8 +38,32 @@ def result_view(res: dict[str, Any]) -> None:
                         + (f" and {len(s['changed']) - 12} more" if len(s["changed"]) > 12 else ""))
         st.markdown(f"- **{s['title']}:** " + "; ".join(bits))
     if res.get("text_diff"):
-        st.caption("Lines starting with − are in the gold standard, + in this one.")
-        st.code(res["text_diff"], language="diff")
+        st.caption("🟩 Green lines (−) are the gold standard; 🟥 red lines (+) are where this one differs.")
+        st.markdown(diff_html(res["text_diff"]), unsafe_allow_html=True)
+
+
+GOLD_LINE = "background:rgba(40,167,69,0.22)"
+OTHER_LINE = "background:rgba(220,53,69,0.22)"
+
+
+def diff_html(text: str) -> str:
+    """A unified diff with the gold standard's lines green and the other item's red (a plain "diff" code block
+    colours them the other way round, which reads as if the gold standard were wrong)."""
+    from html import escape
+    rows = []
+    for line in text.splitlines():
+        style = ""
+        if line.startswith(("---", "+++")):
+            style = "font-weight:600"
+        elif line.startswith("-"):
+            style = GOLD_LINE
+        elif line.startswith("+"):
+            style = OTHER_LINE
+        elif line.startswith("@@"):
+            style = "opacity:0.6"
+        rows.append(f'<div style="{style};white-space:pre-wrap;padding:0 6px">{escape(line) or "&nbsp;"}</div>')
+    return ('<div style="font-family:monospace;font-size:0.82rem;max-height:420px;overflow:auto;'
+            'border:1px solid rgba(128,128,128,0.3);border-radius:6px;padding:4px 0">' + "".join(rows) + "</div>")
 
 
 def _mark_popover(cat: Catalogue, key: str, row: dict[str, Any] | None) -> None:

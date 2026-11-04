@@ -341,23 +341,15 @@ def mark_seen(cat: Catalogue) -> None:
 
 # ---- report changes over time ------------------------------------------------------------------------
 
-def report_parts(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Report changes per week and part: [{"week", "part", "changes"}]."""
-    acc: Counter = Counter()
-    for r in rows:
-        if r["category"] != "report":
-            continue
-        d = date.fromisoformat(r["at"][:10])
-        week = (d - timedelta(days=d.weekday())).isoformat()
-        acc[(week, r["change"].split(" ")[0])] += 1
-    return [{"week": w, "part": p, "changes": n} for (w, p), n in sorted(acc.items())]
+def report_parts(rows: list[dict[str, Any]], unit: str = "week") -> list[dict[str, Any]]:
+    """Report changes per day, week or month and part: [{"at" (the bucket's first day), "part", "changes"}]."""
+    from .timebuckets import sum_per_bucket
+    return sum_per_bucket([{"at": r["at"], "part": r["change"].split(" ")[0], "changes": 1} for r in rows
+                           if r["category"] == "report"], unit, "changes", by=("part",))
 
 
-def volume(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Changes per week by what changed: [{"week", "what", "changes"}]."""
-    acc: Counter = Counter()
-    for r in rows:
-        d = date.fromisoformat(r["at"][:10])
-        week = (d - timedelta(days=d.weekday())).isoformat()
-        acc[(week, CATEGORIES.get(r["category"], r["category"]))] += r.get("n", 1)
-    return [{"week": w, "what": c, "changes": n} for (w, c), n in sorted(acc.items())]
+def volume(rows: list[dict[str, Any]], unit: str = "week") -> list[dict[str, Any]]:
+    """Changes per day, week or month by what changed: [{"at" (the bucket's first day), "what", "changes"}]."""
+    from .timebuckets import sum_per_bucket
+    return sum_per_bucket([{"at": r["at"], "what": CATEGORIES.get(r["category"], r["category"]),
+                            "changes": r.get("n", 1)} for r in rows], unit, "changes", by=("what",))

@@ -186,12 +186,29 @@ one at a time, and every query is logged:
 - **🚫 Don't compare this report** and **🗄️ Mark report old** buttons on each item that differs, so a stray
   archived copy can be dropped in one click. The first only affects that gold standard; the second marks the report
   old everywhere.
-- **🗄️ Mark old on a Power BI report now means "old version" everywhere**: it is left out of gold standard
-  comparisons and hidden from the Power BI lists, maps and impact pages, the same as an older version in a Versions
-  group. ↩️ Not old on its page brings it back.
+- **🗄️ Mark old now means "old version" everywhere**, for Python scripts, notebooks, tables, views, data files and
+  Power BI reports alike. The item keeps its notes and still shows in its Versions group and on its own page, but is
+  left out of search, the Find lists, the code map, data flow, the Power BI pages and gold standard comparisons, the
+  same as an older version in a Versions group. Tick **Show older versions** (on the Tables page: **Show old
+  tables**) to list them; ↩️ Not old on the item's page brings it back for good.
+- **The gold standard is green, the item that differs is red** in the line-by-line difference view (before, a plain
+  diff coloured the gold standard's lines red).
 - Leaving reports out also takes them off Review › Gold standards (new *compared with* and *not compared*
   columns) and the To review list. Every change can be undone from the gold standard's edit history, and the
   gold standards export has a new *scope* column.
+
+## New in version 2.26
+
+**Change graphs go per day, week or month, never per hour.**
+
+- **Graphs no longer show hourly blocks.** Table growth, files in folders, catalogue growth, report changes, change
+  volume, tracked changes and a table's "Rows over time" put readings into days, weeks or months. A line shows the
+  last reading in each day, week or month; a bar adds up the changes in it, and quiet ones show as gaps. Axis
+  labels are dates only.
+- **A "Per" choice on Review › Change tracking › Graphs**: Auto, Day, Week or Month. Auto picks days for up to about
+  three months of history, weeks up to about a year, then months, so the graphs stay readable as history grows. The
+  caption under each graph says which one is in use.
+- Weeks start on Monday. Scans still show one dot per scan (the tooltip keeps its time), on a day/week/month axis.
 
 ## New in version 2.25
 
