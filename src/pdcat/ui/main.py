@@ -161,17 +161,23 @@ def counts(cat: Catalogue, stats: dict) -> None:
     """The counts at the foot of the sidebar. A count with a list page is a button that opens it; the rest are
     one line of plain text."""
     from pdcat.review import count_open
+    # Streamlit puts a full gap between every widget, which spread the count buttons far apart. Keep them one
+    # after another like the plain lines they replaced.
+    st.html("<style>.st-key-side-counts{gap:0 !important}"
+            ".st-key-side-counts button{min-height:0 !important;padding:0.05rem 0 !important;line-height:1.3}"
+            ".st-key-side-counts button p{font-size:0.9rem}</style>")
     plain = []
+    box = st.container(key="side-counts")
     for k, v in sorted(stats["kinds"].items()):
         text = f"{icon(k)} {v:,} {kind_label(k)}"
         if k in KIND_PAGES:
-            st.button(text, key=f"count-{k}", on_click=open_kind, args=(k,), type="tertiary",
+            box.button(text, key=f"count-{k}", on_click=open_kind, args=(k,), type="tertiary",
                       help=f"Open {KIND_PAGES[k][0]}" + (f" › {KIND_PAGES[k][1]}" if KIND_PAGES[k][1] else ""))
         else:
             plain.append(text)
     if plain:
-        st.caption(" · ".join(plain))
-    c1, c2 = st.columns(2)
+        box.caption(" · ".join(plain))
+    c1, c2 = box.columns(2)
     c1.button(f"📝 {stats['notes']:,} notes", key="count-notes", on_click=go_page, args=("Recent notes",),
               type="tertiary", help="Open What's new › Recent notes")
     c2.button(f"📋 {count_open(cat):,} to review", key="count-review", on_click=go_page, args=("To review",),

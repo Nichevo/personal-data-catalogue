@@ -319,3 +319,51 @@ def facets(cat: Catalogue) -> dict[str, list[str]]:
             if e.get(f):
                 out[f].add(str(e[f]))
     return {f: sorted(v, key=str.lower) for f, v in out.items()}
+
+
+FILTER_FIELDS = ("owner", "audience", "app", "status", "workspace", "dataset", "tags")
+
+
+def report_facets(cat: Catalogue, report_keys: set[str] | None = None) -> dict[str, list[str]]:
+    """The distinct register values of matched reports, per filter field (only fields with any values).
+    Tags are split on commas and semicolons so each tag can be picked on its own."""
+    out: dict[str, set] = {f: set() for f in FILTER_FIELDS}
+    for rk, e in rows_by_report(cat).items():
+        if report_keys is not None and rk not in report_keys:
+            continue
+        for f in FILTER_FIELDS:
+            out[f].update(_values(e, f))
+    return {f: sorted(v, key=str.lower) for f, v in out.items() if v}
+
+
+def _values(e: dict[str, Any], field: str) -> set[str]:
+    v = str(e.get(field) or "").strip()
+    if not v:
+        return set()
+    if field == "tags":
+        return {t.strip() for t in re.split(r"[,;]", v) if t.strip()}
+    return {v}
+
+
+def reports_matching(cat: Catalogue, picks: dict[str, list[str]]) -> set[str]:
+    """Keys of the scanned reports whose register row has one of the picked values in every picked field.
+    "(not in register)" in a field's picks also lets through reports with no register row or no value there."""
+    by_report = rows_by_report(cat)
+    every = {r["key"] for r in cat.conn.execute("SELECT key FROM assets WHERE kind = 'report'")}
+    out = set()
+    for rk in every:
+        e = by_report.get(rk) or {}
+        ok = True
+        for f, wanted in picks.items():
+            if not wanted:
+                continue
+            have = _values(e, f)
+            if not (have & set(wanted)) and not (NOT_IN in wanted and not have):
+                ok = False
+                break
+        if ok:
+            out.add(rk)
+    return out
+
+
+NOT_IN = "(not in register)"

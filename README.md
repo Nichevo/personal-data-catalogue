@@ -172,6 +172,29 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.29
+
+**Busy item pages are easier to read: connections, renamed columns and SQL as tables with filters.**
+
+- **Connections as one table.** When an item has more than 10 links (a table read by hundreds of scripts and
+  reports, say), the *Uses*, *Created or loaded by* and *Read by* lists become one sortable table: which way each
+  link goes (*Loaded by*, *Read by*, *Called by*, *Reads*, *Writes*…), the other item's name and type, the folder,
+  project or database it sits in, and how the link was found. Filter by connection (with counts, e.g. *Read by
+  (270)*), type, folder or project and name; hide the links marked not important. Tick one row to open the item,
+  or tick several to mark them not important or remove them at once. **Save these as CSV** saves what is shown.
+  Items with 10 links or fewer keep the short clickable lists.
+- **🔀 Renamed columns as a table**: which way (comes in / goes out), the column here and there, the other item,
+  how and where. Filter by way, other item and column name; tick a row to open the other item; save as CSV. *Follow
+  a column through every rename* is still below it.
+- **🧾 SQL using this table as a table**: reads or writes, columns used, joins, where it's found, why it looks
+  active, checks, and whether it looks old. Filter by reads/writes, a column it uses and name; hide the ones that
+  look old; tick a row to open the query; save as CSV.
+- **Filter Power BI reports by the report register.** Find › Power BI › Reports has filters for the register's
+  owner, audience, app, status, workspace, dataset and tags (each tag on its own), plus *(not in register)*. The
+  same filters show in a table's Connections when Power BI reports read it, and the table gets *owner* and
+  *status* columns (the CSV has all five register fields).
+- **Sidebar counts sit one after another again**, without the big gaps between them, and still open their pages.
+
 ## New in version 2.27
 
 **Choose which reports a gold standard is compared with, and mark Power BI reports as old.**

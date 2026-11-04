@@ -239,7 +239,8 @@ def snippet_box(cat: Catalogue, asset: dict) -> None:
 
 
 def using_table_box(cat: Catalogue, key: str) -> None:
-    """On a table page: the SQL that uses it, active first, old ones greyed."""
+    """On a table page: the SQL that uses it as a table with filters (reads or writes, column, where it is
+    found, old ones hidden on request); tick a row to open the query."""
     rows = sqllibrary.using_table(cat, key)
     if not rows:
         return
@@ -254,20 +255,8 @@ def using_table_box(cat: Catalogue, key: str) -> None:
                 cat.add_note(key, note, "usage")
                 st.rerun()
             st.divider()
-        for i, r in enumerate(rows):
-            how = r["relation"] + (f" · columns: {', '.join(r['columns'][:12])}" if r["columns"] else "")
-            if r["joins"]:
-                how += " · joins " + "; ".join(f"{j['other']} on {j['column']} = {j['other_column']}"
-                                               for j in r["joins"][:4])
-            where = ", ".join(sorted({p["item"].rsplit("/", 1)[-1] for p in r["places"]})[:3])
-            c1, c2 = st.columns([2, 3])
-            with c1:
-                st.button(("🗄️ " if r["old"] else "🧾 ") + r["name"], key=f"ut-{key}-{i}", type="tertiary",
-                          on_click=go, args=(f"query://{r['uid']}",))
-            text = f"{how}  \nin {where}" + (f" · ✅ {', '.join(r['active'])}" if r["active"] else "")
-            if r.get("checks"):
-                text += " · " + r["checks"]
-            c2.caption(text if not r["old"] else f":gray[{text} · looks old]")
+        from .connections_table import sql_using_table
+        sql_using_table(cat, key, rows)
 
 
 def queries_in_box(cat: Catalogue, key: str) -> None:
@@ -298,24 +287,19 @@ def queries_in_box(cat: Catalogue, key: str) -> None:
 
 
 def renames_box(cat: Catalogue, key: str) -> None:
-    """Columns renamed on the way in or out of this item, and a column's path through every rename."""
+    """Columns renamed on the way in or out of this item, as a table with filters, and a column's path through
+    every rename."""
     from pdcat.colrenames import column_lineage, renames_for
     r = renames_for(cat, key)
     if not r["from"] and not r["to"]:
         return
     with st.expander(f"🔀 Renamed columns ({len(r['from']) + len(r['to'])})"):
-        def name(k: str) -> str:
-            return (cat.get_asset(k) or {}).get("name", k)
-        for x in r["from"]:
-            st.markdown(f"`{x['dst_column']}` was `{x['src_column']}` in **{name(x['src_item'])}** · "
-                        f"{x['how']} in {x['evidence']}")
-        for x in r["to"]:
-            st.markdown(f"`{x['src_column']}` becomes `{x['dst_column']}` in **{name(x['dst_item'])}** · "
-                        f"{x['how']} in {x['evidence']}")
+        from .connections_table import renames_table
+        names = renames_table(cat, key, r)
         cols = sorted({x["dst_column"] for x in r["from"]} | {x["src_column"] for x in r["to"]}, key=str.lower)
         col = st.selectbox("Follow a column through every rename", cols, key=f"ren-col-{key}")
         if col:
             chain = column_lineage(cat, key, col)
             for label, steps in (("Comes from", chain["upstream"]), ("Goes on to", chain["downstream"])):
                 if steps:
-                    st.caption(label + ": " + " → ".join(f"{name(s['item'])}.{s['column']}" for s in steps))
+                    st.caption(label + ": " + " → ".join(f"{names(s['item'])}.{s['column']}" for s in steps))

@@ -44,8 +44,8 @@ def test_summary_chip_opens_its_tab(app):
     assert _tabs(app).value == "data"
 
 
-def test_long_read_by_list_shows_ten_with_filter_and_show_all(app, catalogue):
-    for i in range(14):
+def test_short_read_by_list_stays_a_list_and_long_one_becomes_a_table(app, catalogue):
+    for i in range(3):
         key = f"py://bulk/reader{i:02d}.py"
         catalogue.upsert_asset(key, "script", f"reader{i:02d}.py", "bulk")
         catalogue.add_link(key, "reads", SALES, "bulk", dst_key=SALES)
@@ -54,11 +54,5 @@ def test_long_read_by_list_shows_ten_with_filter_and_show_all(app, catalogue):
     app.run()
     _tabs(app).set_value("connections").run()
     assert not app.exception
-    def shown():
-        return [b for b in app.button if (b.key or "").startswith("readby-") and not b.key.startswith("readby-m")]
-
-    assert len(shown()) == 10
-    [b for b in app.button if b.label.startswith("Show all")][0].click().run()
-    assert len(shown()) >= 14
-    app.text_input(key=f"lim-find-readby-{SALES}").input("reader13").run()
-    assert [b.label for b in shown()] == ["🐍 reader13.py"]
+    assert [b for b in app.button if (b.key or "").startswith("readby-") and not b.key.startswith("readby-m")]
+    assert not any((d.key or "").startswith("conn-table-") for d in app.dataframe)
