@@ -194,6 +194,7 @@ one at a time, and every query is logged:
   same filters show in a table's Connections when Power BI reports read it, and the table gets *owner* and
   *status* columns (the CSV has all five register fields).
 - **Sidebar counts sit one after another again**, without the big gaps between them, and still open their pages.
+
 ## New in version 2.28
 
 **Drill into the subqueries of a SQL query, and open any subquery as SQL of its own.**
