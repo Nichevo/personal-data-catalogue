@@ -71,11 +71,13 @@ def _scan_project(cat: Catalogue, src: PythonSource, root: Path, project_key: st
         ignored = ignored_dirs(cat, root)
         report(f"Looking for code in {root} …")
         paths = sorted(p for p in _iter_files(root, skip) if not under(p.relative_to(root).as_posix(), ignored))
-        token = _PROJECT.set(project_constants(root, paths))
+        consts, funcs = project_index(root, paths)
+        token, ftoken = _PROJECT.set(consts), _PROJECT_FUNCS.set(funcs)
         try:
             _scan_files(cat, src, root, project_key, paths, counts, report)
         finally:
             _PROJECT.reset(token)
+            _PROJECT_FUNCS.reset(ftoken)
         from .mlfeatures import scan_models
         report(f"Looking for model files in {src.name} …")
         counts["models"] = scan_models(cat, root, project_key, src.name, skip)
@@ -281,12 +283,25 @@ def scan_python_source(text: str) -> Found:
     # can be traced to exactly the tables and files that function uses.
     from .datasources import from_file_refs
     function_refs = {}
+    # the per-function pass below fills parameters with markers: keep what it notes about SQL and files out
+    kept = (dict(env.sql), dict(env.unknown), list(env.patterns), list(env.renames))
     for name, node in _functions(tree):
+        # Tables named by what callers pass in (upload(cur, "dbo", "Sales")) belong to each caller, not to the
+        # function: a script importing it gets the ones it passes (see _shared_function_refs).
+        params = _function_params(node)
+        for p in params:
+            env.forced[(name, p)] = ast.Constant(_param_marker(p))
+        try:
+            own = [(rel, ref) for (rel, ref) in _collect_refs(node, skip, consts, env) if _PARAM not in ref]
+        finally:
+            for p in params:
+                env.forced.pop((name, p), None)
         # web and cloud addresses become data sources (below), not files, here as for the whole script
-        local, _ = from_file_refs([(rel, ref, 0) for (rel, ref) in _collect_refs(node, skip, consts, env)])
+        local, _ = from_file_refs([(rel, ref, 0) for (rel, ref) in own])
         refs = sorted({(rel, ref) for rel, ref, _ in local})
         if refs:
             function_refs[name] = [list(r) for r in refs]
+    env.sql, env.unknown, env.patterns, env.renames = kept
     if function_refs:
         found.attrs["function_refs"] = function_refs
     from .mlfeatures import feature_assignments
@@ -304,6 +319,11 @@ def scan_python_source(text: str) -> Found:
             found.attrs["import_map"].setdefault(d["module"].split(".")[0], d["module"].split(".")[0])
             for fn in d["names"]:
                 found.attrs["import_map"].setdefault(fn, f"{d['module']}.{fn}")
+    shared = _shared_function_refs(tree, env, {k: v for k, v in found.attrs["import_map"].items()}, instances)
+    for k, v in shared.items():
+        if k not in collected:
+            found.refs.append((k[0], k[1], v[0]))
+            found.how[k] = v[1]
     found.attrs["function_info"] = _function_info(tree)
     unwrap_managed_calls(found.attrs["function_info"], instances, managed)
     add_managed_mentions(tree, found.attrs["function_info"], managed)
@@ -345,10 +365,11 @@ def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str], env: di
             continue
         if isinstance(env, Env) and _builds_string(node) and id(node) not in skip:
             env.at = node
-            s = _expr_value(node, env)[0]
-            if s and looks_like_sql(s):
+            built = [(s, how) for s, how in _variants(node, env) if s and looks_like_sql(s)]
+            if built:
                 inner.update(id(n) for n in ast.walk(node) if n is not node)
-                _sql_refs(node, s, refs, env, "SQL built from variables")
+                for i, (s, how) in enumerate(built):
+                    _sql_refs(node, s, refs, env, _built_how(how), record=i == 0)
                 continue
         if isinstance(node, (ast.Constant, ast.JoinedStr)) and id(node) not in skip:
             s = _string_value(node, consts)
@@ -374,9 +395,12 @@ def _collect_refs(root: ast.AST, skip: set[int], consts: dict[str, str], env: di
             if isinstance(env, Env) and _call_name(node) and _call_name(node).split(".")[-1] in SQL_RUNNERS \
                     and node.args and isinstance(node.args[0], ast.Name):  # sql = "..."; sql += table; run(sql)
                 env.at = node
-                s = _expr_value(node.args[0], env)[0]
-                if s and looks_like_sql(s) and not isinstance(env.value_node(node.args[0].id), ast.Constant):
-                    _sql_refs(node, s, refs, env, "SQL built from variables")
+                held = env.value_node(node.args[0].id)
+                built = [(s, how) for s, how in _variants(node.args[0], env, _values(node.args[0], env, node))
+                         if s and looks_like_sql(s) and not isinstance(held, ast.Constant)]
+                for i, (s, how) in enumerate(built):
+                    env.at = node
+                    _sql_refs(node, s, refs, env, _built_how(how), record=i == 0)
             if isinstance(env, Env) and isinstance(node.func, ast.Attribute) and node.func.attr == "rename":
                 env.renames += _renames(node, env.lines)
     return refs
@@ -394,11 +418,19 @@ def _builds_string(node: ast.AST) -> bool:
     return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format"
 
 
-def _sql_refs(node: ast.AST, s: str, refs: dict, env: Env, how: str) -> None:
-    """Tables in a SQL string the code puts together; names it couldn't fill in are left as patterns."""
+def _built_how(how: str) -> str:
+    """"SQL built from variables", plus where the values came from when that's one call or one loop value."""
+    if how and how.startswith(("passed in", "every value", "every branch")):
+        return f"SQL built from variables, {how}"
+    return "SQL built from variables"
+
+
+def _sql_refs(node: ast.AST, s: str, refs: dict, env: Env, how: str, record: bool = True) -> None:
+    """Tables in a SQL string the code puts together; names it couldn't fill in are left as patterns.
+    record: keep the SQL itself for the script page (once per place in the code, not once per caller)."""
     for r in extract_refs(s, dynamic=True):
         refs.setdefault((r.relation, f"table:{r.name}"), (node.lineno, how))
-    if len(env.sql) < MAX_SQL:
+    if record and len(env.sql) < MAX_SQL:
         env.sql.setdefault((node.lineno, s[:200]), {
             "sql": s[:MAX_SQL_LEN], "line": node.lineno, "name": _sql_name(node, env),
             "function": env.enclosing.get(id(node)), "built_from_variables": True})
@@ -534,8 +566,40 @@ def run_targets(tree: ast.AST, env: dict[str, ast.AST]) -> list[dict]:
                 value, _ = _expr_value(opened.args[0], env)
                 if value and value.endswith(".py"):
                     found = [(value, "exec(open(...))")]
+        elif name in SQL_RUNNERS | {"executescript"} and first is not None:
+            path = _sql_file_read(first, env)  # cursor.execute(open("load_sales.sql").read())
+            if path:
+                found = [(path, f"runs the SQL in the file ({name})")]
         out += [{"target": t.replace("\\", "/"), "line": node.lineno, "how": how} for t, how in found]
     return out
+
+
+def _sql_file_read(node: ast.AST, env, depth: int = 0) -> str | None:
+    """The .sql file whose text this is: open("x.sql").read(), Path("x.sql").read_text(), text(...) around
+    either, or a name holding one of them."""
+    if depth > 4 or node is None:
+        return None
+    if isinstance(node, ast.Name):
+        held = env.value_node(node.id) if isinstance(env, Env) else None
+        held = held if held is not None else env.get(node.id) if node.id in env else None
+        return _sql_file_read(held, env, depth + 1) if held is not None else None
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    last = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+    if last == "text" and node.args:  # sqlalchemy text(...)
+        return _sql_file_read(node.args[0], env, depth + 1)
+    path_node = None
+    if last == "read" and isinstance(func, ast.Attribute) and isinstance(func.value, ast.Call):
+        opened = func.value
+        if (_call_name(opened) or "").rsplit(".", 1)[-1] == "open" and opened.args:
+            path_node = opened.args[0]
+    elif last == "read_text" and isinstance(func, ast.Attribute):
+        path_node = func.value
+    if path_node is None:
+        return None
+    value, _ = _expr_value(path_node, env)
+    return value if value and "{}" not in value and value.lower().endswith(".sql") else None
 
 
 def _command_targets(node: ast.AST, env: dict[str, ast.AST]) -> list[str]:
@@ -616,6 +680,10 @@ class Env(dict):
         self.assigned_to: dict[int, str] = {}
         self.lines: list[str] = []
         self.at: ast.AST | None = None  # the code being worked out, so a name takes its value from just before it
+        self.loops: dict[tuple[str | None, str], list[ast.AST]] = {}  # (function, loop variable) -> its values
+        self.loop_of: dict[tuple[str | None, str], int] = {}  # which loop each loop variable belongs to
+        self.forced: dict[tuple[str | None, str], ast.AST] = {}  # one value tried at a time, see _variants
+        self.calls: dict[str, list[tuple[dict[str, ast.AST], str]]] = {}  # function -> what each call passes
 
     def value_node(self, name: str) -> ast.AST | None:
         """What `name` holds at self.at: its last assignment before that line in the same function, else what
@@ -623,6 +691,8 @@ class Env(dict):
         if self.at is None or not hasattr(self.at, "lineno"):
             return None
         fn = self.enclosing.get(id(self.at))
+        if (fn, name) in self.forced:
+            return self.forced[(fn, name)]
         alts = sorted(self.alts.get(name, []), key=lambda a: (a.lineno, a.col_offset))
         before = [a for a in alts if self.enclosing.get(id(a)) == fn and a.lineno <= self.at.lineno
                   and a is not self.at]
@@ -655,14 +725,30 @@ def _project_value(dotted: str) -> str | None:
 def project_constants(root: Path, files: list[Path]) -> dict[str, dict[str, str]]:
     """Module-level string constants of every .py file, by module name, so a path defined in
     settings.py can be followed into the scripts that import it."""
+    return project_index(root, files)[0]
+
+
+def project_index(root: Path, files: list[Path]) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, dict]]]:
+    """(module-level string constants, tables each function writes from what it's given) of every .py file,
+    by module name. See project_constants and function_tables."""
     out: dict[str, dict[str, str]] = {}
+    funcs: dict[str, dict[str, dict]] = {}
     for path in files:
         if path.suffix.lower() != ".py":
             continue
         try:
-            tree = parse_code(path.read_text(encoding="utf-8", errors="replace"))
+            text = path.read_text(encoding="utf-8", errors="replace")
+            tree = parse_code(text)
         except (SyntaxError, ValueError):
             continue
+        if _TABLE_WORDS.search(text):
+            try:
+                tables = function_tables(tree, text)
+            except RecursionError:
+                tables = {}
+            if tables:
+                for name in module_names(path.relative_to(root).as_posix(), root):
+                    funcs[name] = tables
         env = _assignment_env(tree)
         consts = {}
         for node in tree.body:
@@ -676,7 +762,142 @@ def project_constants(root: Path, files: list[Path]) -> dict[str, dict[str, str]
         if consts:
             for name in module_names(path.relative_to(root).as_posix(), root):
                 out[name] = consts
+    return out, funcs
+
+
+# ---- tables a shared function writes, filled in by each script that calls it ----
+
+# module name -> {function: {"params": [...], "defaults": {param: value}, "refs": [[relation, template, how]]}}
+_PROJECT_FUNCS: contextvars.ContextVar[dict[str, dict[str, dict]]] = contextvars.ContextVar(
+    "pdcat_project_funcs", default={})
+# Files worth the closer look: they hold a write statement or a pandas/polars/Spark table writer
+_TABLE_WORDS = re.compile(r"\binsert\s+(?:into\s+)?[\w\[{]|\bupdate\s+\S+\s+set\b|\bdelete\s+(?:from\s+)?[\w\[{]"
+                          r"|\bmerge\s+(?:into\s+)?[\w\[{]|\btruncate\s+table\b|\bto_sql\b|\bwrite_database\b"
+                          r"|\bsaveAsTable\b|\binsertInto\b|\bbulk\s+insert\b|\bdrop\s+table\b|\balter\s+table\b", re.I)
+_PARAM = "pdcatparam"
+_PARAM_RE = re.compile(rf"__{_PARAM}_(\w+?)__")
+
+
+def _param_marker(name: str) -> str:
+    return f"__{_PARAM}_{name}__"
+
+
+def _function_params(fn: ast.AST) -> list[str]:
+    a = fn.args
+    names = [x.arg for x in [*a.posonlyargs, *a.args, *a.kwonlyargs]]
+    return names[1:] if names and names[0] in ("self", "cls") else names
+
+
+def function_tables(tree: ast.Module, text: str = "") -> dict[str, dict]:
+    """For each function whose tables come from its arguments, the table names as templates:
+    def upload(cur, schema, table, df): cur.execute(f"MERGE [{schema}].[{table}] ...") gives
+    {"upload": {"params": ["cur", "schema", "table", "df"], "refs": [["writes", "__pdcatparam_schema__.
+    __pdcatparam_table__", ...]]}}. A script calling upload(cur, "dbo", "Sales", df) then writes dbo.sales."""
+    env = build_env(tree, text)
+    skip = _docstring_nodes(tree) | {id(v) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for v in n.values}
+    consts = _module_constants(tree)
+    out: dict[str, dict] = {}
+    for name, fn in _functions(tree):
+        params = _function_params(fn)
+        if not params or name.count(".") > 1:
+            continue
+        lines = env.lines[fn.lineno - 1:getattr(fn, "end_lineno", fn.lineno)]
+        if lines and not _TABLE_WORDS.search("\n".join(lines)) and "execute" not in "\n".join(lines):
+            continue  # nothing in it writes a table or runs SQL
+        for p in params:
+            env.forced[(name, p)] = ast.Constant(_param_marker(p))
+        try:
+            refs = _collect_refs(fn, skip, consts, env)
+        finally:
+            for p in params:
+                env.forced.pop((name, p), None)
+        templates = [[rel, ref.split(":", 1)[1], how] for (rel, ref), (_, how) in refs.items()
+                     if ref.startswith("table:") and _PARAM in ref]
+        if templates:
+            defaults = {}
+            a = fn.args
+            positional = [*a.posonlyargs, *a.args]
+            pairs = list(zip(positional[len(positional) - len(a.defaults):], a.defaults)) + \
+                [(k, d) for k, d in zip(a.kwonlyargs, a.kw_defaults) if d is not None]
+            for arg, default in pairs:
+                value, _ = _expr_value(default, env)
+                if value is not None:
+                    defaults[arg.arg] = value
+            out[name] = {"params": params, "defaults": defaults, "refs": templates[:50]}
+    env.at = None
     return out
+
+
+def _shared_function(call_name: str, imports: dict[str, str], instances: set[str], own: set[str]
+                     ) -> tuple[str, dict] | None:
+    """(module.function, its templates) for a call to a function defined in another file of the project."""
+    table = _PROJECT_FUNCS.get()
+    if not table:
+        return None
+    parts = call_name.split(".")
+    if parts[0] in instances and len(parts) > 1:  # mm.upload() through a module loader
+        parts = parts[1:]
+    if len(parts) == 1:
+        dotted = imports.get(parts[0])
+    else:
+        dotted = f"{imports[parts[0]]}.{'.'.join(parts[1:])}" if parts[0] in imports else ".".join(parts)
+    fn = parts[-1]
+    if dotted:
+        mod, _, fname = dotted.lstrip(".").rpartition(".")
+        for m, funcs in table.items():
+            if fname in funcs and mod and (m == mod or m.endswith("." + mod) or mod.endswith("." + m)):
+                return f"{m}.{fname}", funcs[fname]
+    if fn in own or len(parts) > 1:  # obj.write() could be any object's method: only bare names are guessed
+        return None
+    holders = [(m, funcs[fn]) for m, funcs in table.items() if fn in funcs]
+    if holders and len({id(f) for _, f in holders}) == 1:  # one file has it (under its several module names)
+        return f"{holders[0][0]}.{fn}", holders[0][1]
+    return None
+
+
+def _shared_function_refs(tree: ast.Module, env: Env, imports: dict[str, str], instances: set[str]
+                          ) -> dict[tuple[str, str], tuple[int, str]]:
+    """Tables this script writes by calling a shared function with its own schema and table names."""
+    from .sqlrefs import normalise
+    own = {name.rsplit(".", 1)[-1] for name, _ in _functions(tree)}
+    refs: dict[tuple[str, str], tuple[int, str]] = {}
+    for call in ast.walk(tree):
+        if not isinstance(call, ast.Call):
+            continue
+        name = _call_name(call)
+        found = _shared_function(name, imports, instances, own) if name else None
+        if not found:
+            continue
+        where, spec = found
+        params = spec["params"]
+        given: dict[str, ast.AST] = {}
+        for i, a in enumerate(call.args):
+            if i < len(params) and not isinstance(a, ast.Starred):
+                given[params[i].lower()] = a
+        given.update({k.arg.lower(): k.value for k in call.keywords if k.arg})
+        defaults = {k.lower(): v for k, v in spec.get("defaults", {}).items()}
+        for relation, template, how in spec["refs"]:
+            wanted = list(dict.fromkeys(_PARAM_RE.findall(template)))
+            options: list[list[str]] = []
+            for p in wanted:
+                if p in given:
+                    env.at = call
+                    values = [v for v, _ in _variants(given[p], env) if v and "{}" not in v]
+                else:
+                    values = [defaults[p]] if p in defaults else []
+                options.append(values)
+            if not all(options):
+                continue
+            import itertools
+            for combo in itertools.islice(itertools.product(*options), MAX_VARIANTS):
+                filled = template
+                for p, v in zip(wanted, combo):
+                    filled = filled.replace(_param_marker(p), v)
+                table = normalise(filled, dynamic=True)
+                if table and _PARAM not in table:
+                    refs.setdefault((relation, f"table:{table}"), (call.lineno, f"{where}() with the names given here"))
+    env.at = None
+    return refs
 
 
 def build_env(tree: ast.Module, text: str = "") -> Env:
@@ -690,6 +911,14 @@ def build_env(tree: ast.Module, text: str = "") -> Env:
                     env.assigned_to.setdefault(id(node.value), t.id)
                 elif isinstance(t, ast.Attribute):  # self.out_path = "...", cfg.out = "..."
                     env.setdefault(_src(t, 200), node.value)
+        elif isinstance(node, ast.ClassDef):  # class Loader: TABLE = "dbo.Sales" ... self.TABLE, Loader.TABLE
+            for stmt in node.body:
+                target, value = (stmt.targets[0], stmt.value) if isinstance(stmt, ast.Assign) and \
+                    len(stmt.targets) == 1 else (stmt.target, stmt.value) if isinstance(stmt, ast.AnnAssign) \
+                    else (None, None)
+                if isinstance(target, ast.Name) and value is not None:
+                    for holder in ("self", "cls", node.name):
+                        env.setdefault(f"{holder}.{target.id}", value)
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 if isinstance(item.optional_vars, ast.Name) and isinstance(item.context_expr, ast.Call) \
@@ -704,6 +933,12 @@ def build_env(tree: ast.Module, text: str = "") -> Env:
         if len(rets) == 1 and "." not in name:
             env.returns.setdefault(name, rets[0])
     _caller_values(tree, env)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            for name, values in _loop_values(node, env).items():
+                key = (env.enclosing.get(id(node)), name)
+                if key not in env.loops:  # the first loop over a name; a second loop over it is left alone
+                    env.loops[key], env.loop_of[key] = values, id(node)
     # name += "x" is name + "x" from that line on
     augs = sorted((n for n in ast.walk(tree) if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add)
                    and isinstance(n.target, ast.Name)), key=lambda n: (n.lineno, n.col_offset))
@@ -717,6 +952,125 @@ def build_env(tree: ast.Module, text: str = "") -> Env:
         env.alts.setdefault(n.target.id, []).append(joined)
     env.at = None
     return env
+
+
+MAX_LOOP_VALUES = 50
+MAX_VARIANTS = 30
+
+
+def _loop_values(node: ast.For | ast.AsyncFor, env: Env) -> dict[str, list[ast.AST]]:
+    """for t in ["sales", "stock"], for name, df in {"sales": a}.items(), for t, df in [("sales", a), ...]:
+    each value the loop variables take, when the code lists them."""
+    it, part = node.iter, None
+    if isinstance(it, ast.Call) and isinstance(it.func, ast.Attribute) and it.func.attr in ("items", "keys", "values") \
+            and not it.args:
+        it, part = it.func.value, it.func.attr
+    seq = _resolve_name(it, env) if isinstance(it, (ast.Name, ast.Attribute)) else it
+    rows: list[list[ast.AST]] = []
+    if isinstance(seq, ast.Dict):
+        pairs = [(k, v) for k, v in zip(seq.keys, seq.values) if k is not None]
+        rows = [[k, v] for k, v in pairs] if part == "items" else [[v] for _, v in pairs] if part == "values" \
+            else [[k] for k, _ in pairs]
+    elif isinstance(seq, (ast.List, ast.Tuple, ast.Set)) and part is None:
+        rows = [[e] for e in seq.elts if not isinstance(e, ast.Starred)]
+    rows = rows[:MAX_LOOP_VALUES]
+    target = node.target
+    out: dict[str, list[ast.AST]] = {}
+    if isinstance(target, ast.Name):
+        values = [r[0] if len(r) == 1 else ast.Tuple(elts=r, ctx=ast.Load()) for r in rows]
+        if values:
+            out[target.id] = values
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        if rows and all(len(r) == 1 for r in rows):  # for name, df in [("sales", a), ...]
+            rows = [r[0].elts if isinstance(r[0], (ast.Tuple, ast.List)) else [] for r in rows]
+        for i, t in enumerate(target.elts):
+            if isinstance(t, ast.Name):
+                values = [r[i] for r in rows if len(r) == len(target.elts)]
+                if values:
+                    out[t.id] = values
+    return out
+
+
+def _variants(node: ast.AST, env, extra: list[tuple[str | None, str]] | None = None) -> list[tuple[str | None, str]]:
+    """Every value an expression can have when a name in it is a loop variable over a list in the code, or the
+    function it's in is called more than once: write(cur, "dbo", "Sales"); write(cur, "stg", "Stock") gives
+    f"[{schema}].[{table}]" as both [dbo].[Sales] and [stg].[Stock], not only the first. Each call's values are
+    kept together (never dbo with Stock). Up to MAX_VARIANTS."""
+    first = _expr_value(node, env)
+    if not isinstance(env, Env) or node is None:
+        return [first]
+    at = env.at
+    fn = env.enclosing.get(id(at)) if at is not None else None
+
+    def reassigned(name: str) -> bool:
+        return any(env.enclosing.get(id(a)) == fn and a.lineno <= at.lineno for a in env.alts.get(name, []))
+
+    groups: list[list[tuple[dict[str, ast.AST], str]]] = []
+    by_loop: dict[int, list[str]] = {}
+    for name in dict.fromkeys(n.id for n in ast.walk(node) if isinstance(n, ast.Name)):
+        if (fn, name) in env.loops and (fn, name) not in env.forced:
+            by_loop.setdefault(env.loop_of[(fn, name)], []).append(name)
+    for names in by_loop.values():
+        n = min(len(env.loops[(fn, x)]) for x in names)
+        groups.append([({x: env.loops[(fn, x)][i] for x in names}, "every value of a loop") for i in range(n)])
+    if fn and env.calls.get(fn):
+        sites: list[tuple[dict[str, ast.AST], str]] = []
+        for given, how in env.calls[fn]:
+            given = {k: v for k, v in given.items() if (fn, k) not in env.forced and not reassigned(k)}
+            sites += _caller_loops(given, how, env)
+        groups.append(sites)
+    groups = [g for g in (_distinct(g, env) for g in groups) if len(g) > 1][:3]
+    out = list(extra or [])
+    if not groups:
+        out.append(first)
+    else:
+        import itertools
+        for combo in itertools.islice(itertools.product(*groups), MAX_VARIANTS):
+            keys = [(fn, k) for given, _ in combo for k in given]
+            for given, _ in combo:
+                for k, v in given.items():
+                    env.forced[(fn, k)] = v
+            try:
+                env.at = at
+                value, how = _expr_value(node, env)
+            finally:
+                for k in keys:
+                    env.forced.pop(k, None)
+                env.at = at
+            out.append((value, combo[0][1]))
+    out = [o for o in dict.fromkeys(out) if o[0]]
+    return out or [first]
+
+
+def _caller_loops(given: dict[str, ast.AST], how: str, env: Env) -> list[tuple[dict[str, ast.AST], str]]:
+    """A call passing its own loop variables, for name, df in TABLES.items(): write(cur, name, df), stands for
+    one call per value of the loop."""
+    looped = {k: (env.enclosing.get(id(v)), v.id) for k, v in given.items()
+              if isinstance(v, ast.Name) and (env.enclosing.get(id(v)), v.id) in env.loops}
+    if not looped:
+        return [(given, how)]
+    loop = env.loop_of[next(iter(looped.values()))]
+    same = {k: key for k, key in looped.items() if env.loop_of[key] == loop}
+    n = min(len(env.loops[key]) for key in same.values())
+    return [({**given, **{k: env.loops[key][i] for k, key in same.items()}}, f"{how}, every value of a loop")
+            for i in range(n)]
+
+
+def _distinct(group: list[tuple[dict[str, ast.AST], str]], env: Env) -> list[tuple[dict[str, ast.AST], str]]:
+    """Drop the choices that give the same strings: a data frame passed in three times doesn't change the SQL."""
+    seen: dict[tuple, tuple[dict[str, ast.AST], str]] = {}
+    for given, how in group:
+        texts = []
+        for k in sorted(given):
+            outer, env.at = env.at, given[k]
+            try:
+                texts.append((k, _expr_value(given[k], env)[0]))
+            finally:
+                env.at = outer
+        texts = tuple(t for t in texts if t[1] is not None)
+        if texts:
+            seen.setdefault(texts, (given, how))
+    return list(seen.values())
 
 
 def _argparse_defaults(tree: ast.Module, env: Env) -> None:
@@ -768,12 +1122,16 @@ def _caller_values(tree: ast.Module, env: Env) -> None:
             positional = positional[1:]
         caller = env.enclosing.get(id(node))
         how = f"passed in by {caller or 'the script'}() at line {node.lineno}".replace("the script()", "the script")
+        given: dict[str, ast.AST] = {}
         for i, value in enumerate(node.args):
             if i < len(positional) and not isinstance(value, ast.Starred):
                 env.params.setdefault((qual, positional[i]), []).append((value, how))
+                given[positional[i]] = value
         for k in node.keywords:
             if k.arg:
                 env.params.setdefault((qual, k.arg), []).append((k.value, how))
+                given[k.arg] = k.value
+        env.calls.setdefault(qual, []).append((given, how))
 
 
 def _assignment_env(tree: ast.AST) -> dict[str, ast.AST]:
@@ -1438,14 +1796,20 @@ def _call_refs(call: ast.Call, env: dict[str, ast.AST] | None = None) -> list[tu
             _unknown(env, call, relation, how)
         return out
 
-    if name in ("read_sql_table", "to_sql"):
-        table, how = arg(0, "table_name", "name")
-        if not table:
+    if name in TABLE_IO and (name not in ("insertInto", "saveAsTable") or isinstance(func, ast.Attribute)):
+        relation, pos, kws, label = TABLE_IO[name]
+        n = node_of(pos, *kws)
+        if n is None:
             return []
         schema, _ = arg(99, "schema")
-        full = f"{schema}.{table}" if schema else table
-        return [("reads" if name == "read_sql_table" else "writes", f"table:{full.lower()}",
-                 how or f"pandas {name}")]
+        out = []
+        for table, how in _variants(n, env, _values(n, env, call) if isinstance(n, ast.Name) else None):
+            if table and table.replace("{}", "").strip("._- "):
+                full = f"{schema}.{table}" if schema else table
+                out.append((relation, f"table:{full.lower()}", how or label))
+        return out
+    if name in ("insert", "update", "delete"):
+        return _sqlalchemy_table_refs(call, name, env)
 
     if name == "open" and isinstance(func, ast.Name):
         mode = arg(1, "mode")[0] or "r"
@@ -1478,6 +1842,37 @@ def _call_refs(call: ast.Call, env: dict[str, ast.AST] | None = None) -> list[tu
             return [("writes", f"file:{v}", h or "openpyxl save") for v, h in got]
         return files(relation, node_of(pos, *kws), name)
     return []
+
+
+# Calls that name the table they read or write: pandas, polars and Spark. name -> (relation, position, keywords, how)
+TABLE_IO: dict[str, tuple[str, int, tuple[str, ...], str]] = {
+    "to_sql": ("writes", 0, ("name", "table_name"), "pandas to_sql"),
+    "read_sql_table": ("reads", 0, ("table_name",), "pandas read_sql_table"),
+    "write_database": ("writes", 0, ("table_name",), "polars write_database"),
+    "saveAsTable": ("writes", 0, ("name", "tableName"), "Spark saveAsTable"),
+    "insertInto": ("writes", 0, ("tableName",), "Spark insertInto"),
+}
+
+
+def _sqlalchemy_table_refs(call: ast.Call, name: str, env) -> list[tuple[str, str, str]]:
+    """sales = Table("Sales", meta, schema="dbo"); conn.execute(insert(sales)) or sales.insert(), sales.delete()."""
+    func = call.func
+    if isinstance(func, ast.Name) or (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                                      and func.value.id in ("sa", "sqlalchemy")):
+        target = call.args[0] if call.args else None
+    elif isinstance(func, ast.Attribute) and not call.args and not call.keywords:
+        target = func.value
+    else:
+        return []
+    table = _resolve_name(target, env) if isinstance(target, (ast.Name, ast.Attribute)) else target
+    if not (isinstance(table, ast.Call) and (_call_name(table) or "").split(".")[-1] == "Table" and table.args):
+        return []
+    value, _ = _expr_value(table.args[0], env)
+    if not value or "{}" in value:
+        return []
+    schema = next((_expr_value(k.value, env)[0] for k in table.keywords if k.arg == "schema"), None)
+    full = f"{schema}.{value}" if schema else value
+    return [("writes", f"table:{full.lower()}", f"SQLAlchemy {name}()")]
 
 
 def _unknown(env, call: ast.Call, relation: str, how: str) -> None:
