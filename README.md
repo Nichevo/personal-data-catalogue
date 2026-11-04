@@ -181,6 +181,12 @@ cleared whenever the list shown changes, so a rule is never set on tables you di
 and the To review table work the same way, and every other table you can pick a row in now ignores a stale pick
 instead of failing.
 
+**`pdcat profile --queue` says why nothing ran.** It only runs tables that have been approved, but tables a
+profiling rule or *Queue them now* adds wait for your approval first, so the command could finish with
+"Profiled 0 table(s)" and no reason. It now tells you how many tables are waiting for approval, and
+`pdcat profile --queue --approve` approves them and runs them in one go. Tables skipped because their SQL Server
+source isn't in your `config.toml` are now counted too.
+
 ## New in version 2.22
 
 **Data flow opens quickly.** Map › Data flow no longer draws the whole catalogue when you open it, which was too

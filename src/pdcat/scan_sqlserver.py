@@ -291,13 +291,14 @@ def run_queue(cat: Catalogue, sources: list[SqlServerSource], progress=print, co
     from .pacing import Pacer, PacingStopped, queue
     cat.set_setting("sql_stop_requested", False, quiet=True)
     approved = [q["asset_key"] for q in queue(cat, ("approved",))]
-    result: dict[str, Any] = {"done": 0, "failed": 0, "stopped": None, "left": 0}
+    result: dict[str, Any] = {"done": 0, "failed": 0, "stopped": None, "left": 0, "skipped": 0}
     by_name = {s.name.lower(): s for s in sources}
     for name in sorted({k.split("/")[2] for k in approved if k.startswith("sql://")}):
         src = by_name.get(name)
         mine = [k for k in approved if k.startswith(f"sql://{name}/")]
         if src is None:
             progress(f"No [[sqlserver]] source called {name} in your config; skipping {len(mine)} table(s).")
+            result["skipped"] += len(mine)
             continue
         try:
             before = cat.conn.execute("SELECT COUNT(*) FROM profile_queue WHERE state = 'done'").fetchone()[0]

@@ -1,4 +1,5 @@
 """The slow, controlled SQL Server pace: one query at a time, pauses, time limits, quiet hours, the queue."""
+import pathlib
 from datetime import datetime
 
 import pytest
@@ -94,7 +95,7 @@ def test_nothing_is_profiled_until_approved(catalogue, no_wait):
     assert result["done"] == 0 and conn.sent == []
     pacing.set_queue_state(catalogue, [SALES], "approved")
     result = run_queue(catalogue, [SRC], progress=lambda *_: None, connector=lambda s, d: conn)
-    assert result == {"done": 1, "failed": 0, "stopped": None, "left": 0}
+    assert result == {"done": 1, "failed": 0, "stopped": None, "left": 0, "skipped": 0}
     assert pacing.queue_state(catalogue, SALES) == "done"
     p = {r["column_name"]: r for r in catalogue.profile(SALES)}
     assert p["Units"]["histogram"]  # range chart from the sample, no extra query
@@ -127,3 +128,37 @@ def test_stop_from_the_app(catalogue, no_wait):
     p = pacing.Pacer(catalogue, "warehouse")
     with pytest.raises(pacing.PacingStopped):
         p.query(FakeConn().cursor(), "SELECT 1", purpose="test")
+
+
+def _cli_config(tmp_path, catalogue, with_source=True):
+    cfg = tmp_path / "config.toml"
+    text = f'db_path = "{pathlib.Path(catalogue.path).as_posix()}"\n'
+    if with_source:
+        text += '\n[[sqlserver]]\nname = "warehouse"\nserver = "TEST-SERVER"\ndatabases = ["ForecastDB"]\n'
+    cfg.write_text(text)
+    return str(cfg)
+
+
+def test_cli_queue_says_why_nothing_ran_and_approve_runs_it(tmp_path, catalogue, no_wait, monkeypatch, capsys):
+    import pdcat.scan_sqlserver as sq
+    from pdcat.cli import main
+    conn = FakeConn()
+    monkeypatch.setattr(sq, "connect", lambda s, d: conn)
+    pacing.request_profiles(catalogue, [SALES])  # what a rule or "Queue them now" does: waits for approval
+    cfg = _cli_config(tmp_path, catalogue)
+    assert main(["--config", cfg, "profile", "--queue"]) == 0
+    out = capsys.readouterr().out
+    assert "waiting for your approval" in out and "--queue --approve" in out
+    assert conn.sent == [] and pacing.queue_state(catalogue, SALES) == "queued"
+    assert main(["--config", cfg, "profile", "--queue", "--approve"]) == 0
+    out = capsys.readouterr().out
+    assert "Approved 1" in out and "Profiled 1 table(s)" in out
+    assert pacing.queue_state(catalogue, SALES) == "done"
+
+
+def test_cli_queue_reports_tables_skipped_for_a_missing_source(tmp_path, catalogue, no_wait, capsys):
+    from pdcat.cli import main
+    pacing.request_profiles(catalogue, [SALES], approve=True)
+    assert main(["--config", _cli_config(tmp_path, catalogue, with_source=False), "profile", "--queue"]) == 1
+    out = capsys.readouterr().out
+    assert "No [[sqlserver]] source called warehouse" in out and "1 table(s) were skipped" in out
