@@ -641,6 +641,16 @@ def lineage_section(cat: Catalogue, key: str, asset: dict, links: tuple[list, li
             with st.expander("Link the script that creates or loads this"):
                 manual_link_form(cat, key)
         return
+    from .connections_table import connections_table, wants_table
+    if wants_table((uses, made_by, read_by)):
+        connections_table(cat, key, asset, (uses, made_by, read_by))
+        if asset["kind"] in TABLE_LIKE:
+            from .extras import manual_link_form
+            if not made_by:
+                st.caption("Nothing found that creates or loads this.")
+            with st.popover("➕ Link a script"):
+                manual_link_form(cat, key)
+        return
     if uses:
         seen, unique = set(), []
         for l in uses:

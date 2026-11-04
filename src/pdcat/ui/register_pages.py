@@ -203,3 +203,26 @@ def register_page(cat: Catalogue, key: str) -> None:
         st.dataframe(pd.DataFrame(fields, columns=["field", "value"]), hide_index=True, width="stretch")
     from .detail import notes_section
     notes_section(cat, key, [])
+
+
+def register_filters(cat: Catalogue, tag: str, report_keys: set[str] | None = None) -> set[str] | None:
+    """Filters by the report register's columns (owner, audience, app, status, workspace, dataset, tags).
+    Returns the keys of the reports that match, or None when nothing is picked or there is no register."""
+    facets = R.report_facets(cat, report_keys)
+    if not facets:
+        return None
+    st.caption("📇 Filter by the report register")
+    fields = list(facets)
+    picks: dict[str, list[str]] = {}
+    for start in range(0, len(fields), 4):
+        cols = st.columns(4)
+        for col, f in zip(cols, fields[start:start + 4]):
+            options, wkey = [*facets[f], R.NOT_IN], f"regf-{tag}-{f}"
+            saved = st.session_state.get(f"_kept-{wkey}")
+            if wkey not in st.session_state and saved:
+                st.session_state[wkey] = [v for v in saved if v in options]  # put back what is still offered
+            picks[f] = col.multiselect(R.LABELS.get(f, f.title()), options, key=wkey, placeholder="Any")
+            keep(wkey)
+    if not any(picks.values()):
+        return None
+    return R.reports_matching(cat, picks)

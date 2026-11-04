@@ -91,7 +91,12 @@ def powerbi_page(cat: Catalogue) -> None:
         old = _old_box("browse-old-pbi", "a report (same folder, names that start the same)")
     if view == "Reports":
         st.caption("Every Power BI report, the current version of each. Pick a row to open it.")
-        _browse(cat, "Power BI reports", ("report",), "report name or any word", "Folder or database", old)
+        from .register_pages import register_filters
+        only = register_filters(cat, "reports")
+        if only is not None and not only:
+            st.info("No scanned report matches these register filters.")
+            return
+        _browse(cat, "Power BI reports", ("report",), "report name or any word", "Folder or database", old, only=only)
         return
     if view == "Register":
         st.caption("The Power BI report register: published reports with their owners, audience, app and status, "
