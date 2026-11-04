@@ -464,7 +464,8 @@ CREATE TABLE IF NOT EXISTS gold_standards (
     note        TEXT,
     snapshot    TEXT,
     marked_at   TEXT,
-    author      TEXT
+    author      TEXT,
+    scope       TEXT                        -- version 2.27: which reports it is compared with (JSON), see gold.py
 );
 -- Items that differ from a gold standard on purpose; holds while the item's fingerprint stays the same.
 CREATE TABLE IF NOT EXISTS gold_ok (
@@ -774,6 +775,8 @@ ADDED_COLUMNS = {
     "documents": {"path": "TEXT", "mtime": "REAL", "describes": "TEXT", "source": "TEXT"},
     # version 2.21
     "item_info": {"relevance": "TEXT", "sap_name": "TEXT", "table_type": "TEXT"},
+    # version 2.27
+    "gold_standards": {"scope": "TEXT"},
 }
 
 

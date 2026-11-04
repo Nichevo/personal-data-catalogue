@@ -15,6 +15,16 @@ What is compared with a gold standard:
 A difference you are happy with can be marked "OK to differ". That holds until the other item changes again.
 Each gold standard keeps a copy of what it looked like when marked, so a change to the standard itself is
 flagged too, until you accept it as the new standard.
+
+Which reports a gold standard is compared with (version 2.27) is its "scope":
+
+* ``current`` (the default): every report except old ones: older versions in a Versions group, reports you
+  marked old (🗄️ Mark old) or not relevant, and reports in a folder whose role is archive.
+* ``all``: old ones too.
+* ``picked``: only the reports you pick.
+
+In the first two, reports you leave out ("skip") are not compared either. For a measure the scope is about the
+report the other measure is in; for SQL, about the query or view itself.
 """
 from __future__ import annotations
 
@@ -35,6 +45,8 @@ SQL_ALIKE = 0.5         # how alike their text must read, as well
 SQL_VERY_ALIKE = 0.8    # this alike counts whatever tables they read
 MAX_TOKENS = 4000       # longer SQL is compared on its first this-many words
 DIFF_CONTEXT = 2
+SCOPES = {"current": "Current reports only (old versions left out)", "all": "All reports, old versions too",
+          "picked": "Only the reports I pick"}
 
 
 # ---- marking --------------------------------------------------------------------------------------
@@ -97,14 +109,88 @@ def restore(cat: Catalogue, key: str, row: dict[str, Any] | None) -> None:
     with cat.conn:
         cat.conn.execute("DELETE FROM gold_standards WHERE key = ?", (key,))
         if row:
-            cat.conn.execute("INSERT INTO gold_standards (key, kind, note, snapshot, marked_at, author) "
-                             "VALUES (?, ?, ?, ?, ?, ?)", (row["key"], row["kind"], row.get("note"), row.get("snapshot"),
-                                                           row.get("marked_at"), row.get("author")))
+            cat.conn.execute("INSERT INTO gold_standards (key, kind, note, snapshot, marked_at, author, scope) "
+                             "VALUES (?, ?, ?, ?, ?, ?, ?)", (row["key"], row["kind"], row.get("note"), row.get("snapshot"),
+                                                              row.get("marked_at"), row.get("author"), row.get("scope")))
             for ok in row.get("ok") or []:
                 cat.conn.execute("INSERT OR REPLACE INTO gold_ok (gold_key, item_key, fingerprint, note, at, author) "
                                  "VALUES (?, ?, ?, ?, ?, ?)", (ok["gold_key"], ok["item_key"], ok.get("fingerprint"),
                                                                ok.get("note"), ok.get("at"), ok.get("author")))
     cat.changed()
+
+
+# ---- which reports it is compared with (version 2.27) ----------------------------------------------
+
+def scope_of(row: dict[str, Any] | None) -> dict[str, Any]:
+    """{"mode": "current" | "all" | "picked", "skip": [keys], "picked": [keys]} for a gold standard row."""
+    try:
+        sc = json.loads((row or {}).get("scope") or "{}")
+    except (TypeError, ValueError):
+        sc = {}
+    sc = sc if isinstance(sc, dict) else {}
+    mode = sc.get("mode") if sc.get("mode") in SCOPES else "current"
+    return {"mode": mode, "skip": [k for k in sc.get("skip") or [] if isinstance(k, str)],
+            "picked": [k for k in sc.get("picked") or [] if isinstance(k, str)]}
+
+
+def set_scope(cat: Catalogue, key: str, mode: str = "current", skip: list[str] | tuple = (),
+              picked: list[str] | tuple = (), *, record_edit: bool = True) -> None:
+    """Choose which reports (or, for SQL, which queries) a gold standard is compared with."""
+    if mode not in SCOPES:
+        raise ValueError(f"mode must be one of {', '.join(SCOPES)}")
+    old = get(cat, key)
+    if old is None:
+        return
+    new = {"mode": mode, "skip": sorted(set(skip)), "picked": sorted(set(picked))}
+    text = None if new == {"mode": "current", "skip": [], "picked": []} else json.dumps(new)
+    with cat.conn:
+        cat.conn.execute("UPDATE gold_standards SET scope = ? WHERE key = ?", (text, key))
+        if record_edit:
+            from .edits import record
+            record(cat, key, "gold standard compared with", scope_label(scope_of(old)), scope_label(new),
+                   {"type": "gold", "key": key, "was": old})
+    cat.changed()
+
+
+def leave_out(cat: Catalogue, gold_key: str, key: str) -> None:
+    """Stop comparing one report (or SQL item) with a gold standard."""
+    sc = scope_of(get(cat, gold_key))
+    if sc["mode"] == "picked":
+        set_scope(cat, gold_key, "picked", sc["skip"], [k for k in sc["picked"] if k != key])
+    else:
+        set_scope(cat, gold_key, sc["mode"], sc["skip"] + [key], sc["picked"])
+
+
+def scope_label(sc: dict[str, Any]) -> str:
+    if sc["mode"] == "picked":
+        return f"only {len(sc['picked'])} picked report(s)"
+    text = "all reports" if sc["mode"] == "all" else "current reports"
+    return text + (f", {len(sc['skip'])} left out" if sc["skip"] else "")
+
+
+def compared_key(item: dict[str, Any]) -> str:
+    """What the scope is about for a related item: a measure's report, else the item itself."""
+    return item.get("report_key") or item["key"] if item.get("kind") == "measure" else item["key"]
+
+
+def _keep(sc: dict[str, Any], key: str, old: set[str]) -> bool:
+    if sc["mode"] == "picked":
+        return key in sc["picked"]
+    if key in sc["skip"]:
+        return False
+    return not (sc["mode"] == "current" and key in old)
+
+
+def old_reports(cat: Catalogue) -> set[str]:
+    """Reports left out by the "current" scope: older versions, marked old or not relevant, archive folders."""
+    return _cached(cat, "old_reports", _read_old_reports)
+
+
+def _read_old_reports(cat: Catalogue) -> set[str]:
+    from .curation import hidden_keys
+    from .folderroles import archived
+    from .groups import older_versions
+    return older_versions(cat) | hidden_keys(cat, old=True) | archived(cat)
 
 
 def accept_change(cat: Catalogue, key: str) -> None:
@@ -426,11 +512,6 @@ def changed_since_marked(cat: Catalogue, gold_row: dict[str, Any], item: dict[st
 
 # ---- finding related items ------------------------------------------------------------------------
 
-def _old_versions(cat: Catalogue) -> set[str]:
-    from .groups import older_versions
-    return _cached(cat, "old_versions", older_versions)
-
-
 _CACHE: dict[tuple[str, str], tuple[int, Any]] = {}
 
 
@@ -504,18 +585,29 @@ def _verdict(result: dict[str, Any], ok: dict[str, Any] | None, other: dict[str,
     return "name" if result.get("name_only") else "differs"
 
 
-def related(cat: Catalogue, key: str, *, old_versions: bool = False) -> dict[str, Any]:
+def related(cat: Catalogue, key: str, *, everything: bool = False) -> dict[str, Any]:
     """Everything compared with one gold standard: {"gold": item, "row": gold row, "changed": change or None,
     "related": [{"item", "result", "verdict" (same | differs | name | ok), "why", "ok"}], "measures": [...]
-    (for a gold report: same-named measures elsewhere, compared with its own), "conflicts": [...]}."""
+    (for a gold report: same-named measures elsewhere, compared with its own), "conflicts": [...],
+    "scope": its scope, "left_out": {report keys related but outside the scope}}. `everything` ignores the
+    scope (to list what can be picked)."""
     row = get(cat, key)
     gold = load(cat, key)
-    out: dict[str, Any] = {"gold": gold, "row": row, "changed": None, "related": [], "measures": [], "conflicts": []}
+    sc = {"mode": "all", "skip": [], "picked": []} if everything else scope_of(row)
+    out: dict[str, Any] = {"gold": gold, "row": row, "changed": None, "related": [], "measures": [], "conflicts": [],
+                           "scope": sc, "left_out": set()}
     if gold is None or row is None:
         return out
     out["changed"] = changed_since_marked(cat, row, gold)
     oks = _oks(cat)
-    old = set() if old_versions else _old_versions(cat)
+    old = old_reports(cat) if sc["mode"] == "current" else set()
+
+    def keep(k: str) -> bool:
+        if _keep(sc, k, old):
+            return True
+        out["left_out"].add(k)
+        return False
+
     rel: list[dict[str, Any]] = []
     if gold["kind"] == "measure" and not gold["expression"]:
         pass  # a measure only seen in a visual: nothing to compare with
@@ -524,7 +616,7 @@ def related(cat: Catalogue, key: str, *, old_versions: bool = False) -> dict[str
         lookup = _lookup(measures)
         gd = dax_key(gold["expression"])
         for m in measures:
-            if m["key"] == key or m["report_key"] == gold["report_key"] or m["report_key"] in old:
+            if m["key"] == key or m["report_key"] == gold["report_key"]:
                 continue
             if m["name"].lower() == gold["name"].lower():
                 why = "same name"
@@ -532,12 +624,14 @@ def related(cat: Catalogue, key: str, *, old_versions: bool = False) -> dict[str
                 why = "same DAX"
             else:
                 continue
+            if not keep(m["report_key"]):
+                continue
             rel.append({"item": m, "why": why, "result": compare_measures(gold, m, lookup)})
     elif gold["kind"] == "report":
-        rel = _related_reports(cat, gold, old)
-        out["measures"], out["conflicts"] = _report_measures(cat, gold, oks, old)
+        rel = _related_reports(cat, gold, keep)
+        out["measures"], out["conflicts"] = _report_measures(cat, gold, oks, keep)
     else:
-        rel = _related_sql(cat, gold)
+        rel = [r for r in _related_sql(cat, gold) if keep(r["item"]["key"])]
     for r in rel:
         r["ok"] = oks.get((key, r["item"]["key"]))
         r["verdict"] = _verdict(r["result"], r["ok"], r["item"])
@@ -547,7 +641,7 @@ def related(cat: Catalogue, key: str, *, old_versions: bool = False) -> dict[str
     return out
 
 
-def _related_reports(cat: Catalogue, gold: dict[str, Any], old: set[str]) -> list[dict[str, Any]]:
+def _related_reports(cat: Catalogue, gold: dict[str, Any], keep) -> list[dict[str, Any]]:
     from .groups import for_item
     from .reportversions import similarity
     versions = {m["asset_key"] for g in for_item(cat, gold["key"]) if g and g["type"] == "versions"
@@ -561,15 +655,16 @@ def _related_reports(cat: Catalogue, gold: dict[str, Any], old: set[str]) -> lis
             continue
         if k in versions:
             why = "another version"
-        elif k not in old and similarity(gold["attrs"], other["attrs"], "report") >= REPORT_SIMILAR:
+        elif similarity(gold["attrs"], other["attrs"], "report") >= REPORT_SIMILAR:
             why = "looks like a copy"
         else:
             continue
-        out.append({"item": other, "why": why, "result": compare_reports(gold, other)})
+        if keep(k):
+            out.append({"item": other, "why": why, "result": compare_reports(gold, other)})
     return out
 
 
-def _report_measures(cat: Catalogue, gold: dict[str, Any], oks: dict, old: set[str]
+def _report_measures(cat: Catalogue, gold: dict[str, Any], oks: dict, keep
                      ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """For a gold report: measures with the same name as one of its measures in other reports, compared with
     the standard for that name; and names where gold standards disagree with each other."""
@@ -584,10 +679,10 @@ def _report_measures(cat: Catalogue, gold: dict[str, Any], oks: dict, old: set[s
             conflicts.append({"name": std[0]["name"], "standards": std})
     for m in measures:
         n = m["name"].lower()
-        if n not in mine or m["report_key"] == gold["key"] or m["report_key"] in old:
+        if n not in mine or m["report_key"] == gold["key"]:
             continue
         std = [s for s in standards.get(n, []) if s["report_key"] != m["report_key"]]
-        if not std or m["key"] in {s["key"] for s in std}:
+        if not std or m["key"] in {s["key"] for s in std} or not keep(m["report_key"]):
             continue
         res, verdict, s0 = _best(std, m, lookup, oks)
         rows.append({"item": m, "standard": s0, "result": res, "verdict": verdict, "why": "same name",
@@ -683,21 +778,26 @@ def against(cat: Catalogue, key: str) -> list[dict[str, Any]]:
     if item is None or (item["kind"] == "measure" and not item["expression"]):
         return []  # a measure only seen in a visual: its DAX isn't known
     oks = _oks(cat)
+    rows = {g["key"]: g for g in golds}
+    old = old_reports(cat)
+
+    def in_scope(gold_key: str) -> bool:
+        return _keep(scope_of(rows.get(gold_key)), compared_key(item), old)
+
     out = []
     if item["kind"] == "measure":
         measures = _measures(cat)
         lookup = _lookup(measures)
-        if item["report_key"] in _old_versions(cat):
-            return []
         standards = measure_standards(cat, measures).get(item["name"].lower(), [])
-        std = [s for s in standards if s["report_key"] != item["report_key"]]
+        std = [s for s in standards if s["report_key"] != item["report_key"] and in_scope(s["gold_key"])]
         if std and key not in {s["key"] for s in standards}:
             res, verdict, s0 = _best(std, item, lookup, oks)
             out.append({"gold": s0, "gold_key": s0["gold_key"], "via": s0["via"], "why": "same name", "result": res,
                         "verdict": verdict, "ok": oks.get((s0["gold_key"], key))})
         gd = dax_key(item["expression"])
         for g in golds:
-            if g["kind"] != "measure" or g["key"] == key or any(o["gold_key"] == g["key"] for o in out):
+            if g["kind"] != "measure" or g["key"] == key or any(o["gold_key"] == g["key"] for o in out) \
+                    or not in_scope(g["key"]):
                 continue
             gm = next((m for m in measures if m["key"] == g["key"]), None)
             if gm and gm["report_key"] != item["report_key"] and dax_key(gm["expression"]) == gd \
@@ -709,16 +809,15 @@ def against(cat: Catalogue, key: str) -> list[dict[str, Any]]:
         from .groups import for_item
         from .reportversions import similarity
         versions = {m["asset_key"] for g in for_item(cat, key) if g and g["type"] == "versions" for m in g["members"]}
-        old = _old_versions(cat)
         for g in golds:
-            if g["kind"] != "report" or g["key"] == key:
+            if g["kind"] != "report" or g["key"] == key or not in_scope(g["key"]):
                 continue
             gr = load(cat, g["key"])
             if gr is None:
                 continue
             if g["key"] in versions:
                 why = "another version"
-            elif key not in old and similarity(gr["attrs"], item["attrs"], "report") >= REPORT_SIMILAR:
+            elif similarity(gr["attrs"], item["attrs"], "report") >= REPORT_SIMILAR:
                 why = "looks like a copy"
             else:
                 continue
@@ -727,7 +826,7 @@ def against(cat: Catalogue, key: str) -> list[dict[str, Any]]:
                         "verdict": _verdict(res, oks.get((g["key"], key)), item), "ok": oks.get((g["key"], key))})
     else:
         for g in golds:
-            if g["kind"] != "sql" or g["key"] == key:
+            if g["kind"] != "sql" or g["key"] == key or not in_scope(g["key"]):
                 continue
             gs = load(cat, g["key"])
             if gs is None or (gs.get("uid") and gs.get("uid") == item.get("uid")):
@@ -767,6 +866,7 @@ def overview(cat: Catalogue) -> list[dict[str, Any]]:
                      "name_only": sum(x["verdict"] == "name" for x in rel),
                      "ok": sum(x["verdict"] == "ok" for x in rel), "same": sum(x["verdict"] == "same" for x in rel),
                      "changed": r["changed"]["summary"] if r["changed"] else "", "conflicts": len(r["conflicts"]),
+                     "scope": scope_label(r["scope"]), "left_out": len(r["left_out"]),
                      "details": r})
     rows.sort(key=lambda x: (-x["differs"], x["kind"], x["name"].lower()))
     return rows

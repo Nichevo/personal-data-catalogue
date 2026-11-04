@@ -172,6 +172,27 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.27
+
+**Choose which reports a gold standard is compared with, and mark Power BI reports as old.**
+
+- **Old versions are left out by default.** A gold standard is now compared with current reports only: older
+  versions in a Versions group, reports marked 🗄️ old or 🙈 not relevant, and reports in a folder whose role is
+  archive are no longer flagged as "differs". Before, a gold report was always compared with its own older versions.
+- **🎯 Compare with**, on every gold standard's page: *Current reports only* (the default), *All reports, old
+  versions too*, or *Only the reports I pick*, plus a list of reports to leave out. For a gold measure the list is
+  the reports holding the other measures; for SQL, the related queries and views. The box says how many related
+  reports are not compared.
+- **🚫 Don't compare this report** and **🗄️ Mark report old** buttons on each item that differs, so a stray
+  archived copy can be dropped in one click. The first only affects that gold standard; the second marks the report
+  old everywhere.
+- **🗄️ Mark old on a Power BI report now means "old version" everywhere**: it is left out of gold standard
+  comparisons and hidden from the Power BI lists, maps and impact pages, the same as an older version in a Versions
+  group. ↩️ Not old on its page brings it back.
+- Leaving reports out also takes them off Review › Gold standards (new *compared with* and *not compared*
+  columns) and the To review list. Every change can be undone from the gold standard's edit history, and the
+  gold standards export has a new *scope* column.
+
 ## New in version 2.25
 
 **Profiling SQL Server keeps going when a table or column can't be read.**
