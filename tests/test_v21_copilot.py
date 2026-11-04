@@ -83,3 +83,32 @@ def test_questions_for_colleagues_round_trip(catalogue, tmp_path):
     mine = {x["question"]: x for x in list_questions(catalogue)}
     assert mine["Which table has returns?"]["answer"] == "dbo.Returns"
     assert mine["Weekly sales?"]["answer"] == "Use dbo.SalesDaily"
+
+
+def test_test_questions_read_join_columns_stored_as_text(catalogue):
+    """Joins keep their columns as text ("PlantID, Material"). Reading them as JSON broke every test question."""
+    from pdcat.aipack import test_questions
+    from pdcat.relationships import add_relationship
+    other = catalogue.conn.execute("SELECT key FROM assets WHERE kind = 'table' AND key != ?", (SALES,)).fetchone()[0]
+    add_relationship(catalogue, SALES, "PlantID, Material", other, "PlantID, Material")
+    qs = test_questions(catalogue)
+    joins = [q for q in qs if q["about"] == "join"]
+    assert joins and "PlantID" in joins[0]["answer"] and "Material" in joins[0]["answer"]
+    assert "test-questions.md" in aipack.build(catalogue)
+    from pdcat.aipack import _columns
+    assert _columns('["a", "b"]') == ["a", "b"] and _columns("a, b") == ["a", "b"] and _columns("") == []
+
+
+def test_test_questions_keep_going_when_one_kind_fails(catalogue, monkeypatch):
+    from pdcat import knowledge
+    from pdcat.aipack import test_questions
+    knowledge.save_metric(catalogue, "Fill rate", definition="Shipped over ordered")
+    curation.set_item_info(catalogue, SALES, grain="store per day")
+
+    def broken(cat):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+    monkeypatch.setattr(knowledge, "list_metrics", broken)
+    problems: list[str] = []
+    qs = test_questions(catalogue, problems=problems)
+    assert any(q["about"] == "grain" for q in qs)
+    assert problems and "metrics" in problems[0]

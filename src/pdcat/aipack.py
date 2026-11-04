@@ -633,8 +633,28 @@ def documents(p: Pack) -> str:
     return "\n".join(out)
 
 
-def test_questions(cat: Any, limit: int = MAX_TESTS) -> list[dict[str, str]]:
-    """Questions built from the catalogue, each with the answer the pack holds, to check Copilot with."""
+def _columns(text: Any) -> list[str]:
+    """Column names of a relationship side. They're stored as text like "PlantID, Material"; older or imported rows
+    may hold a JSON list instead, so both are read and anything else gives no columns rather than an error."""
+    if isinstance(text, (list, tuple)):
+        return [str(c).strip() for c in text if str(c).strip()]
+    text = str(text or "").strip()
+    if text.startswith("["):
+        try:
+            got = json.loads(text)
+            if isinstance(got, list):
+                return [str(c).strip() for c in got if str(c).strip()]
+        except ValueError:
+            pass
+        text = text.strip("[]").replace('"', "").replace("'", "")
+    return [c.strip() for c in text.split(",") if c.strip()]
+
+
+def test_questions(cat: Any, limit: int = MAX_TESTS, problems: list[str] | None = None) -> list[dict[str, str]]:
+    """Questions built from the catalogue, each with the answer the pack holds, to check Copilot with.
+
+    Each kind of question is gathered on its own: if one kind can't be read (an odd row, a damaged value), it is
+    left out and noted in ``problems`` and the other kinds are still built."""
     from .curation import all_item_info
     from .knowledge import list_knowledge, list_metrics, list_questions
     p = Pack(cat)
@@ -649,56 +669,84 @@ def test_questions(cat: Any, limit: int = MAX_TESTS) -> list[dict[str, str]]:
     picks: dict[str, list[tuple[str, str]]] = {k: [] for k in
                                                ("writes", "metric", "replace", "grain", "join", "column", "sap", "rule",
                                                 "question", "sqlscript")}
-    for r in cat.conn.execute(
-            "SELECT l.dst_key, group_concat(DISTINCT a.name) FROM links l JOIN assets a ON a.key = l.src_key "
-            "JOIN assets d ON d.key = l.dst_key AND d.status = 'active' WHERE l.relation = 'writes' "
-            "GROUP BY l.dst_key LIMIT 20"):
-        picks["writes"].append((f"Which scripts write {p.name(r[0])}?", r[1].replace(",", ", ")))
-    for m in list_metrics(cat)[:10]:
-        if m.get("definition"):
-            picks["metric"].append((f"What does {m['name']} mean?", m["definition"] +
-                                    (f" Formula: {m['formula']}" if m.get("formula") else "")))
-    info = all_item_info(cat)
-    for key, i in info.items():
-        if i.get("lifecycle") in ("deprecated", "retired") and i.get("replaced_by"):
-            picks["replace"].append((f"What replaces {p.name(key)}?", f"{i['replaced_by']}"))
-        if i.get("grain") and key in p.names:
-            picks["grain"].append((f"What is one row of {p.name(key)}?", i["grain"]))
-    for r in cat.conn.execute("SELECT * FROM relationships WHERE state IN ('declared', 'confirmed') LIMIT 20"):
-        cols = zip(json.loads(r["src_columns"]), json.loads(r["dst_columns"]))
-        picks["join"].append((f"How do I join {p.name(r['src_key'])} to {p.name(r['dst_key'])}?",
-                              " AND ".join(f"{p.name(r['src_key'])}.{a} = {p.name(r['dst_key'])}.{b}" for a, b in cols)))
-    for r in cat.conn.execute("SELECT asset_key, column_name, description, sap_name FROM column_info WHERE "
-                              "(description IS NOT NULL AND description != '') OR (sap_name IS NOT NULL AND "
-                              "sap_name != '') LIMIT 40"):
-        if r["asset_key"] not in p.names:
-            continue
-        if r["description"]:
-            picks["column"].append((f"What does {r['column_name']} in {p.name(r['asset_key'])} mean?",
-                                    r["description"]))
-        if r["sap_name"]:
-            picks["sap"].append((f"Which SAP field is {r['column_name']} in {p.name(r['asset_key'])}?", r["sap_name"]))
-    for k in list_knowledge(cat)[:10]:
-        if k["body"]:
-            picks["rule"].append((f"What should I know about {k['title']}?", k["body"].split("\n\n", 1)[0][:400]))
-    for q in list_questions(cat)[:10]:
-        if q["answer"] or q["sql"]:
-            picks["question"].append((q["question"], q["answer"] or q["sql"]))
-    # SQL scripts and pasted SQL: a good agent answers from the tables the script touches, not from guesswork.
-    for r in cat.conn.execute(
-            "SELECT a.key, a.name, a.description, "
-            "group_concat(DISTINCT CASE WHEN l.relation = 'reads' THEN COALESCE(l.dst_key, l.dst_ref) END) AS reads, "
-            "group_concat(DISTINCT CASE WHEN l.relation = 'writes' THEN COALESCE(l.dst_key, l.dst_ref) END) AS writes "
-            "FROM assets a JOIN links l ON l.src_key = a.key WHERE a.kind IN ('sql_script', 'sql_snippet') "
-            "AND a.status = 'active' GROUP BY a.key LIMIT 10"):
-        bits = []
-        for label, keys in (("reads", r["reads"]), ("writes", r["writes"])):
-            names = [p.name(k) if k in p.names else k.removeprefix("table:") for k in (keys or "").split(",") if k]
-            if names:
-                bits.append(f"{label} {', '.join(sorted(set(names)))}")
-        if bits:
-            answer = f"{r['name']} {'; '.join(bits)}." + (f" {r['description']}" if r["description"] else "")
-            picks["sqlscript"].append((f"What does the SQL script {r['name']} read and write?", answer))
+
+    def writes() -> None:
+        for r in cat.conn.execute(
+                "SELECT l.dst_key, group_concat(DISTINCT a.name) FROM links l JOIN assets a ON a.key = l.src_key "
+                "JOIN assets d ON d.key = l.dst_key AND d.status = 'active' WHERE l.relation = 'writes' "
+                "GROUP BY l.dst_key LIMIT 20"):
+            if r[1]:
+                picks["writes"].append((f"Which scripts write {p.name(r[0])}?", str(r[1]).replace(",", ", ")))
+
+    def metrics() -> None:
+        for m in list_metrics(cat)[:10]:
+            if m.get("definition"):
+                picks["metric"].append((f"What does {m['name']} mean?", str(m["definition"]) +
+                                        (f" Formula: {m['formula']}" if m.get("formula") else "")))
+
+    def item_info() -> None:
+        for key, i in all_item_info(cat).items():
+            if i.get("lifecycle") in ("deprecated", "retired") and i.get("replaced_by"):
+                picks["replace"].append((f"What replaces {p.name(key)}?", f"{i['replaced_by']}"))
+            if i.get("grain") and key in p.names:
+                picks["grain"].append((f"What is one row of {p.name(key)}?", str(i["grain"])))
+
+    def joins() -> None:
+        for r in cat.conn.execute("SELECT * FROM relationships WHERE state IN ('declared', 'confirmed') LIMIT 20"):
+            pairs = list(zip(_columns(r["src_columns"]), _columns(r["dst_columns"])))
+            if not pairs:
+                continue
+            src, dst = p.name(r["src_key"]), p.name(r["dst_key"])
+            picks["join"].append((f"How do I join {src} to {dst}?",
+                                  " AND ".join(f"{src}.{a} = {dst}.{b}" for a, b in pairs)))
+
+    def columns() -> None:
+        for r in cat.conn.execute("SELECT asset_key, column_name, description, sap_name FROM column_info WHERE "
+                                  "(description IS NOT NULL AND description != '') OR (sap_name IS NOT NULL AND "
+                                  "sap_name != '') LIMIT 40"):
+            if r["asset_key"] not in p.names:
+                continue
+            if r["description"]:
+                picks["column"].append((f"What does {r['column_name']} in {p.name(r['asset_key'])} mean?",
+                                        str(r["description"])))
+            if r["sap_name"]:
+                picks["sap"].append((f"Which SAP field is {r['column_name']} in {p.name(r['asset_key'])}?",
+                                     str(r["sap_name"])))
+
+    def knowledge() -> None:
+        for k in list_knowledge(cat)[:10]:
+            if k["body"]:
+                picks["rule"].append((f"What should I know about {k['title']}?",
+                                      str(k["body"]).split("\n\n", 1)[0][:400]))
+
+    def questions() -> None:
+        for q in list_questions(cat)[:10]:
+            if q["answer"] or q["sql"]:
+                picks["question"].append((q["question"], q["answer"] or q["sql"]))
+
+    def sql_scripts() -> None:
+        # SQL scripts and pasted SQL: a good agent answers from the tables the script touches, not from guesswork.
+        for r in cat.conn.execute(
+                "SELECT a.key, a.name, a.description, "
+                "group_concat(DISTINCT CASE WHEN l.relation = 'reads' THEN COALESCE(l.dst_key, l.dst_ref) END) AS reads, "
+                "group_concat(DISTINCT CASE WHEN l.relation = 'writes' THEN COALESCE(l.dst_key, l.dst_ref) END) AS writes "
+                "FROM assets a JOIN links l ON l.src_key = a.key WHERE a.kind IN ('sql_script', 'sql_snippet') "
+                "AND a.status = 'active' GROUP BY a.key LIMIT 10"):
+            bits = []
+            for label, keys in (("reads", r["reads"]), ("writes", r["writes"])):
+                names = [p.name(k) if k in p.names else k.removeprefix("table:") for k in (keys or "").split(",") if k]
+                if names:
+                    bits.append(f"{label} {', '.join(sorted(set(names)))}")
+            if bits:
+                answer = f"{r['name']} {'; '.join(bits)}." + (f" {r['description']}" if r["description"] else "")
+                picks["sqlscript"].append((f"What does the SQL script {r['name']} read and write?", answer))
+
+    for what, fn in (("scripts that write tables", writes), ("metrics", metrics), ("item details", item_info),
+                     ("joins", joins), ("column meanings", columns), ("knowledge notes", knowledge),
+                     ("questions and answers", questions), ("SQL scripts", sql_scripts)):
+        p.safely(f"test questions about {what}", fn)
+    if problems is not None:
+        problems.extend(p.problems)
     # take one of each kind in turn so the list covers different things
     while len(out) < limit and any(picks.values()):
         for kind, items in picks.items():
@@ -708,7 +756,7 @@ def test_questions(cat: Any, limit: int = MAX_TESTS) -> list[dict[str, str]]:
 
 
 def test_file(p: Pack) -> str:
-    qs = test_questions(p.cat)
+    qs = test_questions(p.cat, problems=p.problems)
     if not qs:
         return ""
     out = ["# Test questions", "",
