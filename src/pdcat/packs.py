@@ -117,7 +117,8 @@ SQLSERVER_NOTES = [
      "explicit `JOIN ... ON`, and `CROSS JOIN` when you really mean every combination.\n"
      "* Join on columns that identify one row on at least one side (a key). If neither side is unique, rows "
      "multiply and totals are inflated. `DISTINCT` hides this rather than fixing it."),
-    ("sargable-filters", "Sargable filters and indexes", ["function_on_column", "leading_wildcard", "type_mismatch"],
+    ("sargable-filters", "Sargable filters and indexes", ["function_on_column", "leading_wildcard", "type_mismatch",
+                                                         "or_across_columns", "implicit_conversion", "join_on_expression"],
      "A filter is *sargable* when SQL Server can use an index to seek to the rows. Wrapping the column in a "
      "function (`YEAR(SaleDate) = 2026`, `CONVERT(date, x) = ...`, `ISNULL(col, 0) = 0`) prevents that. Rewrite as "
      "a range on the bare column: `SaleDate >= '2026-01-01' AND SaleDate < '2027-01-01'`.\n\n"
@@ -135,18 +136,18 @@ SQLSERVER_NOTES = [
      "twice, miss rows, or read changes that are later rolled back. It's fine for a rough look at a busy table, not "
      "for numbers that must be exact. If readers and writers block each other, ask the DBA about *read committed "
      "snapshot isolation* (RCSI), which gives consistent reads without blocking."),
-    ("temp-tables", "Temp tables, table variables and CTEs", [],
+    ("temp-tables", "Temp tables, table variables and CTEs", ["long_in_list"],
      "* **CTE** (`WITH x AS (...)`): a named subquery for one statement; not stored, may be evaluated more than once.\n"
      "* **Temp table** (`#t`): stored in tempdb, has statistics and can be indexed; best for larger intermediate "
      "results used several times.\n"
      "* **Table variable** (`@t`): no statistics (estimates are poor for many rows); fine for small sets.\n"
      "Break very large queries into steps with temp tables when the optimiser struggles."),
-    ("window-functions", "Window functions", [],
+    ("window-functions", "Window functions", ["select_subquery"],
      "`ROW_NUMBER()`, `RANK()`, `LAG()`, `LEAD()` and aggregates with `OVER (PARTITION BY ... ORDER BY ...)` compute "
      "per-group values without collapsing rows: latest row per key (`ROW_NUMBER() ... = 1`), running totals "
      "(`SUM(x) OVER (ORDER BY d ROWS UNBOUNDED PRECEDING)`), period-on-period changes (`LAG`). They usually replace "
      "self-joins and correlated subqueries and are faster."),
-    ("set-based", "Set-based work instead of cursors", ["cursor"],
+    ("set-based", "Set-based work instead of cursors", ["cursor", "scalar_udf"],
      "Cursors and `WHILE` loops process one row at a time. One `UPDATE`, `INSERT ... SELECT` or `MERGE` over the "
      "whole set is usually far faster. When a loop is unavoidable, loop over batches (say 10,000 rows) rather than "
      "single rows."),
@@ -159,6 +160,18 @@ SQLSERVER_NOTES = [
      "`SELECT *` reads every column (more I/O, can stop covering indexes being used) and changes shape when the "
      "table changes, which breaks code that depends on column positions. List the columns you need. "
      "`EXISTS (SELECT * ...)` is fine: nothing is returned."),
+    ("slow-patterns", "More patterns that make SQL slow",
+     ["query_hints", "nested_views", "big_table_no_filter", "order_in_view", "count_for_exists"],
+     "* **Hints** (`WITH (INDEX(...))`, `FORCESEEK`, `HASH JOIN`, `OPTION (FORCE ORDER)`) fix one plan. They can help "
+     "once and hurt when the data grows; check now and then that they still help.\n"
+     "* **Views on views**: a view that reads a view that reads a view is hard for the optimiser, which may read "
+     "tables the outer query doesn't need. Read the tables directly, or flatten the stack.\n"
+     "* **Big tables with no filter**: a query with no `WHERE` or `TOP` reads every row. Filter to the rows you "
+     "need as early as possible.\n"
+     "* **ORDER BY in a view or subquery** (often with `TOP 100 PERCENT`) is ignored for the result's order but can "
+     "still cost a sort. Sort in the outermost query.\n"
+     "* **`COUNT(*) > 0`** counts every row to learn whether there is one; `EXISTS (SELECT 1 ...)` stops at the "
+     "first."),
     ("schema-names", "Always use schema names", ["missing_schema", "linked_server"],
      "Refer to tables as `schema.table` (`dbo.Sales`). Without the schema, SQL Server checks the user's default "
      "schema first, which can pick another table and prevents plan reuse. Four-part names (`server.db.schema.table`) "

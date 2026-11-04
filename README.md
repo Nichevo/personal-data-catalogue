@@ -172,6 +172,39 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.10
+
+**Slow SQL** (Review › Slow SQL): every query, view and procedure the catalogue found that may run slowly, in one
+place. Nothing is run and nothing connects to a server: these are patterns in the SQL text, checked against what
+your scans already know (row counts, column types, which views read which).
+
+- **Worst first**: queries are ordered by the biggest table they read (row counts from your SQL Server scans),
+  then by how many slow checks they trip, so a `SELECT *` on a 50-million-row table comes before one on a lookup
+  table. Pick a check to see only those, and pick a row to open the query with each check's reason and fix.
+- **By check**: one group per check with how many queries have it, "Fine here" per query and "Accept everywhere"
+  for a pattern that's fine in your SQL.
+- **CSV download** of every finding (query, where it is, check, reason, biggest table, rows).
+- **New slow checks**:
+  - a subquery in the SELECT list (runs once per row);
+  - a user function such as `dbo.fnClean(x)` in the column list, WHERE or JOIN (also once per row);
+  - `OR` across different columns in WHERE, and any `OR` in a join (stops index seeks);
+  - `ORDER BY` inside a view or subquery, including `TOP 100 PERCENT ... ORDER BY` (sorts for nothing);
+  - joining on joined-up values (`a.x + a.y = b.z`);
+  - `COUNT(*) > 0` used to test for rows (`EXISTS` stops at the first);
+  - very long `IN (...)` lists (50 values or more);
+  - query and index hints (`WITH (INDEX(...))`, `FORCESEEK`, `HASH JOIN`, `OPTION (MAXDOP ...)`...);
+  - a text column compared with a number (`WHERE StoreCode = 1234` on a varchar column), using the scanned
+    column types;
+  - views built on views three or more levels deep, with the chain shown (`vSales → vSalesBase → vRaw`);
+  - a big table read with no `WHERE` or `TOP` (1 million rows by default; change it under Settings on the page).
+    View definitions are left out, since the query reading the view usually filters it.
+- The SQL Server good-practice pack (Knowledge) has a new article on these patterns; load the pack again to add it
+  (your own edits to its articles are kept).
+- **Find › SQL queries** has a **Check** filter: one check, or any wrong-result, risky or slow check.
+- Slow findings still stay off To review (it lists wrong-result and risky ones), so it doesn't fill up.
+- No rescan needed: saved check results are worked out again for every query the first time you open a list.
+- Maybe later, as a separate opt-in idea: reading real execution plans or Query Store from SQL Server.
+
 ## New in version 2.9
 
 **Change tracking** (Review › Change tracking): every change in one place, with graphs over time and your own
@@ -1087,7 +1120,10 @@ Version 2.1 adds the 46 items below. Some things to know first:
     deprecated.
   - *Slow*: `SELECT *`, functions wrapped around filtered columns (`YEAR(SaleDate) = 2025`),
     `LIKE '%...'`, `DISTINCT` covering duplicates, `UNION` where `UNION ALL` would do,
-    cursors and loops in procedures.
+    cursors and loops in procedures; since 2.10 also subqueries and user functions per row, `OR` across
+    columns, `ORDER BY` in views, joins on worked-out values, `COUNT(*) > 0`, long `IN` lists, hints, text
+    columns compared with numbers, views on views, and big tables read with no filter. Review › Slow SQL lists
+    them worst first.
   - *Risky*: `NOLOCK` on data that must be exact, hard-coded dates, missing schema names,
     and SQL built by pasting variables into strings in scripts (an injection risk).
   Findings show on the query's page and in a column on the SQL queries page, can be

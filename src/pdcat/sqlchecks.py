@@ -5,16 +5,16 @@ matters), so it can be wrong; a finding you mark "fine here" is not raised again
 Every check says why it matters and links to the matching SQL Server article in Microsoft's docs
 (the SQL Server good-practice starter pack in Knowledge carries the same topics).
 
-Wrong-result and risky findings go on the To review list, one item per query; slow-pattern
-findings show on the query's page.
+Wrong-result and risky findings go on the To review list, one item per check; slow-pattern findings show on
+the query's page and, together and worst first (by the size of the tables read), on Review › Slow SQL (2.10).
 """
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from .sqlrefs import strip_comments
@@ -110,7 +110,56 @@ RULES: dict[str, tuple[str, str, str, str]] = {
     "linked_server": ("risky", "Uses a linked server (four-part name)",
                       "Queries across servers depend on the link and can pull whole tables across the network.",
                       DOCS + "relational-databases/linked-servers/linked-servers-database-engine"),
+    # Version 2.10: more slow patterns. Text checks first, then ones that need the catalogue.
+    "select_subquery": ("slow", "Subquery in the SELECT list",
+                        "A (SELECT ...) inside the column list usually runs once for every row returned. A join, "
+                        "or a window function such as ROW_NUMBER() or SUM() OVER (...), works on the whole set at "
+                        "once.", DOCS + "relational-databases/performance/subqueries"),
+    "scalar_udf": ("slow", "Calls a user function per row",
+                   "A schema-named function (dbo.fnSomething(...)) in the column list, WHERE or JOIN runs once per "
+                   "row and hides its work from the optimiser. Inline the logic or use an inline table-valued "
+                   "function with CROSS APPLY.", DOCS + "relational-databases/user-defined-functions/scalar-udf-inlining"),
+    "or_across_columns": ("slow", "OR across different columns",
+                          "WHERE a = 1 OR b = 2 (or a join ON ... OR ...) usually stops SQL Server seeking on one "
+                          "index, so it reads the whole table. Two queries joined with UNION ALL, or IN (...) on one "
+                          "column, can seek.", DOCS + "relational-databases/sql-server-index-design-guide"),
+    "order_in_view": ("slow", "ORDER BY inside a view or subquery",
+                      "ORDER BY in a view or subquery (often with TOP 100 PERCENT) sorts for nothing: the order isn't "
+                      "kept in the result. Sort in the query that reads it.",
+                      DOCS + "t-sql/queries/select-order-by-clause-transact-sql"),
+    "join_on_expression": ("slow", "Join on a worked-out value",
+                           "Joining on joined-up text or arithmetic (a.x + a.y = b.z) can't use an index on either "
+                           "side. Store the combined key in a column, or join on the parts.",
+                           DOCS + "relational-databases/performance/joins"),
+    "count_for_exists": ("slow", "COUNT(*) used to test for rows",
+                         "COUNT(*) > 0 counts every matching row just to see if there is one. EXISTS (SELECT 1 ...) "
+                         "stops at the first.", DOCS + "t-sql/language-elements/exists-transact-sql"),
+    "long_in_list": ("slow", "Very long IN (...) list",
+                     "Hundreds of values in IN (...) make a slow, hard-to-cache plan. Put the values in a table (or "
+                     "a temp table) and join to it.", DOCS + "t-sql/language-elements/in-transact-sql"),
+    "query_hints": ("slow", "Forces a plan with hints",
+                    "Index hints, FORCESEEK, LOOP/HASH/MERGE JOIN or OPTION (FORCE ORDER) fix the plan, which can "
+                    "help once and hurt after the data grows. Check it still helps.",
+                    DOCS + "t-sql/queries/hints-transact-sql"),
+    "implicit_conversion": ("slow", "Text column compared with a number",
+                            "The column holds text but is compared with a number, so SQL Server converts every row's "
+                            "value before comparing: no index seek, and text that isn't a number makes the query "
+                            "fail. Compare with a quoted value.",
+                            DOCS + "t-sql/data-types/data-type-conversion-database-engine"),
+    "nested_views": ("slow", "Views built on views",
+                     "This reads a view that reads other views, three or more levels deep. The optimiser often gives "
+                     "up on deep stacks and reads tables it doesn't need. Read the tables directly, or flatten the "
+                     "views.", DOCS + "relational-databases/views/views"),
+    "big_table_no_filter": ("slow", "Reads a big table with no filter",
+                            "The query reads a large table (from your scans' row counts) with no WHERE or TOP, so "
+                            "every row is read. Filter to what you need.",
+                            DOCS + "t-sql/queries/where-transact-sql"),
 }
+
+# Severity order for sorting findings.
+SEVERITY_ORDER = {"wrong": 0, "risky": 1, "slow": 2}
+BIG_TABLE_ROWS = 1_000_000   # default for "Reads a big table with no filter" (a Settings value on Slow SQL)
+LONG_IN_LIST = 50            # values in IN (...) before it's flagged
 
 _STRINGS = re.compile(r"'(?:[^']|'')*'")
 
@@ -185,10 +234,160 @@ def check_sql(sql: str) -> tuple[tuple[str, str], ...]:
             break
     if re.search(r"(=|<|>|between|and)\s*'(?:19|20)\d\d-?[01]\d-?[0-3]\d", raw):
         found.append(("hard_coded_date", ""))
+    found += _slow_checks(code, raw)
     return tuple(dict.fromkeys(found))
 
 
-_CHECKS_VERSION = hashlib.sha1(inspect.getsource(check_sql).encode()).hexdigest()[:12]
+# Words that start a part of a statement, for working out where a "(select" sits. AS is left out so an alias
+# ("x AS name, (SELECT ...)") doesn't hide the SELECT list; WITH covers a CTE ("WITH x AS (SELECT").
+_CLAUSE = re.compile(r"\b(select|from|where|join|on|in|exists|having|union|with|apply|values|into|by|when|then|"
+                     r"else|case|any|all|some)\b")
+_HINT = re.compile(r"\bwith\s*\(\s*(?:nolock\s*,\s*)?(index\s*[(=]|forceseek|forcescan)|"
+                   r"\b(?:inner|left|right|full)?\s*(?:outer\s+)?(loop|hash|merge|remote)\s+join\b|"
+                   r"\boption\s*\([^)]*\b(force\s+order|loop\s+join|hash\s+join|merge\s+join|maxdop|"
+                   r"optimize\s+for|use\s+plan|querytraceon)\b")
+_SECTION_END = r"(?=\b(?:group\s+by|order\s+by|having|union|where|join|left|right|inner|full|cross|outer|select|" \
+               r"from|into|option)\b|\)|;|$)"
+
+
+def _parens(code: str, start: int) -> str:
+    """The text inside the brackets that open at `start` (or to the end, when they never close)."""
+    depth = 0
+    for i in range(start, len(code)):
+        if code[i] == "(":
+            depth += 1
+        elif code[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return code[start + 1:i]
+    return code[start + 1:]
+
+
+def _flat(text: str) -> str:
+    """Text with everything inside brackets taken out, so a clause's own words are left."""
+    out, depth = [], 0
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(depth - 1, 0)
+        elif depth == 0:
+            out.append(ch)
+    return "".join(out)
+
+
+_TOKENS = re.compile(r"\(\s*select\b|\(|\)|" + _CLAUSE.pattern)
+
+
+def _subquery_in_select_list(code: str) -> bool:
+    """True when a (SELECT ...) sits in a SELECT list: the last clause word at its bracket depth is SELECT.
+    One pass over the text, so very long SQL with many subqueries stays quick."""
+    last = [""]  # the last clause word seen at each bracket depth
+    for m in _TOKENS.finditer(code):
+        tok = m.group(0)
+        if tok.startswith("("):
+            if tok != "(" and last[-1] == "select":
+                return True
+            last.append("select" if tok != "(" else "")
+        elif tok == ")":
+            if len(last) > 1:
+                last.pop()
+        else:
+            last[-1] = m.group(1)
+    return False
+
+
+def _no_subqueries(code: str) -> str:
+    """Text with each (SELECT ...) replaced by (), so a clause's own conditions are left (brackets kept)."""
+    out, i = [], 0
+    for m in re.finditer(r"\(\s*select\b", code):
+        if m.start() < i:
+            continue
+        out.append(code[i:m.start()] + "()")
+        i = m.start() + len(_parens(code, m.start())) + 2
+    return "".join(out) + code[i:]
+
+
+_COMPARED = r"([a-z_][\w.]*)\s*(?:=|<>|!=|>=|<=|>|<|\blike\b|\bin\b|\bis\b)"
+
+
+def _or_columns(code: str) -> str | None:
+    """The columns an OR in a WHERE or ON clause compares, when it spans more than one column (any OR in ON)."""
+    for clause in re.finditer(r"\b(where|on)\b(.*?)" + _SECTION_END.replace("|\\)", ""), code):
+        parts = re.split(r"\bor\b", clause.group(2))
+        if len(parts) < 2:
+            continue
+        cols = set()
+        for i, part in enumerate(parts):
+            hits = re.findall(_COMPARED, part)
+            if hits:
+                cols.add((hits[-1] if i == 0 else hits[0]).split(".")[-1])
+        if len(cols) > 1 or clause.group(1) == "on":
+            return ", ".join(sorted(cols))[:80]
+    return None
+
+
+def _slow_checks(code: str, raw: str) -> list[tuple[str, str]]:
+    """The 2.10 slow patterns on the cleaned-up text."""
+    found: list[tuple[str, str]] = []
+    if _subquery_in_select_list(code):
+        found.append(("select_subquery", ""))
+    for m in re.finditer(r"(?<![\w.@#])((?:\[?\w+\]?\.)+)\[?(\w+)\]?\s*\(", code):
+        before = code[:m.start()].rstrip()
+        if re.search(r"\b(from|join|apply|exec|execute|into|table|references|on\s+table)$", before) \
+                or m.group(2) in ("value", "query", "nodes", "exist", "modify", "write"):  # xml / .write() methods
+            continue
+        if before.endswith(("create function", "alter function", "procedure", "proc")):
+            continue
+        found.append(("scalar_udf", (m.group(1) + m.group(2)).replace("[", "").replace("]", "")))
+        break
+    flat = _flat(code)
+    pieces = [code] + [_parens(code, m.start()) for m in re.finditer(r"\(\s*select\b", code)]
+    for piece in pieces:
+        about = _or_columns(_no_subqueries(piece))
+        if about is not None:
+            found.append(("or_across_columns", about))
+            break
+    if re.search(r"\b(create|alter)\s+(or\s+alter\s+)?view\b", code) and re.search(r"\border\s+by\b", flat) \
+            and not re.search(r"\boffset\b|\bfor\s+(xml|json)\b", code):
+        found.append(("order_in_view", ""))
+    else:
+        for m in re.finditer(r"\(\s*select\b", code):
+            inner = _parens(code, m.start())
+            mine = _flat(inner)
+            if re.search(r"\border\s+by\b", mine) and re.search(r"\btop\s*\(?\s*100\s*\)?\s*percent\b", mine):
+                found.append(("order_in_view", ""))
+                break
+            if re.search(r"\border\s+by\b", mine) and not re.search(r"\btop\b|\boffset\b|\bfor\s+(xml|json)\b",
+                                                                   mine) \
+                    and not re.search(r"\bover\s*\(", inner):
+                found.append(("order_in_view", ""))
+                break
+    for m in re.finditer(r"\bon\b(.*?)" + _SECTION_END, flat):
+        cond = m.group(1)
+        if re.search(r"[\w\]]\s*(\+|\|\|)\s*[\w\[']", cond) or re.search(r"\bconcat\s*\(", code[m.start():m.end() + 40]):
+            found.append(("join_on_expression", ""))
+            break
+    test = r"\s*(?:>\s*0|>=\s*1|<>\s*0|!=\s*0|=\s*0)(?!\s*[.\d])"
+    if re.search(r"\(\s*select\s+count\s*\(\s*(?:\*|1)\s*\)[^()]*(?:\([^()]*\)[^()]*)*\)" + test, code) \
+            or re.search(r"(?<!having )\bcount\s*\(\s*(?:\*|1)\s*\)" + test, code):
+        found.append(("count_for_exists", ""))
+    for m in re.finditer(r"\bin\s*\(([^()]*)\)", raw):
+        body = m.group(1)
+        if "select" in body:
+            continue
+        n = body.count(",") + 1
+        if n >= LONG_IN_LIST:
+            found.append(("long_in_list", f"{n} values"))
+            break
+    h = _HINT.search(code)
+    if h:
+        found.append(("query_hints", next(g for g in h.groups() if g).upper().split("(")[0].strip()))
+    return found
+
+
+# Saved check results are thrown away whenever this file changes, so a new or changed check runs on every query.
+_CHECKS_VERSION = hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:12]
 
 
 def _sql_hash(sql: str) -> str:
@@ -211,6 +410,18 @@ class _CheckCache:
         if h in self.known:
             return tuple(tuple(p) for p in json.loads(self.known[h]))
         found = check_sql(sql)
+        self.known[h] = json.dumps(found)
+        self.new.append((h, _CHECKS_VERSION, self.known[h]))
+        return found
+
+    def facts(self, sql: str) -> tuple[tuple[tuple[str, str], ...], bool]:
+        """_text_facts, kept the same way (under the SQL's hash + "f"), so the first look after starting is quick."""
+        h = _sql_hash(sql) + "f"
+        self.seen.add(h)
+        if h in self.known:
+            compares, no_filter = json.loads(self.known[h])
+            return tuple(tuple(c) for c in compares), bool(no_filter)
+        found = _text_facts(sql)
         self.known[h] = json.dumps(found)
         self.new.append((h, _CHECKS_VERSION, self.known[h]))
         return found
@@ -272,6 +483,11 @@ class _Lookups:
         self._columns: dict[str, dict[str, str]] = {}
         self._profiles: dict[str, dict[str, Any]] = {}
         self._lifecycle: dict[str, str | None] = {}
+        self._rows: dict[str, int] | None = None
+        self.names: dict[str, str] = {}  # table key -> its catalogued name, filled with the row counts
+        self._views: dict[str, list[str]] | None = None
+        self._depth: dict[str, tuple[int, list[str]]] = {}
+        self.big_rows = int(cat.setting("slow_sql_big_rows", BIG_TABLE_ROWS) or BIG_TABLE_ROWS)
 
     @property
     def tables(self) -> dict:
@@ -299,6 +515,118 @@ class _Lookups:
         return self._lifecycle[key]
 
 
+    def rows(self, key: str) -> int:
+        """The table's row count from the latest scan (0 when not known)."""
+        if self._rows is None:
+            self._rows = {}
+            for k, name, attrs in self.cat.conn.execute(
+                    "SELECT key, name, attrs FROM assets WHERE kind IN ('table', 'view') AND status = 'active'"):
+                self.names[k] = name
+                try:
+                    n = json.loads(attrs or "{}").get("row_count")
+                    if isinstance(n, (int, float)) or (isinstance(n, str) and n.isdigit()):
+                        self._rows[k] = int(n)
+                except (ValueError, TypeError):
+                    continue
+        return self._rows.get(key, 0)
+
+    @property
+    def views(self) -> dict[str, list[str]]:
+        """view key -> the catalogued tables and views its definition reads."""
+        if self._views is None:
+            self._views = {}
+            for item, tables in self.cat.conn.execute(
+                    "SELECT p.item, q.tables FROM sql_query_places p JOIN sql_queries q ON q.uid = p.query_uid "
+                    "WHERE p.location = 'view definition' AND q.status = 'active'"):
+                reads = [t["key"] for t in json.loads(tables or "[]") if t.get("key") and t.get("key") != item]
+                self._views.setdefault(item, []).extend(reads)
+        return self._views
+
+    def view_depth(self, key: str, seen: tuple = ()) -> tuple[int, list[str]]:
+        """How many views deep `key` goes (0 for a table), with the deepest chain of view keys."""
+        if key not in self.views or key in seen:
+            return 0, []
+        if key not in self._depth:
+            best: tuple[int, list[str]] = (0, [])
+            for k in self.views[key]:
+                d = self.view_depth(k, (*seen, key))
+                if d[0] > best[0]:
+                    best = d
+            self._depth[key] = (best[0] + 1, [key, *best[1]])
+        return self._depth[key]
+
+
+def biggest_table(q: dict[str, Any], look: _Lookups) -> tuple[int, str]:
+    """(rows, name) of the largest catalogued table the query reads, for putting the worst first."""
+    best = (0, "")
+    for t in q.get("tables") or []:
+        if t.get("key") and t.get("relation") != "calls":
+            n = look.rows(t["key"])
+            if n > best[0]:
+                best = (n, look.names.get(t["key"], t["name"]))
+    return best
+
+
+_NUMBER_COMPARE = re.compile(r"(?<![\w.])(?:(\w+)\.)?(\w+)\s*(?:=|<>|!=|>=|<=|>|<|in\s*\()\s*-?\d+(?![\w.'])")
+_CONDITION_BEFORE = re.compile(r"(?:\bwhere|\band|\bor|\bon|\bnot|\bhaving|\()\s*$")
+
+
+@lru_cache(maxsize=32768)
+def _text_facts(sql: str) -> tuple[tuple[tuple[str, str], ...], bool]:
+    """What the catalogue checks need from the text, worked out once per piece of SQL: the (qualifier, column)
+    pairs compared with a bare number in a condition, and whether it's a SELECT with no WHERE, TOP, OFFSET or
+    FETCH."""
+    code = _code(sql)
+    compares = []
+    for m in _NUMBER_COMPARE.finditer(code):
+        if _CONDITION_BEFORE.search(code, max(0, m.start() - 12), m.start()):
+            compares.append((m.group(1) or "", m.group(2)))
+    no_filter = bool(re.search(r"\bselect\b", code)) and not re.search(r"\bwhere\b|\btop\b|\boffset\b|\bfetch\b",
+                                                                       code)
+    return tuple(dict.fromkeys(compares)), no_filter
+
+
+def _slow_catalogue_checks(q: dict[str, Any], look: _Lookups,
+                           cache: _CheckCache | None = None) -> list[tuple[str, str]]:
+    """2.10 checks that need the catalogue: hidden conversions, view stacks and big tables read whole."""
+    out: list[tuple[str, str]] = []
+    tables = [t for t in q.get("tables") or [] if t.get("key") and t.get("relation") != "calls"]
+    if not tables:
+        return out
+    compares, no_filter = cache.facts(q["sql"]) if cache else _text_facts(q["sql"])
+    by_alias: dict[str, str] = {}
+    for t in tables:
+        by_alias[t["name"].lower().split(".")[-1]] = t["key"]
+        if t.get("alias"):
+            by_alias[t["alias"].lower()] = t["key"]
+    for qual, col in compares:
+        keys = [by_alias[qual]] if qual and qual in by_alias else ([] if qual else [t["key"] for t in tables])
+        types = {look.col_type(k, col) for k in keys} - {None}
+        if len(types) == 1 and _type_family(next(iter(types))) == "text":
+            shown = re.search(rf"\b{re.escape(col)}\b", q["sql"], re.I)
+            out.append(("implicit_conversion", f"{shown.group(0) if shown else col} ({next(iter(types))})"))
+            break
+    places = q.get("places") or []
+    own = [p["item"] for p in places if p.get("location") == "view definition"]
+    deepest: tuple[int, list[str]] = (0, [])
+    for t in tables:
+        d = look.view_depth(t["key"])
+        if d[0] > deepest[0]:
+            deepest = d
+    levels = deepest[0] + (1 if own else 0)
+    if levels >= 3:
+        chain = ([own[0]] if own else []) + deepest[1]
+        out.append(("nested_views", " → ".join(k.rsplit("/", 1)[-1] for k in chain)))
+    only_views = bool(places) and len(own) == len(places)
+    if not only_views and no_filter:
+        for t in tables:
+            n = look.rows(t["key"])
+            if t.get("relation", "reads") == "reads" and n >= look.big_rows:
+                out.append(("big_table_no_filter", f"{look.names.get(t['key'], t['name'])} ({n:,} rows)"))
+                break
+    return out
+
+
 def findings_for(cat: Catalogue, q: dict[str, Any], marks: set | None = None,
                  look: _Lookups | None = None, cache: _CheckCache | None = None) -> list[dict[str, Any]]:
     """Findings for one library query (as from sqllibrary.get), with the ones you marked fine flagged ok."""
@@ -307,14 +635,15 @@ def findings_for(cat: Catalogue, q: dict[str, Any], marks: set | None = None,
     places = q.get("places") or []
     if any(p.get("built_from_variables") for p in places):
         pairs.append(("built_from_variables", ""))
-    pairs += _catalogue_checks(cat, q, look or _Lookups(cat))
+    look = look or _Lookups(cat)
+    pairs += _catalogue_checks(cat, q, look)
+    pairs += _slow_catalogue_checks(q, look, cache)
     out = []
     for rule, about in pairs:
         sev, title, why, article = RULES[rule]
         out.append({"rule": rule, "about": about, "severity": sev, "title": title + (f": {about}" if about else ""),
                     "detail": why, "article": article, "ok": (q["uid"], rule, about) in marks})
-    order = {"wrong": 0, "risky": 1, "slow": 2}
-    return sorted(out, key=lambda f: (f["ok"], order[f["severity"]]))
+    return sorted(out, key=lambda f: (f["ok"], SEVERITY_ORDER[f["severity"]]))
 
 
 def _catalogue_checks(cat: Catalogue, q: dict[str, Any], look: _Lookups) -> list[tuple[str, str]]:
@@ -401,32 +730,64 @@ def review_tasks(cat: Catalogue, task) -> list:
     return out
 
 
-def findings_by_rule(cat: Catalogue) -> dict[str, dict[str, Any]]:
-    """rule -> {"queries": [{"uid", "name", "where", "abouts"}], "severity"} for every open wrong-result or risky
-    finding, queries in old or not-relevant items left out."""
+def _shown(cat: Catalogue) -> list[dict[str, Any]]:
+    """Every checked query, less the ones only found in old, archived or not-relevant items."""
     from .curation import hidden_keys
     from .folderroles import archived
     from .groups import older_versions
     hidden = hidden_keys(cat, old=True) | archived(cat) | older_versions(cat)
+    return [q for q in _all(cat) if not (q["places"] and all(p["item"] in hidden for p in q["places"]))]
+
+
+def findings_by_rule(cat: Catalogue, severities: tuple[str, ...] = ("wrong", "risky"),
+                     queries: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+    """rule -> {"queries": [{"uid", "name", "where", "abouts"}], "severity"} for every open finding of these
+    severities (wrong-result and risky by default), queries in old or not-relevant items left out."""
     groups: dict[str, dict[str, Any]] = {}
-    for q in _all(cat):
-        if q["places"] and all(p["item"] in hidden for p in q["places"]):
-            continue
-        serious = [f for f in q["findings"] if not f["ok"] and f["severity"] in ("wrong", "risky")]
+    for q in _shown(cat) if queries is None else queries:
+        serious = [f for f in q["findings"] if not f["ok"] and f["severity"] in severities]
         if not serious:
             continue
         where = (cat.get_asset(q["places"][0]["item"]) or {}).get("name", "") if q["places"] else ""
         for rule in {f["rule"] for f in serious}:
             g = groups.setdefault(rule, {"queries": [], "severity": RULES[rule][0]})
             g["queries"].append({"uid": q["uid"], "name": q["name"], "where": where,
-                                 "abouts": [f["about"] for f in serious if f["rule"] == rule]})
+                                 "abouts": [f["about"] for f in serious if f["rule"] == rule],
+                                 "rows": q.get("rows", 0), "biggest": q.get("biggest", "")})
     return groups
+
+
+def slow_sql(cat: Catalogue) -> dict[str, Any]:
+    """Review › Slow SQL (2.10): every query with an open slow-pattern finding, worst first.
+
+    Worst first means: the biggest table the query reads (row counts from your scans), then how many slow checks
+    it trips, then how many places use it. Returns {"queries": [...], "by_rule": {rule: group}} where each query
+    has "uid", "name", "where", "places", "rows", "biggest", "slow" (its open slow findings)."""
+    look = _Lookups(cat)
+    out = []
+    for q in _shown(cat):
+        slow = [f for f in q["findings"] if not f["ok"] and f["severity"] == "slow"]
+        if not slow:
+            continue
+        rows, biggest = biggest_table(q, look)
+        where = (cat.get_asset(q["places"][0]["item"]) or {}).get("name", "") if q["places"] else ""
+        out.append({**q, "slow": slow, "rows": rows, "biggest": biggest, "where": where})
+    out.sort(key=lambda q: (-q["rows"], -len(q["slow"]), -len(q["places"]), q["name"].lower()))
+    by_rule = findings_by_rule(cat, ("slow",), out)
+    return {"queries": out, "by_rule": dict(sorted(by_rule.items(), key=lambda kv: -len(kv[1]["queries"])))}
+
+
+def slow_csv_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """One row per open slow finding, for the CSV download."""
+    return [{"query": q["name"], "where": q["where"], "check": f["title"], "why": f["detail"],
+             "biggest table": q["biggest"], "rows": q["rows"] or "", "places": len(q["places"]), "uid": q["uid"]}
+            for q in result["queries"] for f in q["slow"]]
 
 
 def accept_rule_everywhere(cat: Catalogue, rule: str) -> int:
     """Mark every open finding of one check fine, in every query. Returns how many were marked."""
     n = 0
-    for q in findings_by_rule(cat).get(rule, {}).get("queries", []):
+    for q in findings_by_rule(cat, (RULES[rule][0],)).get(rule, {}).get("queries", []):
         for about in q["abouts"]:
             mark_ok(cat, q["uid"], rule, about)
             n += 1

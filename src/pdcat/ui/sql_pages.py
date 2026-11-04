@@ -28,25 +28,42 @@ def queries_page(cat: Catalogue) -> None:
             sqllibrary.build_library(cat)
             st.rerun()
         return
-    c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
+    from pdcat.sqlchecks import RULES, SEVERITY_ICONS, cached_checks
+    c1, c2, c5, c3, c4 = st.columns([2, 2, 2, 1, 1])
     text = c1.text_input("Find", placeholder="name or SQL text", key="sqlq-text")
     tables = sorted({t["name"] for q in rows for t in q["tables"]})
     table = c2.selectbox("Using table", ["(any)", *tables], key="sqlq-table")
+    all_found = dict(zip((q["uid"] for q in rows), cached_checks(cat, [q["sql"] for q in rows])))
+    present = {r for f in all_found.values() for r, _ in f}
+    choices = ["(any)", *(f"any {s}" for s in ("wrong", "risky", "slow") if any(RULES[r][0] == s for r in present)),
+               *sorted(present, key=lambda r: (RULES[r][0] != "slow", RULES[r][1]))]
+    check = c5.selectbox("Check", choices, key="sqlq-check",
+                         help="Only queries with this check (or any check of a kind). Review › Slow SQL has the "
+                              "slow ones worst first.",
+                         format_func=lambda r: r if r == "(any)" else
+                         f"{SEVERITY_ICONS[r[4:]]} any: {r[4:]}" if r.startswith("any ") else
+                         f"{SEVERITY_ICONS[RULES[r][0]]} {RULES[r][1]}")
+
+    def has_check(q) -> bool:
+        if check == "(any)":
+            return True
+        if check.startswith("any "):
+            return any(RULES[r][0] == check[4:] for r, _ in all_found[q["uid"]])
+        return any(r == check for r, _ in all_found[q["uid"]])
     missing = c3.checkbox("Show missing", help="Queries not found on the latest scan", key="sqlq-missing")
     partly = c4.checkbox("Not read exactly", key="sqlq-partly",
                          help="Queries that sqlglot couldn't read in full, so the simple reader found (some of) their "
                               "tables")
     shown = [q for q in rows if (missing or q["status"] == "active")
              and (not partly or sqllibrary.read_label(q.get("analysis")) in ("partly", "simply"))
-             and (table == "(any)" or any(t["name"] == table for t in q["tables"]))
+             and (table == "(any)" or any(t["name"] == table for t in q["tables"])) and has_check(q)
              and (not text or text.lower() in q["name"].lower() or text.lower() in q["sql"].lower())]
     st.caption(f"{len(shown)} of {len(rows)} queries · checks: ❗ may give wrong results, ⚠️ risky, 🐢 may be slow")
-    from pdcat.sqlchecks import RULES, SEVERITY_ICONS, cached_checks
 
     def checks(found) -> str:
         sev = [RULES[r][0] for r, _ in found]
         return " ".join(f"{SEVERITY_ICONS[s]}{sev.count(s)}" for s in ("wrong", "risky", "slow") if s in sev)
-    found = cached_checks(cat, [q["sql"] for q in shown])
+    found = [all_found[q["uid"]] for q in shown]
     df = pd.DataFrame([{"query": q["name"], "tables": ", ".join(t["name"] for t in q["tables"][:6])
                         + (" …" if len(q["tables"]) > 6 else ""), "tables used": len(q["tables"]),
                         "places": q["places"], "status": q["status"],
