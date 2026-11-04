@@ -7,7 +7,7 @@ import streamlit as st
 from pdcat import knowledge as K
 from pdcat.store import Catalogue
 
-from .common import asset_button, first_line, go
+from .common import asset_button, first_line, go, selected_rows
 
 
 def _table_options(cat: Catalogue) -> dict[str, str]:
@@ -223,7 +223,7 @@ def metrics_page(cat: Catalogue) -> None:
                         "sources": len(m["sources"])} for m in rows])
     event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                          key="metrics-table")
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(rows))
     if sel:
         go(f"metric://{rows[sel[0]]['uid']}")
         st.rerun()
@@ -334,7 +334,7 @@ def sap_page(cat: Catalogue) -> None:
         df = pd.DataFrame(rows)
         event = st.dataframe(df.drop(columns=["key"]), hide_index=True, width="stretch", on_select="rerun",
                              selection_mode="single-row", key="sap-items")
-        sel = event.selection.rows if event else []
+        sel = selected_rows(event, len(rows))
         if sel:
             go(rows[sel[0]]["key"])
             st.rerun()
@@ -348,7 +348,7 @@ def sap_page(cat: Catalogue) -> None:
         df = pd.DataFrame(apo)
         event = st.dataframe(df.drop(columns=["key"]), hide_index=True, width="stretch", on_select="rerun",
                              selection_mode="single-row", key="apo-items")
-        sel = event.selection.rows if event else []
+        sel = selected_rows(event, len(apo))
         if sel:
             go(apo[sel[0]]["key"])
             st.rerun()

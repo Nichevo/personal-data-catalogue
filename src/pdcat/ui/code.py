@@ -10,7 +10,7 @@ import streamlit as st
 from pdcat.export import rows_to_csv
 from pdcat.store import Catalogue
 
-from .common import asset_button, cached, go
+from .common import asset_button, cached, go, selected_rows
 from .sources import add_library
 
 
@@ -186,7 +186,7 @@ def functions_section(cat: Catalogue, key: str, asset: dict) -> None:
         sync()
 
     def picked() -> None:
-        sel = st.session_state[table_key].selection.rows
+        sel = selected_rows(st.session_state.get(table_key), len(info))
         if sel:
             focus(list(info)[sel[0]])
 
@@ -384,7 +384,7 @@ def packages_page(cat: Catalogue) -> None:
     df["kind"] = df["kind"].map(CLASS_LABELS)
     event = st.dataframe(df.drop(columns=["key"]), hide_index=True, width="stretch", on_select="rerun",
                          selection_mode="single-row", key="packages-table")
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(rows))
     if sel:
         go(rows[sel[0]]["key"])
         st.rerun()

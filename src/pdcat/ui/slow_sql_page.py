@@ -12,7 +12,7 @@ import streamlit as st
 from pdcat import sqlchecks
 from pdcat.store import Catalogue
 
-from .common import asset_button, cached, go, page_title
+from .common import asset_button, cached, go, page_title, selected_rows
 
 
 @cached
@@ -76,7 +76,7 @@ def _worst_first(cat: Catalogue, queries: list[dict[str, Any]], pd) -> None:
                "with a reason and a fix")
     event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                          key="slow-list")
-    sel = event.selection.rows if event and getattr(event, "selection", None) else []
+    sel = selected_rows(event, len(shown))
     if sel:
         go(f"query://{shown[sel[0]]['uid']}")
         st.rerun()

@@ -7,7 +7,7 @@ import streamlit as st
 from pdcat import pbiobjects
 from pdcat.store import Catalogue
 
-from .common import asset_button, go, icon
+from .common import asset_button, go, icon, selected_rows
 
 
 def _parent_line(parent: dict, what: str) -> None:
@@ -96,7 +96,7 @@ def table_page(cat: Catalogue, key: str) -> None:
                                             "folder": m["folder"]} for m in view["measures"]]),
                              hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                              key=f"pbit-m-{key}")
-        sel = event.selection.rows if event else []
+        sel = selected_rows(event, len(view["measures"]))
         if sel:
             go(view["measures"][sel[0]]["key"])
             st.rerun()

@@ -11,7 +11,7 @@ from pdcat import changes as ch
 from pdcat import growth, trackers
 from pdcat.store import Catalogue
 
-from .common import go, go_page, icon, page_title, size_label
+from .common import go, go_page, icon, page_title, selected_rows, selection_key, size_label
 
 WINDOWS = {7: "7 days", 30: "30 days", 90: "90 days", 365: "a year", 3650: "all time"}
 FILTER_KEYS = ("categories", "sources", "kinds", "project", "tag", "group", "gold", "followed", "text", "hide_noise")
@@ -134,7 +134,7 @@ def all_changes_view(cat: Catalogue) -> None:
             st.caption("Showing the newest 5,000. Narrow the filters or group them to see the rest.")
         event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                              key="chg-table")
-        sel = event.selection.rows if event else []
+        sel = selected_rows(event, len(shown))
         if sel:
             go(shown[sel[0]]["item"])
             st.rerun()
@@ -577,8 +577,8 @@ def profiling_page(cat: Catalogue) -> None:
                         "profiles kept": r["profiles_kept"], "queue": r["queue"]} for r in shown])
     st.caption(f"{len(shown):,} of {len(rows):,} tables. Tick rows, then pick a rule.")
     event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="multi-row",
-                         key="prof-table")
-    picked = [shown[i]["key"] for i in (event.selection.rows if event else [])]
+                         key=selection_key("prof-table", [r["key"] for r in shown]))
+    picked = [shown[i]["key"] for i in selected_rows(event, len(shown))]
     b1, b2, b3 = st.columns([2, 1, 1])
     rule = b1.selectbox("Rule for the ticked tables", list(profilerules.RULES), format_func=profilerules.RULES.get,
                         key="prof-set")

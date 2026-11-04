@@ -172,6 +172,15 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.23
+
+**Profiling no longer fails after you filter the list.** On Add › Sources › Profiling, ticking tables and then
+typing in *Contains*, changing a filter, or setting a rule that took tables out of the list could stop the page
+with "list index out of range": the ticks were kept for rows that weren't there any more. The ticks are now
+cleared whenever the list shown changes, so a rule is never set on tables you didn't tick. The SQL scanning queue
+and the To review table work the same way, and every other table you can pick a row in now ignores a stale pick
+instead of failing.
+
 ## New in version 2.22
 
 **Data flow opens quickly.** Map › Data flow no longer draws the whole catalogue when you open it, which was too
