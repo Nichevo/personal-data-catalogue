@@ -22,10 +22,11 @@ _WRITE_PATTERNS = [
     rf"\btruncate\s+table\s+(?P<t>{_IDENT})",
     rf"\bcreate\s+table\s+(?P<t>{_IDENT})",
     rf"\bdrop\s+table\s+(?:if\s+exists\s+)?(?P<t>{_IDENT})",
+    rf"\balter\s+table\s+(?P<t>{_IDENT})",
 ]
 _READ_PATTERN = rf"\b(?:from|join)\s+(?P<t>{_IDENT})"
 _MERGE_SOURCE = rf"\bmerge\b[^;]*?\busing\s+(?P<t>{_IDENT})"
-_CALL_PATTERN = rf"\bexec(?:ute)?\s+(?P<t>{_IDENT})"
+_CALL_PATTERN = rf"(?:\bexec(?:ute)?|\{{\s*(?:\?\s*=\s*)?call)\s+(?P<t>{_IDENT})"  # EXEC p, ODBC {CALL p (?)}
 _CTE_PATTERN = r"(?:\bwith|,)\s*(\w+)\s*(?:\([^)]*\))?\s+as\s*\("
 _ALIAS_PATTERN = rf"\b(?:from|join|update|into)\s+(?P<t>{_IDENT})\s+(?:as\s+)?(?P<a>\w+)"
 _KEYWORDS = {"where", "on", "join", "inner", "left", "right", "full", "outer", "cross", "group", "order",
@@ -34,8 +35,15 @@ _KEYWORDS = {"where", "on", "join", "inner", "left", "right", "full", "outer", "
 
 _SQL_SHAPE = re.compile(
     r"\bselect\b[\s\S]*?\bfrom\b|\binsert\s+into\b|\bupdate\b[\s\S]+?\bset\b|\bdelete\s+from\b"
-    r"|\bmerge\b[\s\S]*?\busing\b|\btruncate\s+table\b|\bcreate\s+table\b|\bexec(?:ute)?\s+[\w\[]",
-    re.IGNORECASE,
+    r"|\bmerge\b[\s\S]*?\busing\b|\btruncate\s+table\b|\bcreate\s+table\b|\bexec(?:ute)?\s+[\w\[]"
+    # INSERT dbo.Sales (a) VALUES / SELECT (INTO is optional in T-SQL), DELETE dbo.Sales WHERE, BULK INSERT,
+    # DROP TABLE, ALTER TABLE, ODBC {CALL dbo.Load (?)}
+    rf"|\binsert\s+{_IDENT}\s*(?:\(|\bvalues\b|\bselect\b|\bexec\b|\bdefault\s+values\b)"
+    rf"|\bdelete\s+{_IDENT}\s+(?:where|output)\b|\bbulk\s+insert\s+[\w\[]"
+    rf"|\bdrop\s+table\s+(?:if\s+exists\s+)?{_IDENT}\s*(?:;|$)"
+    rf"|\balter\s+table\s+{_IDENT}\s+(?:add|drop|alter|with|nocheck|check|enable|disable|switch|rebuild|set)\b"
+    r"|\{\s*(?:\?\s*=\s*)?call\s+[\w\[]",
+    re.IGNORECASE | re.MULTILINE,
 )
 # Words that follow FROM in English or in Python rather than in SQL.
 _NOT_TABLES = {"the", "a", "an", "this", "that", "these", "those", "each", "which", "here", "there",

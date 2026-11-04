@@ -172,6 +172,29 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.24
+
+**Every table a write function is used for is found.** When one function builds the SQL from the schema and table
+it's given, for example `sql = f"MERGE [{schema}].[{table}] ..."` then `cursor.execute(sql, tuple(...))`, and it is
+called three times with three tables, only the first call's table was found. Now:
+
+- Each call counts, in the same file and from other scripts. A script that calls a shared upload function in
+  another file of the project writes the table it passes in, not the table worked out inside the shared file.
+  Each call's schema stays with its own table (never `dbo` from one call with the table of another).
+- The shared function itself no longer hands one table to every script that imports it.
+- Loops over a list of tables in the code count too: `for table in ["Sales", "Stock"]: df.to_sql(table, ...)`
+  and `for name, df in frames.items(): upload(cur, "dbo", name, df)`.
+- `if`/`else` branches that pick a table name give both tables for `to_sql`.
+
+**More write statements are recognised** in SQL inside Python: `INSERT dbo.Sales (...)` without `INTO`,
+`DELETE dbo.Sales WHERE ...` without `FROM`, `BULK INSERT`, `DROP TABLE`, `ALTER TABLE`, and ODBC
+`{CALL dbo.LoadSales (?)}`; also class-level names (`TABLE = "dbo.Sales"` then `self.TABLE`), polars
+`write_database`, Spark `saveAsTable` / `insertInto`, and SQLAlchemy `insert(sales)` / `sales.delete()` on a
+`Table("Sales", meta, schema="dbo")`. A script that runs a `.sql` file (`cursor.execute(open("load.sql").read())`)
+now shows **Runs** that SQL file.
+
+Rescan your Python projects to pick these up. The tool still only reads your code; nothing is run.
+
 ## New in version 2.22
 
 **Data flow opens quickly.** Map › Data flow no longer draws the whole catalogue when you open it, which was too

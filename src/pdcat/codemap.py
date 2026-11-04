@@ -93,7 +93,7 @@ def resolve_runs(cat: Catalogue, modules: dict[str, str] | None = None) -> int:
     by_name: dict[str, list[str]] = defaultdict(list)
     runners = []
     for row in cat.conn.execute("SELECT key, name, source, parent, attrs FROM assets "
-                                "WHERE kind IN ('script', 'notebook') AND status = 'active'"):
+                                "WHERE kind IN ('script', 'notebook', 'sql_script') AND status = 'active'"):
         rel = row["name"].replace("\\", "/").lower()
         by_rel[(row["parent"] or "", rel)] = row["key"]
         by_name[rel.rsplit("/", 1)[-1]].append(row["key"])
