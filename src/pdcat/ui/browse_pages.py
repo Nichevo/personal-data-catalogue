@@ -7,7 +7,7 @@ import streamlit as st
 
 from pdcat.store import Catalogue
 
-from .common import go, keep, page_title, restore
+from .common import go, keep, page_title, restore, selected_rows
 
 LIMIT = 2000
 
@@ -122,7 +122,7 @@ def powerbi_page(cat: Catalogue) -> None:
         st.info("No matches." if text else "Nothing catalogued yet. Scan a folder with Power BI reports in it.")
         return
     event = _pbi_table(rows, f"{len(rows)} {view.lower()}", f"browse-pbi-table-{what}", ("key",))
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(rows))
     if sel:
         go(rows[sel[0]]["key"])
         st.rerun()
@@ -153,7 +153,7 @@ def _columns_view(cat: Catalogue, old: bool) -> None:
         st.info("No matches." if text else "No model columns read yet. A .pbix needs pbixray to read its model.")
         return
     event = _pbi_table(rows, f"{len(rows)} columns", "browse-pbi-table-columns", ("key", "used"))
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(rows))
     if sel:
         go(rows[sel[0]]["key"])
         st.rerun()

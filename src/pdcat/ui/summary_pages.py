@@ -9,7 +9,7 @@ from pdcat import summaries as S
 from pdcat.export import rows_to_csv
 from pdcat.store import Catalogue
 
-from .common import cached, go, keep, restore
+from .common import cached, go, keep, restore, selected_rows
 
 
 @cached
@@ -44,7 +44,7 @@ def _show(cat: Catalogue, rows: list[dict], group_by: str, count_keys: tuple[str
     df = pd.DataFrame(table)
     event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                          key=f"{widget}-table")
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(table))
     if sel:
         picked = table[sel[0]]
         name = picked.get(label)

@@ -251,3 +251,20 @@ def lazy_download(label: str, build: Callable[[Catalogue], bytes | str], file_na
             cat.close()
 
     st.download_button(label, run, file_name, mime, key=key, on_click="ignore", help=help)
+
+
+def selected_rows(event, count: int) -> list[int]:
+    """The rows ticked in a table, leaving out any that no longer exist.
+
+    Streamlit keeps a table's selection between reruns. When a filter, a search or an action makes the table
+    shorter, the old row numbers can point past its end, so they are dropped here instead of failing."""
+    selection = getattr(event, "selection", None) if event else None
+    rows = getattr(selection, "rows", None) or []
+    return [i for i in rows if isinstance(i, int) and 0 <= i < count]
+
+
+def selection_key(base: str, ids) -> str:
+    """A table widget key that changes whenever the rows shown change, so ticks never slide onto other rows."""
+    import hashlib
+    digest = hashlib.md5("\n".join(str(i) for i in ids).encode("utf-8")).hexdigest()[:10]
+    return f"{base}-{digest}"

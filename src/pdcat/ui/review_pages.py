@@ -17,7 +17,7 @@ from pdcat.review import (
 )
 from pdcat.store import NOTE_TYPES, Catalogue
 
-from .common import asset_button, cached, go, page_title
+from .common import asset_button, cached, go, page_title, selected_rows, selection_key
 
 CATEGORY_ICONS = {"docs": "📝", "change": "🔄", "warning": "⚠️"}
 SORTS = {"Most important first": ("priority", False), "Most used first": ("used by", False),
@@ -45,7 +45,7 @@ def review_page(cat: Catalogue) -> None:
             df = pd.DataFrame([{"check": r["label"], "type": r["category"], "open": r["open"]} for r in by_rule])
             event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                                  key="review-by-rule")
-            sel = event.selection.rows if event else []
+            sel = selected_rows(event, len(by_rule))
             if sel:
                 st.session_state["review-rule"] = by_rule[sel[0]]["rule"]
                 st.session_state["review-rule-box"] = by_rule[sel[0]]["rule"]  # the selectbox below reads this
@@ -89,18 +89,20 @@ def compact_table(cat: Catalogue, tasks: list[dict], sort: str) -> None:
     col, asc = SORTS[sort]
     df = pd.DataFrame(rows).sort_values(col, ascending=asc, kind="stable", ignore_index=True)
     by_id = {t["id"]: t for t in tasks}
+    table_key = selection_key("review-table", df["id"])
     event = st.dataframe(df.drop(columns=["id", "priority"]), hide_index=True, width="stretch",
-                         on_select="rerun", selection_mode="multi-row", key="review-table",
+                         on_select="rerun", selection_mode="multi-row",
+                         key=table_key,
                          column_config={"": st.column_config.TextColumn(width="small"),
                                         "what": st.column_config.TextColumn(width="large"),
                                         "used by": st.column_config.NumberColumn(width="small")})
-    picked = [df.loc[i, "id"] for i in (event.selection.rows if event else [])]
+    picked = [df.loc[i, "id"] for i in selected_rows(event, len(df))]
     c0, c1, c2, c3, c4 = st.columns([1.2, 1.2, 1.4, 1.2, 3])
     label = f" ({len(picked)})" if picked else ""
 
     def bulk(status: str) -> None:
         set_tasks_status(cat, picked, status)
-        st.session_state.pop("review-table", None)
+        st.session_state.pop(table_key, None)
 
     # Clicking a cell only selects it, so the way to an item is: tick its row, then Open (or the title below).
     one = by_id[picked[0]] if len(picked) == 1 else None
