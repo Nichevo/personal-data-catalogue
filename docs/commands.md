@@ -107,6 +107,7 @@ pdcat profile dbo.SalesDaily dbo.Store       # these tables
 pdcat profile --used                         # every table your code or pasted SQL uses
 pdcat profile --used --source warehouse      # ...on one server only
 pdcat profile --queue                        # the tables approved under Add › Sources › SQL scanning
+pdcat profile --queue --approve              # approve what is waiting in the queue, then run it
 pdcat profile --used --plan                  # print the queries, send nothing
 ```
 
