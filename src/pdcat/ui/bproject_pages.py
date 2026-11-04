@@ -112,6 +112,8 @@ def bproject_page(cat: Catalogue, key: str) -> None:
 
     from .documents_page import documents_section
     documents_section(cat, key)
+    from .mlopp_pages import opportunities_box
+    opportunities_box(cat, project_uid=uid)
 
     if have or p["purpose"]:
         st.subheader("Suggested")

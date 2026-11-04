@@ -700,6 +700,47 @@ CREATE TABLE IF NOT EXISTS tracker_keys (
     last_day    TEXT,
     PRIMARY KEY (tracker_key, table_name, column_name, key_value)
 );
+-- Version 2.21: ML opportunities. One row per opportunity: from a recipe, your own, or a split of another.
+CREATE TABLE IF NOT EXISTS ml_opportunities (
+    uid         TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    recipe      TEXT,                              -- the recipe it is checked against (mlrecipes), if any
+    parent      TEXT,                              -- the opportunity it was split from
+    variant     TEXT,                              -- "Target B: late or on time" for a split
+    predicts    TEXT,
+    tool        TEXT,
+    method      TEXT,
+    status      TEXT NOT NULL DEFAULT 'idea',      -- idea | exploring | pilot | live | parked
+    owner       TEXT,
+    notes       TEXT,
+    value       INTEGER,                           -- rough value, 1 to 5
+    effort      INTEGER,                           -- rough effort, 1 to 5
+    baseline    TEXT,                              -- today's figure to beat, typed in
+    checks      TEXT NOT NULL DEFAULT '{}',        -- {signal: {"confirmed": bool, "override": state, "note": text}}
+    auto        INTEGER NOT NULL DEFAULT 0,        -- 1 = made for a recipe after a scan
+    created_at  TEXT,
+    updated_at  TEXT,
+    author      TEXT
+);
+-- What an opportunity uses: tables, columns ("<key>#<column>"), measures, reports and scripts, each with a role.
+CREATE TABLE IF NOT EXISTS ml_items (
+    opp_uid   TEXT NOT NULL,
+    item      TEXT NOT NULL,
+    kind      TEXT NOT NULL,                       -- table | column | measure | other
+    role      TEXT,                                -- target | feature | key | date | related | source
+    state     TEXT NOT NULL DEFAULT 'suggested',   -- confirmed | suggested | rejected
+    why       TEXT,
+    concept   TEXT,
+    updated_at TEXT,
+    PRIMARY KEY (opp_uid, item)
+);
+CREATE INDEX IF NOT EXISTS ix_ml_items_item ON ml_items(item);
+-- Business projects an opportunity belongs to.
+CREATE TABLE IF NOT EXISTS ml_links (
+    opp_uid     TEXT NOT NULL,
+    project_uid TEXT NOT NULL,
+    PRIMARY KEY (opp_uid, project_uid)
+);
 -- What to profile and how often: now, weekly, monthly or never.
 CREATE TABLE IF NOT EXISTS profile_rules (
     asset_key      TEXT PRIMARY KEY,
@@ -727,11 +768,12 @@ ADDED_COLUMNS = {
     "profiles": {"histogram": "TEXT", "percentiles": "TEXT", "hints": "TEXT"},
     "folders": {"canonical": "TEXT", "roles": "TEXT"},
     "libraries": {"role": "TEXT NOT NULL DEFAULT 'library'", "from_folder": "TEXT"},
-    "item_info": {"relevance": "TEXT", "sap_name": "TEXT"},
     "column_info": {"sap_name": "TEXT", "business_name": "TEXT"},
     # version 2.3
     "metrics": {"usual_range": "TEXT", "range_note": "TEXT"},
     "documents": {"path": "TEXT", "mtime": "REAL", "describes": "TEXT", "source": "TEXT"},
+    # version 2.21
+    "item_info": {"relevance": "TEXT", "sap_name": "TEXT", "table_type": "TEXT"},
 }
 
 

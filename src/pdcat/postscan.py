@@ -20,6 +20,7 @@ from . import (
     labels,
     learned,
     metricfind,
+    mlopps,
     naming,
     profilerules,
     register,
@@ -30,6 +31,7 @@ from . import (
     sqlchecks,
     sqllibrary,
     tablepairs,
+    tabletypes,
     trackers,
     versions,
 )
@@ -126,4 +128,7 @@ SWITCHABLE_STEPS: list[tuple[str, Callable[[Catalogue], int], str]] = [
     ("bproject_folders", bprojects.sync_folders, "new files in business project folders"),
     ("report_register", register.refresh, "Power BI report register"),
     ("change_trackers", trackers.after_scan, "change trackers"),
+    # after the SAP meanings, change trackers and table types they read
+    ("table_types", tabletypes.suggest_all, "table types"),
+    ("ml_opportunities", mlopps.after_scan, "ML opportunities"),
 ]

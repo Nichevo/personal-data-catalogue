@@ -172,6 +172,49 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.21
+
+**ML opportunities** (Knowledge › ML opportunities): machine learning projects your data could support, how ready
+each one is, and what a data scientist would need to start. Everything comes from what your scans already found.
+Nothing is run against your servers and nothing in your data or tables is changed: where a figure needs a query,
+the page gives you read-only SQL to copy and run yourself.
+
+- **12 supply chain recipes**, checked against your catalogue after each scan: demand forecasting, safety stock,
+  lead time, stock-out and OTIF risk, supplier risk, master data anomalies, slow movers and obsolescence, order
+  promising, warehouse labour and slotting, returns, price and promotion effects, and transport and freight cost.
+  A **planner assistant (AI agent)** recipe is there as an example of a different kind of tool. Each recipe looks
+  for its columns by SAP field name and by friendly name (`EBELN` or `PurchaseOrderNumber`), and the page shows
+  both, so you can always find the original. Switch recipes off, change them or add your own under the Recipes tab.
+- **Readiness score** out of 100 from six checks: a target to predict, history depth, grain, features that join,
+  freshness and business pain (Power BI measures that already show the problem). Mark a check Confirmed or
+  override it. How much each check counts is set under Settings › ML opportunities (target and history count
+  double by default; two years of history counts as enough).
+- **+ New opportunity** needs only a name. Pick the kind of tool (forecast model such as LightGBM, a yes or no
+  prediction, anomaly detection, optimisation, an AI agent, or rules first), the status (idea to live), owner,
+  value and effort, then add tables and columns with their role (target, feature, key, date).
+- **Splits**: split an opportunity into Target A and Target B (lead time from order date, lead time from
+  confirmation). A split copies everything at the time of the split, then goes its own way.
+- **Business projects**: link an opportunity to a business project; the project's tables that share key columns
+  are suggested, and the project's page lists its opportunities.
+- **Related Power BI measures** with how complex each is (Complex, Medium, Simple from the DAX). Tick the ones that
+  are related; **Use as target** gives a SQL view script to copy, nothing is created.
+- **Baseline to beat**: when a plan and an actual column are found (planned and actual lead time, forecast and
+  sales), a read-only SQL to work out today's error, and a box to type the figure in.
+- **Warnings**: columns that may leak the answer (filled in only after the event), and target columns with many
+  blanks or drifting values (from profiles).
+- **Value and readiness** chart, **Shared tables** (tables many opportunities need, worth getting right first)
+  and **feature ideas** (tables that join to the target but no script reads yet).
+- **Data scientist pack**: a zip with a README, the tables, columns (with SAP names), joins, related measures and
+  starter and baseline SQL.
+
+**Table types**: tables and datasets can be marked **Snapshot** (the same rows copied on each date, such as stock
+on hand every day), **Transaction** (one row per event) or **Dimension** (one row per thing). A type is suggested
+after each scan as Likely or Check with its reason; accept it under Suggestions, or set it on the table's page or
+in Bulk edit. Find › Tables and datasets has a table type filter, and a snapshot table counts as history for an ML
+opportunity whose target keeps only today's values.
+
+No new libraries are needed.
+
 ## New in version 2.10
 
 **Slow SQL** (Review › Slow SQL): every query, view and procedure the catalogue found that may run slowly, in one

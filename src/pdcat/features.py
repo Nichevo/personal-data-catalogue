@@ -35,6 +35,9 @@ FEATURES: dict[str, str] = {
     "report_register": "Read the Power BI report register again after each scan and match its rows to reports",
     "change_trackers": "Find change-tracking files and tables, link them to the tables they track, and bring change "
                        "summaries you've read before up to date (files only; SQL trackers are read when you ask)",
+    "table_types": "Suggest whether each table is a snapshot, a transaction table or a dimension",
+    "ml_opportunities": "Check the ML opportunity recipes against the catalogue after each scan and suggest candidate "
+                        "tables and columns",
 }
 
 
