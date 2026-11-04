@@ -54,6 +54,7 @@ def test_about_page_and_subway_data_flow_render(catalogue, monkeypatch):
     assert app.title[0].value == "About"
     assert any(e.label.startswith("Version ") for e in app.expander)
     goto(app, "Data flow")
+    app.selectbox(key="flow-start").set_value("\0everything").run()
     app.radio(key="flow-view").set_value("subway").run()
     assert not app.exception
     app.checkbox(key="flow-versions").check().run()
