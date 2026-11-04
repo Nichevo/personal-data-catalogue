@@ -172,6 +172,19 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.22
+
+**Data flow opens quickly.** Map › Data flow no longer draws the whole catalogue when you open it, which was too
+slow on a big catalogue. It now waits for you to pick a project or folder in **Start from**, and the diagram and the
+*Where data comes from* table then cover just that project or folder (still followed upstream and downstream).
+To draw everything, pick **Everything** at the top of the list.
+
+**Tables with dots in their name are found.** A table whose own name holds dots, such as `dbo.[FAX.FAXX.Sales]`,
+was scanned but never matched to the scripts, SQL files, views and Power BI queries that use it, because the name
+was read as database `FAX`, schema `FAXX`, table `Sales`. Names are now tried every way they can be split, so these
+links are made. If a name could be either of two scanned tables, the link is left for you to pick rather than
+guessed. No rescan is needed: links are matched again at the end of your next scan.
+
 ## New in version 2.21
 
 **ML opportunities** (Knowledge › ML opportunities): machine learning projects your data could support, how ready

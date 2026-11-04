@@ -1188,17 +1188,24 @@ class Catalogue:
         """The scanned tables a name in SQL ("sales", "dbo.sales", "db.dbo.sales"...) could be; one when it's clear."""
         index = self.table_index() if index is None else index
         parts = name.split(".")
-        if "{}" in parts[-1]:  # a name built at run time, e.g. f"sales_{region}"
-            pattern = re.compile(re.escape(parts[-1]).replace(r"\{\}", ".+") + "$")
-            cands = [c for obj, cs in index.items() if pattern.match(obj) for c in cs]
-        else:
-            cands = index.get(parts[-1], [])
-        if len(parts) >= 2:
-            cands = [c for c in cands if c["schema"] == parts[-2]]
-        if len(parts) >= 3:
-            cands = [c for c in cands if c["database"] == parts[-3]]
-        if len(parts) >= 4:
-            cands = [c for c in cands if parts[-4] in (c["server"], c["source"])]
+        # A table's own name can hold dots ([dbo].[FAX.FAXX.Sales]), and SQL names lose their brackets when read,
+        # so try every split: "dbo.fax.faxx.sales" may be table "sales" in schema "faxx" of database "fax", or
+        # table "fax.faxx.sales" in schema "dbo".
+        cands: list[dict[str, str]] = []
+        for at in range(len(parts) - 1, -1, -1):
+            obj, before = ".".join(parts[at:]), parts[:at]
+            if "{}" in obj:  # a name built at run time, e.g. f"sales_{region}"
+                pattern = re.compile(re.escape(obj).replace(r"\{\}", ".+") + "$")
+                found = [c for o, cs in index.items() if pattern.match(o) for c in cs]
+            else:
+                found = index.get(obj, [])
+            if len(before) >= 1:
+                found = [c for c in found if c["schema"] == before[-1]]
+            if len(before) >= 2:
+                found = [c for c in found if c["database"] == before[-2]]
+            if len(before) >= 3:
+                found = [c for c in found if before[-3] in (c["server"], c["source"])]
+            cands += [c for c in found if c not in cands]
         if len(cands) > 1 and hint:
             hinted = [c for c in cands if _matches_hint(c, hint)]
             cands = hinted or cands
