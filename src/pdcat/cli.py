@@ -110,7 +110,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
 def cmd_profile(args: argparse.Namespace) -> int:
     """Profile SQL tables at the controlled pace: the ones named, every table your code uses (--used),
     or whatever is approved in the app's queue (--queue). --plan prints the queries without connecting."""
-    from .pacing import plan_profile, queue, request_profiles, used_tables
+    from .pacing import plan_profile, queue, request_profiles, set_queue_state, used_tables
     from .scan_sqlserver import run_queue
 
     cfg = load_config(find_config(args.config))
@@ -139,11 +139,28 @@ def cmd_profile(args: argparse.Namespace) -> int:
         elif not args.queue:
             print("Nothing to profile. Name tables (e.g. dbo.SalesDaily), use --used, or --queue for the app's queue.")
             return 2
+        if args.queue and args.approve:
+            waiting = [q["asset_key"] for q in queue(cat, ("queued",))]
+            if waiting:
+                set_queue_state(cat, waiting, "approved")  # asking for --approve is the approval
+                print(f"Approved {len(waiting)} waiting table(s).")
+        unapproved = len(queue(cat, ("queued",)))
+        if not queue(cat, ("approved",)):
+            if unapproved:
+                print(f"Nothing is approved yet: {unapproved} table(s) are in the queue waiting for your approval. "
+                      "Approve them on the app's SQL scanning page, or run: pdcat profile --queue --approve")
+            else:
+                print("The queue is empty. Add tables on the app's Profiling page, or name them here.")
+            return 0
         result = run_queue(cat, cfg.sqlserver)
     print(f"Profiled {result['done']} table(s), {result['failed']} failed, {result['left']} still waiting.")
+    if result["skipped"]:
+        print(f"{result['skipped']} table(s) were skipped because their SQL Server source isn't in your config.")
+    if unapproved and not keys:
+        print(f"{unapproved} more table(s) are queued but not approved (pdcat profile --queue --approve runs them).")
     if result["stopped"]:
         print(f"Stopped early: {result['stopped']}")
-    return 1 if result["failed"] else 0
+    return 1 if result["failed"] or (result["skipped"] and not result["done"]) else 0
 
 
 def cmd_review(args: argparse.Namespace) -> int:
@@ -304,11 +321,14 @@ def main(argv: list[str] | None = None) -> int:
                  "  pdcat profile dbo.SalesDaily dbo.Stores\n"
                  "  pdcat profile --used             every table your code uses\n"
                  "  pdcat profile --queue            the tables approved on the app's SQL scanning page\n"
+                 "  pdcat profile --queue --approve  approve what's waiting in the queue, then run it\n"
                  "  pdcat profile --used --plan      show the queries, send nothing", cmd_profile)
     pr.add_argument("tables", nargs="*", metavar="TABLE", help="table names like dbo.SalesDaily")
     pr.add_argument("--used", action="store_true", help="every table your code or pasted SQL uses")
     pr.add_argument("--source", action="append", metavar="NAME", help="only this SQL Server source (repeatable)")
     pr.add_argument("--queue", action="store_true", help="run the tables approved in the app's queue")
+    pr.add_argument("--approve", action="store_true",
+                    help="with --queue: approve the tables still waiting in the queue, then run them")
     pr.add_argument("--plan", action="store_true", help="print the queries that would run, without connecting")
 
     r = command("review", "list what needs your attention, most important first",
