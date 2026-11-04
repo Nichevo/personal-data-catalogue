@@ -414,6 +414,18 @@ class _CheckCache:
         self.new.append((h, _CHECKS_VERSION, self.known[h]))
         return found
 
+    def facts(self, sql: str) -> tuple[tuple[tuple[str, str], ...], bool]:
+        """_text_facts, kept the same way (under the SQL's hash + "f"), so the first look after starting is quick."""
+        h = _sql_hash(sql) + "f"
+        self.seen.add(h)
+        if h in self.known:
+            compares, no_filter = json.loads(self.known[h])
+            return tuple(tuple(c) for c in compares), bool(no_filter)
+        found = _text_facts(sql)
+        self.known[h] = json.dumps(found)
+        self.new.append((h, _CHECKS_VERSION, self.known[h]))
+        return found
+
     def save(self, *, prune: bool = False) -> None:
         """Keep what was worked out. `prune` (after checking the whole library) drops SQL no longer in it."""
         with self.cat.conn:
@@ -555,24 +567,39 @@ def biggest_table(q: dict[str, Any], look: _Lookups) -> tuple[int, str]:
     return best
 
 
-_NUMBER_COMPARE = re.compile(r"(?:\bwhere|\band|\bor|\bon|\bnot|\bhaving|\()\s*(?:(\w+)\.)?(\w+)\s*"
-                             r"(?:=|<>|!=|>=|<=|>|<|\bin\s*\()\s*-?\d+(?![\w.'])")
+_NUMBER_COMPARE = re.compile(r"(?<![\w.])(?:(\w+)\.)?(\w+)\s*(?:=|<>|!=|>=|<=|>|<|in\s*\()\s*-?\d+(?![\w.'])")
+_CONDITION_BEFORE = re.compile(r"(?:\bwhere|\band|\bor|\bon|\bnot|\bhaving|\()\s*$")
 
 
-def _slow_catalogue_checks(q: dict[str, Any], look: _Lookups) -> list[tuple[str, str]]:
+@lru_cache(maxsize=32768)
+def _text_facts(sql: str) -> tuple[tuple[tuple[str, str], ...], bool]:
+    """What the catalogue checks need from the text, worked out once per piece of SQL: the (qualifier, column)
+    pairs compared with a bare number in a condition, and whether it's a SELECT with no WHERE, TOP, OFFSET or
+    FETCH."""
+    code = _code(sql)
+    compares = []
+    for m in _NUMBER_COMPARE.finditer(code):
+        if _CONDITION_BEFORE.search(code, max(0, m.start() - 12), m.start()):
+            compares.append((m.group(1) or "", m.group(2)))
+    no_filter = bool(re.search(r"\bselect\b", code)) and not re.search(r"\bwhere\b|\btop\b|\boffset\b|\bfetch\b",
+                                                                       code)
+    return tuple(dict.fromkeys(compares)), no_filter
+
+
+def _slow_catalogue_checks(q: dict[str, Any], look: _Lookups,
+                           cache: _CheckCache | None = None) -> list[tuple[str, str]]:
     """2.10 checks that need the catalogue: hidden conversions, view stacks and big tables read whole."""
     out: list[tuple[str, str]] = []
     tables = [t for t in q.get("tables") or [] if t.get("key") and t.get("relation") != "calls"]
     if not tables:
         return out
-    code = _code(q["sql"])
+    compares, no_filter = cache.facts(q["sql"]) if cache else _text_facts(q["sql"])
     by_alias: dict[str, str] = {}
     for t in tables:
         by_alias[t["name"].lower().split(".")[-1]] = t["key"]
         if t.get("alias"):
             by_alias[t["alias"].lower()] = t["key"]
-    for m in _NUMBER_COMPARE.finditer(code):
-        qual, col = m.group(1), m.group(2)
+    for qual, col in compares:
         keys = [by_alias[qual]] if qual and qual in by_alias else ([] if qual else [t["key"] for t in tables])
         types = {look.col_type(k, col) for k in keys} - {None}
         if len(types) == 1 and _type_family(next(iter(types))) == "text":
@@ -591,8 +618,7 @@ def _slow_catalogue_checks(q: dict[str, Any], look: _Lookups) -> list[tuple[str,
         chain = ([own[0]] if own else []) + deepest[1]
         out.append(("nested_views", " → ".join(k.rsplit("/", 1)[-1] for k in chain)))
     only_views = bool(places) and len(own) == len(places)
-    if not only_views and not re.search(r"\bwhere\b|\btop\b|\boffset\b|\bfetch\b", code) \
-            and re.search(r"\bselect\b", code):
+    if not only_views and no_filter:
         for t in tables:
             n = look.rows(t["key"])
             if t.get("relation", "reads") == "reads" and n >= look.big_rows:
@@ -611,7 +637,7 @@ def findings_for(cat: Catalogue, q: dict[str, Any], marks: set | None = None,
         pairs.append(("built_from_variables", ""))
     look = look or _Lookups(cat)
     pairs += _catalogue_checks(cat, q, look)
-    pairs += _slow_catalogue_checks(q, look)
+    pairs += _slow_catalogue_checks(q, look, cache)
     out = []
     for rule, about in pairs:
         sev, title, why, article = RULES[rule]
