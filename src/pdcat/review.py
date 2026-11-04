@@ -24,7 +24,7 @@ from typing import Any
 import pandas as pd
 
 from . import freshness, naming, pbimpact, reviewanswers, rulechecks, sqlchecks, trackers, unknownfiles
-from .profiling import HINT_TEXT
+from .profiling import HINT_TEXT, NOT_TYPE_HINTS
 from .store import Catalogue, now
 
 # rule: (label, category, base priority)
@@ -562,6 +562,8 @@ def type_hints_for(profile: list[dict], key: str, hints_ok: set[str] | None = No
     out = []
     for p in profile:
         for h in json.loads(p.get("hints") or "[]"):
+            if h["code"] in NOT_TYPE_HINTS:
+                continue
             if hints_ok and h["code"] in hints_ok:
                 continue
             if hints_no and (key, p["column_name"], h["code"]) in hints_no:

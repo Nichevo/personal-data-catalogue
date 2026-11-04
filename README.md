@@ -172,6 +172,26 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.25
+
+**Profiling SQL Server keeps going when a table or column can't be read.**
+
+- **Text that isn't UTF-8 no longer stops a table.** Characters such as "š" or "é" in `char`/`varchar` columns can
+  reach Python in the Windows code page, which failed with "'utf-8' codec can't decode byte 0x9a". Text is now read
+  as UTF-8 when it is, otherwise in the Windows code page, and any byte that still doesn't fit becomes "?".
+- **A column the server can't read is left out, not the whole table.** A view that casts bad text to a number
+  ("Error converting data type nvarchar to numeric") fails on any query that reads that column. pdcat now checks
+  whether the table can be counted at all, then reads the columns in halves (and halves of halves) to find the ones
+  that fail. Everything else is profiled; the failing columns keep their place with "could not be read: …" in the
+  type check column, and the profile's method line says how many were left out. It sends at most 40 extra queries
+  per table, at the usual pace, and a time-out still stops the hunt.
+- **One table or database never stops the run.** A table that can't be read at all is marked *failed* with the
+  server's message and the run moves on; a database that can't be reached fails only its own tables.
+- Nothing about this changes what is sent: still read-only `SELECT`s with `NOLOCK`, logged in the query log.
+
+To profile tables that failed before, approve them again on the SQL scanning page (✓ Approve all includes failed
+tables), or name them: `pdcat profile dbo.SalesDaily`.
+
 ## New in version 2.24
 
 **Every table a write function is used for is found.** When one function builds the SQL from the schema and table
