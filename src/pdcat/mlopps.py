@@ -2,16 +2,21 @@
 
 After each scan every recipe in `mlrecipes` is matched against the catalogue: columns by their SAP meaning and
 by their names, tables by their SAP table and name, so each recipe gets an opportunity with candidate tables
-and columns (as suggestions). Each opportunity is then scored on six readiness signals:
+and columns (as suggestions). Each opportunity is then scored on seven readiness signals:
 
 1. **Target**: a column (or a measure) that records the outcome to predict.
 2. **History**: how far back the target table's dates go, from profiles (2 years by default).
 3. **Grain**: the key columns a row is identified by (material and plant, a PO line...).
 4. **Features**: other tables that join to the target table.
 5. **Freshness**: whether the target table is kept up to date.
-6. **Business pain**: Power BI measures that already show the problem.
+6. **Data quality** (2.30): how many of its tables are profiled, and what the profiles show (mostly blank,
+   single-value, ID-like or stand-in values; see `mlquality`).
+7. **Business pain**: Power BI measures that already show the problem.
 
-Scores are a weighted share of the six (target and history count double by default; Settings). You can confirm
+Each signal says why (how a column was picked, what its profile shows) and what would raise it. A high score is
+not enough on its own: "Ready to start" also needs the target and history found, and "Partly ready" some target.
+
+Scores are a weighted share of the seven (target and history count double by default; Settings). You can confirm
 or override each signal, add your own opportunities, split one into several targets, and link opportunities
 to business projects.
 
@@ -39,7 +44,7 @@ ROLES = ["target", "feature", "key", "date", "related", "source", ""]
 ROLE_LABELS = {"target": "Target", "feature": "Feature", "key": "Key", "date": "Date", "related": "Related",
                "source": "Source", "": ""}
 SIGNALS = [("target", "Target"), ("history", "History depth"), ("grain", "Grain"), ("features", "Features"),
-           ("freshness", "Freshness"), ("pain", "Business pain")]
+           ("freshness", "Freshness"), ("quality", "Data quality"), ("pain", "Business pain")]
 SIGNAL_HELP = {
     "target": "A column that records the outcome to predict (a date, a quantity, a yes or no).",
     "history": "How far back the target table's dates go. Seasonal patterns need two years or more.",
@@ -47,11 +52,13 @@ SIGNAL_HELP = {
     "features": "Other tables that join to the target table, to explain it.",
     "freshness": "Whether the target table is refreshed regularly.",
     "pain": "Power BI measures that already show the problem, which makes the business case.",
+    "quality": "What table profiles show: how many of its tables are profiled, and blank, single-value, ID-like or "
+               "stand-in values in the columns it needs.",
 }
 STATES = ("ready", "partial", "missing")
 STATE_VALUE = {"ready": 1.0, "partial": 0.5, "missing": 0.0}
 STATE_LABELS = {"ready": "Found", "partial": "Partly found", "missing": "Missing"}
-DEFAULT_WEIGHTS = {"target": 2, "history": 2, "grain": 1, "features": 1, "freshness": 1, "pain": 1}
+DEFAULT_WEIGHTS = {"target": 2, "history": 2, "grain": 1, "features": 1, "freshness": 1, "quality": 1, "pain": 1}
 DEFAULT_MIN_MONTHS = 24
 BANDS = {"live": "Live", "ready": "Ready to start", "partial": "Partly ready", "notyet": "Not yet"}
 READY_AT, PARTIAL_AT = 75, 45
@@ -382,11 +389,24 @@ def candidates(cat: Catalogue, recipes: dict[str, dict[str, Any]] | None = None
     item_sap = {r[0]: r[1] for r in cat.conn.execute(
         "SELECT asset_key, sap_name FROM item_info WHERE sap_name IS NOT NULL AND sap_name != ''")}
     col_sap = _sap_for_columns(cat)
+    # Profiles weed out what can't be used: a table that was empty, and columns that are mostly blank or hold one
+    # value only (a target that is never filled in is no target).
+    from .mlquality import severe
+    unusable: set[tuple[str, str]] = set()
+    empty: set[str] = set()
+    for r in cat.conn.execute("SELECT asset_key, column_name, row_count, null_count, distinct_count, top_values "
+                              "FROM profiles"):
+        p = dict(r)
+        if p["row_count"] == 0:
+            empty.add(p["asset_key"])
+        elif severe(p):
+            unusable.add((p["asset_key"], p["column_name"]))
+    tables = {k: v for k, v in tables.items() if k not in empty}
     m = _Matcher(recipes)
     found: dict[str, dict[str, dict[str, list[tuple[str, str]]]]] = {}  # recipe -> table -> concept -> columns
     for r in cat.conn.execute("SELECT asset_key, name FROM columns"):
         key, col = r[0], r[1]
-        if key not in tables:
+        if key not in tables or (key, col) in unusable:
             continue
         sap = col_sap.get((key, col))
         if not sap:
@@ -586,10 +606,42 @@ class _Ctx:
         return sorted(cols)
 
 
-# ---- the six signals --------------------------------------------------------------------------------------------
+# ---- the seven signals -------------------------------------------------------------------------------------------
 
-def _signal(sid: str, state: str, evidence: str) -> dict[str, Any]:
-    return {"id": sid, "name": dict(SIGNALS)[sid], "auto": state, "state": state, "evidence": evidence}
+def _signal(sid: str, state: str, evidence: str, why: list[str] | None = None, raise_by: str = "") -> dict[str, Any]:
+    """One readiness check: its state, a one-line evidence, the reasons behind it (`why`, shown under "Why") and
+    what would move it up (`raise_by`)."""
+    return {"id": sid, "name": dict(SIGNALS)[sid], "auto": state, "state": state, "evidence": evidence,
+            "why": [w for w in (why or []) if w], "raise_by": raise_by}
+
+
+def _profile_line(x: _Ctx, key: str, column: str) -> str:
+    from . import mlquality as Q
+    p = x.profiles.get((key, column))
+    if not p or not p.get("row_count"):
+        return f"Profile: {x.name(key)}.{column} is not profiled yet"
+    b = Q.blank_share(p) or 0.0
+    bits = [f"{p['row_count']:,} rows", f"{b:.0%} blank", f"{p.get('distinct_count') or 0:,} distinct values"]
+    if p.get("min_value") is not None and p.get("max_value") is not None:
+        bits.append(f"from {str(p['min_value'])[:19]} to {str(p['max_value'])[:19]}")
+    tops = Q.top_values(p)[:3]
+    if tops:
+        bits.append("most common " + ", ".join(f"{v or '(empty)'} ({n:,})" for v, n in tops))
+    return f"Profile ({str(p.get('profiled_at') or '')[:10]}): " + "; ".join(bits)
+
+
+def _picked_line(x: _Ctx, i: dict[str, Any]) -> str:
+    """Why a column was picked: how it matched the recipe (SAP name or friendly name), or that you added it."""
+    who = "You confirmed it" if i["state"] == "confirmed" else "Suggested by pdcat, not confirmed yet"
+    why = i.get("why") or ""
+    c = R.concept(x.recipe, i.get("concept") or "") if i.get("concept") else None
+    looks = ""
+    if c:
+        names = ", ".join(c.get("sap", [])[:3])
+        friendly = ", ".join(c.get("names", [])[:3])
+        looks = (f"The recipe looks for {c['label'].lower()}: SAP field {names or '(none)'}"
+                 + (f" or names like {friendly}" if friendly else ""))
+    return "; ".join(b for b in (f"Picked because it {why}" if why else "Added by hand", who, looks) if b)
 
 
 def _target(x: _Ctx) -> dict[str, Any]:
@@ -601,12 +653,46 @@ def _target(x: _Ctx) -> dict[str, Any]:
                                                                                      " (20 or more is a good start)"))
     cols = x.by_role("target")
     if cols:
-        more = f" (and {len(cols) - 1} more)" if len(cols) > 1 else ""
-        return _signal("target", "ready", x.column_label(cols[0]["item"]) + more)
+        from . import mlquality as Q
+        t = cols[0]
+        k, c = t["item"].split("#", 1)
+        p = x.profiles.get((k, c))
+        label = x.column_label(t["item"])
+        why = [_picked_line(x, t), _profile_line(x, k, c)]
+        if len(cols) > 1:
+            why.append("Other possible targets: " + ", ".join(x.column_label(o["item"]) for o in cols[1:4]))
+        bad = Q.severe(p)
+        if bad:
+            return _signal("target", "partial", f"{label}, but it is {bad}", why,
+                           "Pick another target column, or check why this one is empty")
+        if t["state"] == "confirmed" and Q.is_profiled_ok(p):
+            return _signal("target", "ready", f"{label} (confirmed and profiled)", why)
+        if t["state"] == "confirmed":
+            return _signal("target", "ready", f"{label} (confirmed by you)", why,
+                           "Profile its table to check its values")
+        if Q.is_profiled_ok(p):
+            return _signal("target", "ready", f"{label} (from its name; the profile shows real values)", why,
+                           "Confirm it under Columns")
+        return _signal("target", "partial", f"{label}, guessed from its name only", why,
+                       "Confirm it under Columns, or profile its table to show it holds real values")
     ms = x.by_role("target", "measure")
     if ms:
+        from .mlpbi import measure_sources, other_measures
+        why = ["You marked a Power BI measure as the target"]
+        src = measure_sources(x.cat, ms[0]["item"])
+        if src:
+            if src["columns"]:
+                why.append("Built from " + ", ".join(src["columns"][:6]) + (" and more" if len(src["columns"]) > 6
+                                                                            else ""))
+            if src["sources"]:
+                why.append("Original data: " + ", ".join(s["label"] for s in src["sources"][:5]))
+            others = [m for m in other_measures(x.cat, ms[0]["item"]) if not m["leaks"]]
+            if others:
+                why.append(f"{len(others)} other measure(s) in {src['report']} could be features (see below)")
         return _signal("target", "partial", f"Only a measure ({_measure_name(x.cat, ms[0]['item'])}); its logic would "
-                                            "need a SQL view to train on (Use as target shows one)")
+                                            "need a SQL view to train on (Use as target shows one)", why,
+                       "Add its original data tables below, turn the measure into a SQL view and tick its column "
+                       "as the target")
     if x.recipe.get("kind") == "unsupervised":
         from . import trackers
         tracked = [t for k in x.keys for t in trackers.trackers_of(x.cat, k)]
@@ -620,8 +706,12 @@ def _target(x: _Ctx) -> dict[str, Any]:
     if tt:
         return _signal("target", "partial", f"{x.name(tt[0]['item'])} looks right, but no target column was found "
                                             "in it; tick one under Columns")
+    looked = [f"{c['label']} (SAP {', '.join(c.get('sap', [])[:3]) or '-'})" for c in x.recipe.get("concepts", [])
+              if c.get("role") == "target"]
     return _signal("target", "missing", "No column found that records the outcome. Add a table, or tick a column "
-                                        "as the target")
+                                        "as the target",
+                   ["Looked for " + "; ".join(looked)] if looked else [],
+                   "Add the table that records the outcome and set a column's role to target")
 
 
 def _history(x: _Ctx, need: int) -> dict[str, Any]:
@@ -632,6 +722,7 @@ def _history(x: _Ctx, need: int) -> dict[str, Any]:
         return _signal("history", "missing", "No target table yet")
     from .tabletypes import table_type
     best: tuple[float, str, date, date] | None = None
+    method = ""
     unprofiled = []
     for k in [key] + [t["item"] for t in x.tables if t["item"] != key]:
         ttype = (x.info.get(k) or {}).get("table_type") or table_type(x.cat, k)
@@ -649,17 +740,30 @@ def _history(x: _Ctx, need: int) -> dict[str, Any]:
         months = _months(a, b)
         if best is None or months > best[0]:
             best = (months, f"{x.name(k)}.{c}", a, b)
+            method = str((x.profiles.get((k, c)) or {}).get("method") or "")
     if best:
         months, where, a, b = best
         years = months / 12
         text = f"{years:.1f} years in {where} ({a:%b %Y} to {b:%b %Y})"
+        why = [f"Smallest and largest date in the profile of {where}", f"{need} months counts as enough (Settings)"]
+        if unprofiled:
+            why.append("Not profiled yet: " + ", ".join(x.name(k) for k in unprofiled[:3]))
+        if "sample" in method and not method.startswith("whole"):
+            why.append(f"Measured on a {method.split(';')[0].replace('sample of', 'sample of').strip()}: the real "
+                       "range may be wider or narrower. See Deeper checks for a full-table profile or a query")
+            text += " (from a sample)"
         if months >= need:
-            return _signal("history", "ready", text)
+            return _signal("history", "ready", text, why)
         if months >= need / 2:
-            return _signal("history", "partial", text + f"; {need // 12} years or more is better for seasons")
-        return _signal("history", "missing", text + f"; {need // 12} years or more is needed")
+            return _signal("history", "partial", text + f"; {need // 12} years or more is better for seasons", why,
+                           "Find older data: an archive table, a snapshot table or dated copies")
+        return _signal("history", "missing", text + f"; {need // 12} years or more is needed", why,
+                       "Find older data: an archive table, a snapshot table or dated copies")
     if unprofiled:
-        return _signal("history", "partial", f"Profile {x.name(unprofiled[0])} to measure how far back its dates go")
+        return _signal("history", "missing", f"Unknown until {x.name(unprofiled[0])} is profiled: only a profile "
+                                             "shows how far back its dates go",
+                       [f"Date columns: {', '.join(x.date_columns(unprofiled[0])[:4])}"],
+                       "Queue it for profiling under Data quality")
     ttype = (x.info.get(key) or {}).get("table_type") or table_type(x.cat, key)
     if ttype == "dimension":
         return _signal("history", "missing", f"{x.name(key)} keeps today only (a dimension); look for a snapshot table "
@@ -682,11 +786,21 @@ def _grain(x: _Ctx) -> dict[str, Any]:
     labels = {cid: (R.concept(x.recipe, cid) or {}).get("label", cid) for cid in grain}
     found = [x.column_label(have[c]["item"]) for c in grain if c in have]
     missing = [labels[c] for c in grain if c not in have]
+    why = [f"The recipe works at one row per {', '.join(labels[c] for c in grain)}"]
+    from . import mlquality as Q
+    for c in grain:
+        if c in have:
+            k, col = have[c]["item"].split("#", 1)
+            b = Q.blank_share(x.profiles.get((k, col)))
+            if b is not None and b > 0.01:
+                why.append(f"{x.column_label(have[c]['item'])} is blank in {b:.0%} of rows")
+                missing.append(f"{labels[c]} (blanks)")
     if not missing:
-        return _signal("grain", "ready", "One row per " + ", ".join(found))
+        return _signal("grain", "ready", "One row per " + ", ".join(found), why)
     if found:
-        return _signal("grain", "partial", f"Found {', '.join(found)}; missing {', '.join(missing)}")
-    return _signal("grain", "missing", "Missing " + ", ".join(missing))
+        return _signal("grain", "partial", f"Found {', '.join(found)}; missing {', '.join(missing)}", why,
+                       "Find or tick the missing key columns")
+    return _signal("grain", "missing", "Missing " + ", ".join(missing), why, "Find or tick the key columns")
 
 
 def _features(x: _Ctx) -> dict[str, Any]:
@@ -714,12 +828,20 @@ def _features(x: _Ctx) -> dict[str, Any]:
         elif mine & _key_columns_of(x.cat, [k]):
             linked.append(f"{x.name(k)} (shares {', '.join(sorted(mine & _key_columns_of(x.cat, [k]))[:2])})")
     feats = x.by_role("feature")
+    why = ["Joins in your SQL are proven; a shared key name is only a guess"] + linked[:6]
+    proven = sum(1 for t in linked if "(joins in your SQL)" in t)
+    if len(linked) >= 2 and proven:
+        return _signal("features", "ready", f"{len(linked)} tables join: " + "; ".join(linked[:3]), why)
     if len(linked) >= 2:
-        return _signal("features", "ready", f"{len(linked)} tables join: " + "; ".join(linked[:3]))
+        return _signal("features", "partial", f"{len(linked)} tables share key names, but none joins in your SQL yet",
+                       why, "Check the joins work (a query that joins them), or confirm the relationship on the "
+                            "table's page")
     if linked or feats:
         text = "; ".join(linked) if linked else f"{len(feats)} feature column(s) in the target table only"
-        return _signal("features", "partial", text + ". More tables that join on the same keys would help")
-    return _signal("features", "missing", "No other tables join to the target table yet")
+        return _signal("features", "partial", text + ". More tables that join on the same keys would help", why,
+                       "Add tables that join on the same keys (see Feature ideas)")
+    return _signal("features", "missing", "No other tables join to the target table yet", why,
+                   "Add tables that join on the same keys (see Feature ideas)")
 
 
 def _freshness(x: _Ctx) -> dict[str, Any]:
@@ -732,6 +854,18 @@ def _freshness(x: _Ctx) -> dict[str, Any]:
         return _signal("freshness", "missing", f"{x.name(key)} was not found in the last scan")
     if info.get("refresh"):
         return _signal("freshness", "ready", f"Refreshed {info['refresh']} (from its page)")
+    from . import mlquality as Q
+    newest = Q.newest_date(x, key)
+    if newest:
+        d, col, on = newest
+        on = on or date.today()
+        why = [f"Newest date in {x.name(key)}.{col} when it was profiled on {on:%d %b %Y}"]
+        if (on - d).days > Q.STALE_DATA_DAYS:
+            return _signal("freshness", "missing", f"Newest date is {d:%d %b %Y}, {(on - d).days // 30} months before "
+                                                   "it was profiled: it may no longer be filled", why,
+                           "Find where the newer rows go, or set how often it refreshes on its page")
+        if (on - d).days <= 45:
+            return _signal("freshness", "ready", f"Rows up to {d:%d %b %Y} (profiled {on:%d %b %Y})", why)
     rows = [r[0] for r in x.cat.conn.execute("SELECT rows FROM row_counts WHERE asset_key = ? AND at >= ? ORDER BY at",
                                              (key, (datetime.now() - timedelta(days=31)).isoformat()))]
     if len(rows) >= 2 and rows[-1] != rows[0]:
@@ -748,15 +882,20 @@ def _freshness(x: _Ctx) -> dict[str, Any]:
 
 def _pain(x: _Ctx, related: list[dict[str, Any]]) -> dict[str, Any]:
     ticked = [m for m in related if m["ticked"]]
+    why = [f"{m['measure']} in {m['report']}: {m['found']}" for m in related[:4]]
     if ticked:
-        return _signal("pain", "ready", "; ".join(f"{m['measure']} in {m['report']}" for m in ticked[:3]))
+        return _signal("pain", "ready", "; ".join(f"{m['measure']} in {m['report']}" for m in ticked[:3]), why)
     if related:
-        return _signal("pain", "partial", f"{len(related)} measure(s) may show it; tick the related ones below")
-    return _signal("pain", "missing", "No report measures this yet")
+        return _signal("pain", "partial", f"{len(related)} measure(s) may show it; tick the related ones below", why,
+                       "Tick the measures that really show this problem")
+    words = ", ".join(x.recipe.get("measure_words", [])[:5])
+    return _signal("pain", "missing", "No report measures this yet",
+                   [f"Looked for measures named like {words}"] if words else [],
+                   "Add the report that shows the problem, or note the business case")
 
 
 def evaluate(cat: Catalogue, uid: str) -> dict[str, Any] | None:
-    """Everything the opportunity's page shows: the six signals, score, band, related measures, baseline,
+    """Everything the opportunity's page shows: the seven signals, score, band, related measures, baseline,
     leakage warnings, target quality, gaps and feature ideas."""
     o = get(cat, uid)
     if not o:
@@ -764,7 +903,20 @@ def evaluate(cat: Catalogue, uid: str) -> dict[str, Any] | None:
     x = _Ctx(cat, o)
     related = related_measures(cat, uid, x)
     need = min_months(cat)
-    signals = [_target(x), _history(x, need), _grain(x), _features(x), _freshness(x), _pain(x, related)]
+    from . import mlquality as Q
+    cov = Q.coverage(x)
+    issues = Q.column_issues(x)
+    quality = target_quality(cat, x)
+    tq_warns = sum(1 for q in quality if q["level"] == "warn")
+    qstate, qtext = Q.quality_signal(x, cov, issues, tq_warns)
+    qwhy = [f"{r['name']}: {Q.STATE_LABELS.get(r['state'], r['state'])}" + (f" ({r['profiled']})" if r["profiled"]
+                                                                            else "") for r in cov[:8]]
+    qwhy += [i["text"] for i in issues if i["level"] == "warn"][:5]
+    quality_sig = _signal("quality", qstate, qtext, qwhy,
+                          "" if qstate == "ready" else "Queue the tables without a profile, then sort out the issues "
+                                                       "under Data quality")
+    signals = [_target(x), _history(x, need), _grain(x), _features(x), _freshness(x), quality_sig,
+               _pain(x, related)]
     for s in signals:
         c = o["checks"].get(s["id"]) or {}
         s["confirmed"] = bool(c.get("confirmed"))
@@ -773,11 +925,15 @@ def evaluate(cat: Catalogue, uid: str) -> dict[str, Any] | None:
             s["state"] = c["override"]
             s["overridden"] = True
     score = _score(signals, weights(cat))
-    return {"opp": o, "recipe": x.recipe, "signals": signals, "score": score, "band": band(o, score),
-            "tables": _table_rows(x), "columns": _column_rows(x), "related": related,
-            "baseline": baseline(cat, x, related), "leakage": leakage(cat, x), "quality": target_quality(cat, x),
-            "gaps": gaps(cat, x), "projects": projects(cat, uid), "splits": splits_of(cat, uid),
-            "parent": get(cat, o["parent"]) if o.get("parent") else None}
+    b, held = band(o, score, signals)
+    e = {"opp": o, "recipe": x.recipe, "signals": signals, "score": score, "band": b, "held_back": held,
+         "tables": _table_rows(x, cov), "columns": _column_rows(x), "related": related,
+         "baseline": baseline(cat, x, related), "leakage": leakage(cat, x), "quality": quality,
+         "issues": issues, "coverage": cov, "deeper": Q.deeper_checks(x),
+         "gaps": gaps(cat, x), "projects": projects(cat, uid), "splits": splits_of(cat, uid),
+         "parent": get(cat, o["parent"]) if o.get("parent") else None}
+    e["effort_suggested"], e["effort_why"] = Q.suggested_effort(e)
+    return e
 
 
 def _score(signals: list[dict[str, Any]], w: dict[str, float]) -> int:
@@ -786,10 +942,21 @@ def _score(signals: list[dict[str, Any]], w: dict[str, float]) -> int:
     return round(100 * got / total)
 
 
-def band(o: dict[str, Any], score: int) -> str:
+def band(o: dict[str, Any], score: int, signals: list[dict[str, Any]] | None = None) -> tuple[str, str]:
+    """(band, why it was held back or ""). A high score alone isn't enough: "Ready to start" needs a target and
+    history that are found, and "Partly ready" needs at least some target."""
     if o.get("status") == "live":
-        return "live"
-    return "ready" if score >= READY_AT else "partial" if score >= PARTIAL_AT else "notyet"
+        return "live", ""
+    b = "ready" if score >= READY_AT else "partial" if score >= PARTIAL_AT else "notyet"
+    sig = {s["id"]: s["state"] for s in signals or []}
+    if signals and b == "ready":
+        weak = [dict(SIGNALS)[k] for k in ("target", "history") if sig.get(k) != "ready"]
+        if weak:
+            return "partial", (f"Held at Partly ready: {' and '.join(weak).lower()} not fully found "
+                               f"(score {score} would be Ready to start)")
+    if signals and b in ("ready", "partial") and sig.get("target") == "missing":
+        return "notyet", f"Held at Not yet: no target found (score {score})"
+    return b, ""
 
 
 def overview(cat: Catalogue) -> list[dict[str, Any]]:
@@ -801,12 +968,18 @@ def overview(cat: Catalogue) -> list[dict[str, Any]]:
             continue
         weakest = min(e["signals"], key=lambda s: (STATE_VALUE[s["state"]], -weights(cat).get(s["id"], 1)))
         hint = (f"{weakest['name']}: {weakest['evidence']}" if weakest["state"] != "ready"
-                else "All six signals found")
+                else "All checks found")
+        cov = e["coverage"]
+        profiled = sum(1 for r in cov if r["state"] in ("profiled", "old"))
         out.append({"uid": o["uid"], "title": title(o), "name": o["name"], "variant": o.get("variant") or "",
                     "parent": o.get("parent"), "score": e["score"], "band": e["band"], "status": o["status"],
                     "hint": hint, "projects": [p["name"] for p in e["projects"]], "recipe": o.get("recipe"),
                     "example": bool(e["recipe"].get("example")), "tool": o.get("tool") or "",
                     "value": o.get("value"), "effort": o.get("effort"),
+                    "effort_suggested": e["effort_suggested"], "held_back": e["held_back"],
+                    "profiled": f"{profiled} of {len(cov)}" if cov else "", "issues": sum(
+                        1 for i in e["issues"] if i["level"] == "warn") + sum(
+                        1 for q in e["quality"] if q["level"] == "warn"),
                     "tables": len(e["tables"]), "auto": o["auto"]})
     return out
 
@@ -822,8 +995,10 @@ def ordered(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _table_rows(x: _Ctx) -> list[dict[str, Any]]:
+def _table_rows(x: _Ctx, cov: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    from .mlquality import STATE_LABELS as PSTATE
     from .tabletypes import LABELS, table_type
+    prof = {r["key"]: r for r in cov or []}
     rows = []
     for i in x.ordered(x.tables):
         k = i["item"]
@@ -839,13 +1014,24 @@ def _table_rows(x: _Ctx) -> list[dict[str, Any]]:
             hist = "today only"
         rows.append({"key": k, "name": x.name(k), "rows": attrs.get("row_count"), "history": hist,
                      "type": LABELS.get((x.info.get(k) or {}).get("table_type") or table_type(x.cat, k), ""),
+                     "profile": (PSTATE.get(prof[k]["state"], "") + (f" {prof[k]['profiled']}" if prof[k]["profiled"]
+                                                                    else "")) if k in prof else "",
                      "role": i.get("role") or "", "state": i["state"], "why": i.get("why") or ""})
     return rows
 
 
 def _column_rows(x: _Ctx) -> list[dict[str, Any]]:
-    return [{"item": i["item"], "column": x.column_label(i["item"]), "role": i.get("role") or "", "state": i["state"],
-             "why": i.get("why") or ""} for i in x.ordered(x.columns)]
+    from . import mlquality as Q
+    out = []
+    for i in x.ordered(x.columns):
+        k, c = i["item"].split("#", 1)
+        p = x.profiles.get((k, c))
+        b = Q.blank_share(p)
+        out.append({"item": i["item"], "column": x.column_label(i["item"]), "role": i.get("role") or "",
+                    "state": i["state"], "blank": None if b is None else round(100 * b, 1),
+                    "distinct": (p or {}).get("distinct_count"), "check": Q.severe(p) or "",
+                    "why": i.get("why") or ""})
+    return out
 
 
 # ---- related Power BI measures ----------------------------------------------------------------------------------
@@ -1047,6 +1233,15 @@ def leakage(cat: Catalogue, x: _Ctx) -> list[str]:
         if hit or LEAK.search(col):
             out.append(f"{x.column_label(i['item'])} may only be known after the event (“{hit or LEAK.search(col)[0]}” "
                        "in its name). Use it only if it is known when the prediction is made.")
+    from .mlquality import same_blanks_as_target
+    out += same_blanks_as_target(x)
+    feats = {i["item"] for i in x.measures if i.get("role") == "feature"}
+    if feats:
+        from .mlpbi import other_measures, target_measure_keys
+        for t in target_measure_keys(x)[:1]:
+            for m in other_measures(cat, t, limit=10_000):
+                if m["leaks"] and m["key"] in feats:
+                    out.append(f"Measure {m['measure']} is a feature but {m['relation']}: it gives the answer away")
     for r in cat.conn.execute("SELECT name, sources, leakage_reason FROM features WHERE known_at_prediction = 'no' "
                               "AND state != 'rejected'"):
         srcs = json.loads(r[1] or "[]")
@@ -1085,6 +1280,9 @@ def target_quality(cat: Catalogue, x: _Ctx) -> list[dict[str, str]]:
                 out.append({"level": "warn", "text": f"{label} changed recently: {drift[0]['detail']}"})
         except Exception:  # drift needs profile history; older catalogues have none
             pass
+        from .mlquality import target_checks
+        out += [q for q in target_checks(x, x.o.get("tool") or x.recipe.get("tool") or "") if q["text"].startswith(label)
+                and not any(q["text"] == o["text"] for o in out)]
         if not any(o["text"].startswith(label) for o in out):
             out.append({"level": "ok", "text": f"{label}: {rows:,} rows, {nulls:,} blank, "
                                                f"{p.get('distinct_count') or 0:,} distinct values"})
@@ -1232,9 +1430,17 @@ def export_pack(cat: Catalogue, uid: str) -> bytes:
              f"- Kind of tool: {R.TOOLS.get(o.get('tool') or '', ('', ''))[0]} ({o.get('method') or ''})",
              f"- Business projects: {', '.join(p['name'] for p in e['projects']) or 'none'}", "",
              "## Readiness checks", ""]
+    if e["held_back"]:
+        lines.append(f"- {e['held_back']}")
+    lines.append(f"- Suggested effort: {e['effort_suggested']} of 5"
+                 + (f" ({', '.join(e['effort_why'])})" if e["effort_why"] else ""))
+    lines.append("")
     for s in e["signals"]:
         lines.append(f"- **{s['name']}**: {STATE_LABELS[s['state']]}. {s['evidence']}"
                      + (" (confirmed)" if s["confirmed"] else ""))
+        lines += [f"  - {w}" for w in s.get("why") or []]
+        if s.get("raise_by"):
+            lines.append(f"  - To raise it: {s['raise_by']}")
     b = e["baseline"]
     lines += ["", "## Baseline to beat", ""]
     if b["typed"]:
@@ -1245,16 +1451,33 @@ def export_pack(cat: Catalogue, uid: str) -> bytes:
         lines.append(f"- Reported today by {b['measure']['measure']} in {b['measure']['report']}")
     if not (b["typed"] or b["pair"] or b["measure"]):
         lines.append("- None found yet.")
+    from .mlquality import STATE_LABELS as PSTATE
+    profiles = [f"{r['name']}: {PSTATE.get(r['state'], r['state'])}" + (f" ({r['profiled']})" if r["profiled"] else "")
+                for r in e["coverage"]]
+    deeper = [f"{d['title']}: {d['why']}" + (" (query in deeper_checks.sql)" if d.get("sql") else "")
+              for d in e["deeper"]]
     for head, rows in (("Leakage warnings", e["leakage"]), ("Gaps", e["gaps"]),
-                       ("Target quality", [q["text"] for q in e["quality"]])):
+                       ("Target quality", [q["text"] for q in e["quality"]]), ("Profiles", profiles),
+                       ("Data quality", [i["text"] for i in e["issues"]]), ("Deeper checks", deeper)):
         if rows:
             lines += ["", f"## {head}", "", *[f"- {r}" for r in rows]]
+    from .mlpbi import measure_sources, target_measure_keys
+    for t in target_measure_keys(x)[:1]:
+        src = measure_sources(cat, t)
+        if src:
+            lines += ["", f"## Target measure {src['measure']} ({src['report']})", "",
+                      "- Built from: " + (", ".join(src["columns"]) or "no columns found"),
+                      *[f"- Original data: {s['label']} (via query {s['query']})" for s in src["sources"]]]
+    feats = [i for i in x.measures if i.get("role") == "feature"]
+    if feats:
+        lines += ["", "## Measures used as features", "", *[f"- {_measure_name(cat, i['item'])}" for i in feats]]
     if o.get("notes"):
         lines += ["", "## Notes", "", o["notes"]]
     lines += ["", "## Files", "", "- columns.csv: the columns, with SAP names, roles and profiles",
               "- tables.csv: candidate tables", "- joins.csv: how they join", "- measures.csv: related Power BI "
               "measures with DAX", "- starter.sql: a starting query at the chosen grain", "- baseline.sql: today's "
-              "error of the plan, when a plan and actual pair was found", "",
+              "error of the plan, when a plan and actual pair was found", "- deeper_checks.sql: read-only queries that "
+              "settle what the profiles can't (exact date range, rows per month, repeating keys, match rates)", "",
               "Made by the personal data catalogue. All queries are read-only and were not run."]
     starter = _starter_sql(x)
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -1267,6 +1490,8 @@ def export_pack(cat: Catalogue, uid: str) -> bytes:
         z.writestr("starter.sql", starter)
         if b["sql"]:
             z.writestr("baseline.sql", b["sql"] + "\n")
+        if any(d.get("sql") for d in e["deeper"]):
+            z.writestr("deeper_checks.sql", "\n".join(d["sql"] for d in e["deeper"] if d.get("sql")))
     return buf.getvalue()
 
 

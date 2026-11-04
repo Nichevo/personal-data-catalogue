@@ -172,6 +172,51 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.30
+
+**ML opportunities are stricter and better informed: table profiles feed the checks, every check says why, and a
+Power BI measure as the target leads back to its original data.**
+
+- **Less optimistic.** A target column guessed from its name only counts as *partly found* until you confirm it or
+  its profile shows it holds real values. Tables that only share a key name with the target count as partly found
+  until a join in your SQL proves them. History that isn't profiled yet is *unknown*, not half found. And a high
+  score alone no longer makes an opportunity *Ready to start*: that needs the target and the history found, and
+  without any target it stays *Not yet* (the page says when a band was held back and why).
+- **Why, for every check.** Each line of the readiness checklist has a *Why* that says how its answer was found:
+  for the target, which column was picked and why (the SAP field and names the recipe looks for, whether you
+  confirmed it), what its profile shows (rows, blanks, distinct values, range, most common values) and the other
+  possible targets; for history, which dates were measured and whether from a sample. Each also says what would
+  raise it.
+- **Data quality**, a seventh check (weight 1, Settings): how many of the opportunity's tables are profiled and what
+  the profiles show: columns mostly blank or with one value only, IDs used as features, stand-in blanks (`0`,
+  `00000000`, `N/A`), keys with blanks or that repeat, empty tables. The target gets more checks too: a rare
+  outcome in a yes or no target, negative quantities or durations, only a handful of values, stand-in blanks.
+  A feature blank in the same share of rows as the target is flagged as a possible leak. **Freshness** uses the
+  newest date in the profile (a table whose newest row is months older than its profile may no longer be filled).
+- **After each scan** the recipes skip tables that were empty when profiled and columns that are mostly blank or
+  hold one value, so they aren't suggested as targets.
+- **Tables to profile** (new tab): the SQL tables your opportunities need without a profile, with an old one, or
+  whose profiling failed, which opportunities need them, and a button to queue them. Each opportunity's new
+  **Data quality** section has the same for its own tables. Queuing only adds them to the profiling queue: nothing
+  is sent to your server until you approve and run it, at the usual pace.
+- **Deeper checks**: key facts a normal profile can't give, each with why it matters: the exact date range when
+  dates were only profiled from a sample (with **Queue a full-table profile**, which reads counts and ranges from
+  every row instead of a sample, still waiting for your approval), rows per month (gaps in history), whether the
+  grain really is one row per key combination, how the target's values are spread, and how many target rows find
+  a match in a feature table. Each comes as read-only SQL to copy and run yourself.
+- **A Power BI measure as the target.** *Where the target comes from*: the model columns it is built from (through
+  every measure and calculated column it uses) and what each model table's Power Query reads, with **Add as target
+  table** for catalogued tables and files. **Other measures in the report as feature ideas**: tick them as
+  features; those reading the same model tables come first, and ⚠️ marks measures the target is built from or
+  that are built on it, because they give the answer away (they are flagged under Leakage if used).
+- **Suggested effort** (1 to 5) from what is still missing and the data issues found, shown on each opportunity
+  and used on the Value and readiness chart where you haven't set one. The list shows how many tables are
+  profiled and how many data issues each opportunity has.
+- The **data scientist pack** has the reasons behind each check, profile coverage, data issues, the target
+  measure's original data, and `deeper_checks.sql`.
+
+Nothing here runs a query or a profile by itself. No new libraries are needed.
+
 ## New in version 2.29
 
 **Busy item pages are easier to read: connections, renamed columns and SQL as tables with filters.**

@@ -146,16 +146,20 @@ def query_log(cat: Catalogue, limit: int = 500) -> list[dict[str, Any]]:
 
 # ---- the profiling queue -------------------------------------------------------
 
-def request_profiles(cat: Catalogue, keys: Iterable[str], *, approve: bool = False) -> int:
-    """Ask for tables to be profiled. Nothing is sent to the server until the queue is approved and run."""
+def request_profiles(cat: Catalogue, keys: Iterable[str], *, approve: bool = False, full_table: bool = False) -> int:
+    """Ask for tables to be profiled. Nothing is sent to the server until the queue is approved and run.
+    `full_table` reads counts and ranges from the whole table even when it is big (normally only a sample is read);
+    asking for it on a table already waiting turns it on for that table."""
     n = 0
     with cat.conn:
         for k in keys:
             cur = cat.conn.execute(
-                "INSERT INTO profile_queue (asset_key, state, requested_at) VALUES (?, ?, ?) "
+                "INSERT INTO profile_queue (asset_key, state, full_table, requested_at) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(asset_key) DO UPDATE SET state = excluded.state, requested_at = excluded.requested_at, "
-                "error = NULL WHERE profile_queue.state NOT IN ('queued', 'approved')",
-                (k, "approved" if approve else "queued", now()))
+                "full_table = excluded.full_table, error = NULL WHERE profile_queue.state NOT IN ('queued', "
+                "'approved')", (k, "approved" if approve else "queued", int(full_table), now()))
+            if not cur.rowcount and full_table:
+                cur = cat.conn.execute("UPDATE profile_queue SET full_table = 1 WHERE asset_key = ?", (k,))
             n += cur.rowcount
     cat.changed()
     return n
@@ -186,6 +190,13 @@ def queue(cat: Catalogue, states: tuple[str, ...] = ("queued", "approved", "fail
     return out
 
 
+def full_table_asked(cat: Catalogue, key: str) -> bool:
+    """Whether the queued profile of this table should read the whole table (asked for from ML opportunities)."""
+    row = cat.conn.execute("SELECT full_table FROM profile_queue WHERE asset_key = ? AND state IN ('queued', "
+                           "'approved')", (key,)).fetchone()
+    return bool(row and row[0])
+
+
 def queue_state(cat: Catalogue, key: str) -> str | None:
     row = cat.conn.execute("SELECT state FROM profile_queue WHERE asset_key = ?", (key,)).fetchone()
     return row[0] if row else None
@@ -214,6 +225,8 @@ def plan_profile(cat: Catalogue, keys: list[str]) -> list[dict[str, Any]]:
         attrs = a["attrs"]
         rows = attrs.get("row_count") or 0
         sample = int(s["sql_sample_rows"]) if a["kind"] == "view" or rows > int(s["sql_sample_over_rows"]) else None
+        if sample and full_table_asked(cat, key):
+            sample = None
         agg, top = sql_profile_queries(attrs["schema"], attrs["object"], [dict(c) for c in cat.columns(key)],
                                        int(s["sql_top_values_rows"]), sample_for_aggregates=sample)
         how = f"sample of {sample:,} rows" if sample else "whole table"

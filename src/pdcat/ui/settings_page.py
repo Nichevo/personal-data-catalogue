@@ -340,7 +340,7 @@ def ml_section(cat: Catalogue) -> None:
     """How much each readiness signal counts towards an ML opportunity's score, and how much history is enough."""
     from pdcat import mlopps
     st.subheader("ML opportunities: readiness score")
-    st.caption("Each opportunity gets a readiness score out of 100 from six checks. A weight says how much a check "
+    st.caption("Each opportunity gets a readiness score out of 100 from seven checks. A weight says how much a check "
                "counts: 2 counts twice as much as 1, and 0 leaves it out. The defaults count the target and history "
                "double, because without them there is nothing to learn from.")
     w = mlopps.weights(cat)
