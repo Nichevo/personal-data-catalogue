@@ -7,7 +7,7 @@ import streamlit as st
 from pdcat.export import rows_to_csv
 from pdcat.store import Catalogue
 
-from .common import go
+from .common import go, selected_rows
 
 SUMMARY_NAMES = {"api": "API", "web_scraping": "scraped site", "web_file": "web download",
                  "database": "database connection", "cloud_storage": "cloud store", "sharepoint": "SharePoint site",
@@ -98,7 +98,7 @@ def flow_block(cat: Catalogue, project: str | None, key: str, focus: str | None 
                           selection_mode="single-row", key=f"{key}-sources")
     st.download_button("⬇️ Data sources (.csv)", rows_to_csv(shown), "data-sources.csv", "text/csv",
                        key=f"{key}-csv")
-    sel = picked.selection.rows if picked else []
+    sel = selected_rows(picked, len(rows))
     if sel:
         r = rows[sel[0]]
         c1, c2 = st.columns(2)

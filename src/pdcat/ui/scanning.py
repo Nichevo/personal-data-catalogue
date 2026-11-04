@@ -5,7 +5,7 @@ import streamlit as st
 
 from pdcat.store import Catalogue
 
-from .common import page_title
+from .common import page_title, selected_rows, selection_key
 
 
 def profile_request_button(cat: Catalogue, key: str) -> None:
@@ -62,8 +62,8 @@ def scanning_page(cat: Catalogue) -> None:
                             "state": r["state"], "error": r["error"] or ""} for r in q])
         st.caption("Tick rows, then approve, skip or remove them. Only approved tables are profiled.")
         event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="multi-row",
-                             key="queue-table")
-        picked = [q[i]["asset_key"] for i in (event.selection.rows if event else [])]
+                             key=selection_key("queue-table", [r["asset_key"] for r in q]))
+        picked = [q[i]["asset_key"] for i in selected_rows(event, len(q))]
         b1, b2, b3, b4 = st.columns(4)
         if b1.button(f"✓ Approve {'selected' if picked else 'all'}"):
             pacing.set_queue_state(cat, picked or [r["asset_key"] for r in q if r["state"] in ("queued", "failed")],

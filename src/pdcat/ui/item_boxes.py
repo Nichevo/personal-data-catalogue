@@ -7,7 +7,7 @@ import streamlit as st
 from pdcat import curation, edits, followups, groups, suggestions
 from pdcat.store import Catalogue
 
-from .common import go
+from .common import go, selected_rows
 
 
 def item_actions(cat: Catalogue, key: str, info: dict | None = None) -> None:
@@ -261,7 +261,7 @@ def contains_table(cat: Catalogue, key: str, children: list) -> None:
                         "rows": r["rows"], "changed": r["changed"]} for r in rows])
     event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                          key=f"contains-{key}", column_config={"rows": st.column_config.NumberColumn(format="%d")})
-    sel = event.selection.rows if event and hasattr(event, "selection") else []
+    sel = selected_rows(event, len(rows))
     if sel:
         go(rows[sel[0]]["key"])
         st.rerun()

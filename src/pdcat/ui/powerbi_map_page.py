@@ -7,7 +7,7 @@ import streamlit as st
 from pdcat.export import rows_to_csv
 from pdcat.store import Catalogue
 
-from .common import go
+from .common import go, selected_rows
 
 
 def powerbi_map_page(cat: Catalogue) -> None:
@@ -70,6 +70,6 @@ def powerbi_map_page(cat: Catalogue) -> None:
     picked = st.dataframe(pd.DataFrame(shown), hide_index=True, width="stretch", on_select="rerun",
                           selection_mode="single-row", key="pbimap-table")
     st.download_button("⬇️ Reports (.csv)", rows_to_csv(shown), "powerbi-reports.csv", "text/csv", key="pbimap-csv")
-    sel = picked.selection.rows if picked else []
+    sel = selected_rows(picked, len(rows))
     if sel:
         st.button(f"Open {rows[sel[0]]['name']}", on_click=go, args=(rows[sel[0]]["key"],), key="pbimap-open")

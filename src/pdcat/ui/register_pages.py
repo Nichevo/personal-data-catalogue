@@ -8,7 +8,7 @@ import streamlit as st
 from pdcat import register as R
 from pdcat.store import Catalogue
 
-from .common import asset_button, cached, go, icon, keep, restore
+from .common import asset_button, cached, go, icon, keep, restore, selected_rows
 
 
 @cached
@@ -134,7 +134,7 @@ def register_view(cat: Catalogue) -> None:
               "modified": str(e.get("modified", ""))[:10]} for e in shown]
     event = st.dataframe(pd.DataFrame(table), hide_index=True, width="stretch", on_select="rerun",
                          selection_mode="single-row", key="reg-table")
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(shown))
     if sel:
         go(shown[sel[0]]["key"])
         st.rerun()

@@ -8,7 +8,7 @@ import streamlit as st
 from pdcat import gold
 from pdcat.store import Catalogue
 
-from .common import go, page_title
+from .common import go, page_title, selected_rows
 
 VERDICT = {"differs": ("❌", "differs"), "name": ("✏️", "same calculation, other name"),
            "ok": ("👌", "OK to differ"), "same": ("✅", "matches")}
@@ -192,7 +192,7 @@ def gold_page(cat: Catalogue) -> None:
                           for r in rows])
     pick = st.dataframe(table, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                         key="gold-table")
-    sel = pick.selection.rows if pick and getattr(pick, "selection", None) else []
+    sel = selected_rows(pick, len(rows))
     if sel:
         go(rows[sel[0]]["key"])
         st.rerun()

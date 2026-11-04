@@ -7,7 +7,7 @@ import streamlit as st
 from pdcat import sqllibrary
 from pdcat.store import Catalogue
 
-from .common import asset_button, cached, go, icon
+from .common import asset_button, cached, go, icon, selected_rows
 
 
 @cached
@@ -74,7 +74,7 @@ def queries_page(cat: Catalogue) -> None:
         return
     event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                          key="sqlq-list")
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(shown))
     if sel:
         go(f"query://{shown[sel[0]]['uid']}")
         st.rerun()

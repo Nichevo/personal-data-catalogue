@@ -6,7 +6,7 @@ import streamlit as st
 from pdcat.links import unlinked_data
 from pdcat.store import Catalogue
 
-from .common import page_title, result_list
+from .common import page_title, result_list, selected_rows
 
 
 def unlinked_page(cat: Catalogue) -> None:
@@ -37,7 +37,7 @@ def changes_page(cat: Catalogue) -> None:
                         "change": r["change"], "detail": r["detail"], "key": r["asset_key"]} for r in rows])
     event = st.dataframe(df.drop(columns=["key"]), hide_index=True, width="stretch", on_select="rerun",
                          selection_mode="single-row", key="changes-table")
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(rows))
     if sel:
         from .common import go
         go(rows[sel[0]]["asset_key"])

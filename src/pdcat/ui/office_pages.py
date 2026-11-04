@@ -7,12 +7,12 @@ import streamlit as st
 from pdcat.pbiobjects import query_key, table_key
 from pdcat.store import Catalogue
 
-from .common import asset_button, go
+from .common import asset_button, go, selected_rows
 
 
 def _open_on_select(event, keys: list[str]) -> None:
     """Open the item behind the row picked in a table, like the measures table does."""
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(keys))
     if sel:
         go(keys[sel[0]])
         st.rerun()
@@ -222,7 +222,7 @@ def measures_table(cat: Catalogue, key: str) -> None:
     if unused and not show_unused:
         st.caption(f"{unused} measure(s) not used in scanned files are hidden. A report that wasn't scanned can "
                    "still use them, so they are kept.")
-    sel = event.selection.rows if event else []
+    sel = selected_rows(event, len(shown))
     if sel:
         from .common import go
         go(shown[sel[0]]["key"])

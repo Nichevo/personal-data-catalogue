@@ -21,6 +21,7 @@ from .common import (
     page_title,
     restore,
     result_list,
+    selected_rows,
     size_label,
 )
 
@@ -117,7 +118,7 @@ def results_table(cat: Catalogue, rows: list[dict], group_by: str, key: str = "s
                                  "rows": st.column_config.NumberColumn(format="%d"),
                                  "folder": FOLDER_COLUMN,
                                  "description": st.column_config.TextColumn(width="large")})
-        sel = event.selection.rows if event and hasattr(event, "selection") else []
+        sel = selected_rows(event, len(items))
         if sel:
             go(items[sel[0]]["key"])
             st.rerun()
@@ -249,7 +250,7 @@ def columns_only(cat: Catalogue, text: str) -> None:
     df = pd.DataFrame(table)
     event = st.dataframe(df.drop(columns=["key"]), hide_index=True, width="stretch", on_select="rerun",
                          selection_mode="single-row", key="colsearch")
-    sel = event.selection.rows if event and hasattr(event, "selection") else []
+    sel = selected_rows(event, len(table))
     if sel:
         go(table[sel[0]]["key"])
         st.rerun()
