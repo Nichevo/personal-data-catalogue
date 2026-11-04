@@ -412,6 +412,12 @@ def test_change_tracking_pages_render(app):
                   "Change volume", "Tracked changes"):
         app.radio(key="chg-graph").set_value(graph).run()
         assert not app.exception, graph
+    for per in ("day", "week", "month", "auto"):
+        app.selectbox(key="chg-per").set_value(per).run()
+        assert not app.exception, per
+    for graph in ("Table growth", "Report changes", "Scans", "Change volume", "Tracked changes"):
+        app.radio(key="chg-graph").set_value(graph).run()
+        assert not app.exception, graph
     app.radio(key="sub-Change tracking").set_value("Change trackers").run()
     assert not app.exception
     assert any("tracks" in b.label for b in app.button)

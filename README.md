@@ -172,6 +172,19 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.26
+
+**Change graphs go per day, week or month, never per hour.**
+
+- **Graphs no longer show hourly blocks.** Table growth, files in folders, catalogue growth, report changes, change
+  volume, tracked changes and a table's "Rows over time" put readings into days, weeks or months. A line shows the
+  last reading in each day, week or month; a bar adds up the changes in it, and quiet ones show as gaps. Axis
+  labels are dates only.
+- **A "Per" choice on Review › Change tracking › Graphs**: Auto, Day, Week or Month. Auto picks days for up to about
+  three months of history, weeks up to about a year, then months, so the graphs stay readable as history grows. The
+  caption under each graph says which one is in use.
+- Weeks start on Monday. Scans still show one dot per scan (the tooltip keeps its time), on a day/week/month axis.
+
 ## New in version 2.25
 
 **Profiling SQL Server keeps going when a table or column can't be read.**
