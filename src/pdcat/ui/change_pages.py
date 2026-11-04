@@ -9,6 +9,7 @@ import streamlit as st
 
 from pdcat import changes as ch
 from pdcat import growth, trackers
+from pdcat import timebuckets as tb
 from pdcat.store import Catalogue
 
 from .common import go, go_page, icon, page_title, selected_rows, selection_key, size_label
@@ -159,38 +160,105 @@ GRAPHS = ("Table growth", "Files in folders", "Report changes", "Catalogue growt
           "Tracked changes")
 
 
+PER = {"auto": "Auto", **tb.UNIT_LABELS}
+
+
 def graphs_view(cat: Catalogue) -> None:
-    c1, c2 = st.columns([3, 1])
+    c1, c2, c3 = st.columns([3, 1, 1])
     graph = c1.radio("Graph", GRAPHS, horizontal=True, key="chg-graph", label_visibility="collapsed")
     days = c2.select_slider("Over the last", list(WINDOWS), value=90, format_func=WINDOWS.get, key="chg-gdays")
+    c3.selectbox("Per", list(PER), format_func=PER.get, key="chg-per",
+                 help="How long each point or bar covers. Auto: days for up to three months, weeks up to about a "
+                      "year, then months. Never shorter than a day.")
     since = ch.since_days(days)
     {"Table growth": _table_growth, "Files in folders": _folders, "Report changes": _report_changes,
      "Catalogue growth": _catalogue_growth, "Scans": _scans, "Change volume": _volume,
      "Tracked changes": _tracked}[graph](cat, since)
 
 
-def _line(df, x: str, y: str, color: str, *, height: int = 320, points=None, y_title: str | None = None):
+def _unit(dates, pick: str | None = None) -> str:
+    """The bucket for these dates: the Per pick on the Graphs tab, or the automatic one for their span."""
+    return tb.unit_for(dates, pick or st.session_state.get("chg-per", "auto"))
+
+
+def _per_caption(unit: str, what: str = "point") -> None:
+    auto = st.session_state.get("chg-per", "auto") not in tb.UNITS
+    st.caption(f"One {what} per {unit}{' (picked for the time shown; change it with Per)' if auto else ''}.")
+
+
+def _local(d: str) -> str:
+    """A bucket start as a local midnight, so the graph doesn't move it across a day."""
+    return f"{d[:10]}T00:00:00"
+
+
+def _time_x(x: str, unit: str, dates, *, exact: bool = False):
+    """A time axis labelled in days, weeks or months only: tick marks at bucket starts, at most 12."""
     import altair as alt
+    ds = [d for d in dates if d]
+    values = [alt.DateTime(year=d.year, month=d.month, date=d.day) for d in tb.ticks(min(ds), max(ds), unit)] \
+        if ds else alt.Undefined
+    axis = alt.Axis(values=values, format=tb.AXIS_FORMAT[unit], labelOverlap=True)
+    return alt.X(f"{x}:T", title=None, axis=axis), alt.Tooltip(
+        f"{x}:T", title="when" if exact else unit, format="%-d %b %Y %H:%M" if exact else tb.TOOLTIP_FORMAT[unit])
+
+
+def _line(df, x: str, y: str, color: str, *, unit: str, height: int = 320, points=None, y_title: str | None = None):
+    """Readings over time, one point per series per bucket (the last reading in it)."""
+    import altair as alt
+    import pandas as pd
+    df = pd.DataFrame(tb.last_per_bucket(df.to_dict("records"), unit, at=x, series=(color,)))
+    if not len(df):
+        return
+    xenc, xtip = _time_x(x, unit, df[x].tolist())
+    df[x] = df[x].map(_local)
     chart = alt.Chart(df).mark_line(point=True, interpolate="step-after").encode(
-        x=alt.X(f"{x}:T", title=None), y=alt.Y(f"{y}:Q", title=y_title or y),
+        x=xenc, y=alt.Y(f"{y}:Q", title=y_title or y),
         color=alt.Color(f"{color}:N", title=None, scale=alt.Scale(range=PALETTE),
                         legend=alt.Legend(orient="bottom", columns=3, labelLimit=320)),
-        tooltip=[alt.Tooltip(f"{color}:N"), alt.Tooltip(f"{x}:T"), alt.Tooltip(f"{y}:Q", format=",")])
+        tooltip=[alt.Tooltip(f"{color}:N"), xtip, alt.Tooltip(f"{y}:Q", format=",")])
     if points is not None and len(points):
+        points = points.assign(**{x: points[x].map(lambda a: _local(tb.start(a, unit).isoformat()))})
         marks = alt.Chart(points).mark_point(shape="triangle-up", size=120, filled=True, color="#c0392b").encode(
             x=f"{x}:T", y=f"{y}:Q", tooltip=["label:N"])
         chart = chart + marks
     st.altair_chart(chart.properties(height=height), width="stretch")
 
 
-def _bars(df, x: str, y: str, color: str, *, height: int = 300, x_type: str = "T"):
+def _bars(rows: list[dict[str, Any]], x: str, y: str, color: str, *, unit: str, height: int = 300):
+    """Counts per bucket, stacked by `color`; every bucket from the first count to today has a slot, so quiet
+    days, weeks or months show as gaps."""
     import altair as alt
+    import pandas as pd
+    rows = tb.sum_per_bucket(rows, unit, y, at=x, by=(color,))
+    if not rows:
+        return
+    slots = tb.buckets(rows[0][x], max(datetime.now().date().isoformat(), rows[-1][x]), unit)
+    order = [tb.label(d, unit) for d in slots]
+    df = pd.DataFrame([{**r, "when": tb.label(r[x], unit)} for r in rows])
     chart = alt.Chart(df).mark_bar().encode(
-        x=alt.X(f"{x}:{x_type}", title=None), y=alt.Y(f"sum({y}):Q", title=y),
+        x=alt.X("when:O", title=None, sort=order, scale=alt.Scale(domain=order),
+                axis=alt.Axis(labelAngle=-45, labelOverlap=True, labelExpr=_short_label(unit))),
+        y=alt.Y(f"sum({y}):Q", title=y),
         color=alt.Color(f"{color}:N", title=None, scale=alt.Scale(range=PALETTE),
                         legend=alt.Legend(orient="bottom", columns=3, labelLimit=320)),
-        tooltip=[alt.Tooltip(f"{color}:N"), alt.Tooltip(f"{x}:{x_type}"), alt.Tooltip(f"sum({y}):Q", format=",")])
+        tooltip=[alt.Tooltip(f"{color}:N"), alt.Tooltip("when:O", title=unit), alt.Tooltip(f"sum({y}):Q", format=",")])
     st.altair_chart(chart.properties(height=height), width="stretch")
+    _per_caption(unit, "bar")
+
+
+def _scan_time(at: str) -> str:
+    """A scan's start as local time without a zone, the way the graph reads it."""
+    try:
+        return datetime.fromisoformat(at).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return at[:19]
+
+
+def _short_label(unit: str) -> str:
+    """Axis labels without the year for days and weeks (the tooltip has it)."""
+    if unit == "month":
+        return "datum.label"
+    return "replace(replace(datum.label, 'w/c ', ''), / \\d{4}$/, '')"
 
 
 def _table_growth(cat: Catalogue, since: str) -> None:
@@ -213,7 +281,9 @@ def _table_growth(cat: Catalogue, since: str) -> None:
         pts = pd.DataFrame([{"at": j["at"][:19], "rows": j["to"], "label": f"{names.get(j['key'])}: {j['from']:,} → "
                                                                           f"{j['to']:,}"} for j in jumps])
         if len(df):
-            _line(df, "at", "rows", "item", points=pts)
+            unit = _unit(df["at"])
+            _line(df, "at", "rows", "item", unit=unit, points=pts)
+            _per_caption(unit)
         if jumps:
             st.caption(f"▲ {len(jumps)} jump(s) of more than half up or down.")
     c1, c2 = st.columns(2)
@@ -250,8 +320,9 @@ def _folders(cat: Catalogue, since: str) -> None:
                             "size": round((r["bytes"] or 0) / 1024 ** 2, 1),
                             "folder": f"{r['source']}/{r['folder']}" if r["folder"] != "." else r["source"]}
                            for r in series])
-        _line(df, "at", measure, "folder", y_title="files" if measure == "files" else "size (MB)")
-        st.caption("The 8 folders that gained most files in this window. Files only listed (history folders, old "
+        unit = _unit(df["at"])
+        _line(df, "at", measure, "folder", unit=unit, y_title="files" if measure == "files" else "size (MB)")
+        st.caption(f"One point per {unit}. The 8 folders that gained most files in this window. Files only listed (history folders, old "
                    "dated folders) and files in log folders count too.")
     st.dataframe(pd.DataFrame([{"folder": f"{r['source']}/{r['folder']}" if r["folder"] != "." else r["source"],
                                 "files": r["files"], "added": r["added"], "per week": r["per_week"],
@@ -262,12 +333,12 @@ def _folders(cat: Catalogue, since: str) -> None:
 def _report_changes(cat: Catalogue, since: str) -> None:
     import pandas as pd
     rows = ch.apply_filters(cat, ch.feed(cat, since, categories={"report"}), {"hide_noise": True})
-    parts = ch.report_parts(rows)
+    parts = ch.report_parts(rows, _unit([r["at"] for r in rows]))
     if not parts:
         st.info("No report or workbook changes in this window. A change is recorded when a scan reads a report "
                 "that changed since the last scan.")
         return
-    _bars(pd.DataFrame(parts), "week", "changes", "part")
+    _bars(parts, "at", "changes", "part", unit=_unit([r["at"] for r in rows]))
     busiest = ch.group(cat, rows, ["item"])[:15]
     st.markdown("**Changed most**")
     st.dataframe(pd.DataFrame(busiest), hide_index=True, width="stretch")
@@ -288,8 +359,9 @@ def _catalogue_growth(cat: Catalogue, since: str) -> None:
                             (["described"] if "described" in kinds else []), key="chg-cat-kinds")
     df = pd.DataFrame([r for r in rows if r["kind"] in picked])
     if len(df):
-        _line(df, "day", "items", "kind")
-        st.caption("“described” counts items with a description or a purpose you wrote.")
+        unit = _unit(df["day"])
+        _line(df, "day", "items", "kind", unit=unit)
+        st.caption(f"One point per {unit}. “described” counts items with a description or a purpose you wrote.")
 
 
 def _scans(cat: Catalogue, since: str) -> None:
@@ -299,34 +371,34 @@ def _scans(cat: Catalogue, since: str) -> None:
     if not rows:
         st.info("No scans in this window.")
         return
-    df = pd.DataFrame([{**r, "at": r["at"][:19]} for r in rows])
+    df = pd.DataFrame([{**r, "at": _scan_time(r["at"])} for r in rows])
+    xenc, xtip = _time_x("at", _unit([r["at"] for r in rows]), [tb.to_date(r["at"]) for r in rows], exact=True)
     chart = alt.Chart(df).mark_circle(size=70).encode(
-        x=alt.X("at:T", title=None), y=alt.Y("minutes:Q"), color=alt.Color("source:N", scale=alt.Scale(range=PALETTE),
-                                                                          legend=alt.Legend(orient="bottom")),
-        size=alt.Size("items:Q", legend=None), tooltip=["source", "at:T", "minutes", alt.Tooltip("items:Q", format=",")])
+        x=xenc, y=alt.Y("minutes:Q"), color=alt.Color("source:N", scale=alt.Scale(range=PALETTE),
+                                                     legend=alt.Legend(orient="bottom")),
+        size=alt.Size("items:Q", legend=None), tooltip=["source", xtip, "minutes", alt.Tooltip("items:Q", format=",")])
     st.altair_chart(chart.properties(height=300), width="stretch")
     st.caption("Each dot is a scan: how long it took, sized by how many items it found.")
 
 
 def _volume(cat: Catalogue, since: str) -> None:
-    import pandas as pd
     rows = ch.apply_filters(cat, ch.feed(cat, since), {"hide_noise": True})
-    vol = ch.volume(rows)
+    unit = _unit([r["at"] for r in rows])
+    vol = ch.volume(rows, unit)
     if not vol:
         st.info("No changes in this window.")
         return
-    _bars(pd.DataFrame(vol), "week", "changes", "what")
+    _bars(vol, "at", "changes", "what", unit=unit)
 
 
 def _tracked(cat: Catalogue, since: str) -> None:
-    import pandas as pd
     rows = ch.tracked_rows(cat, since)
     if not rows:
         st.info("No tracked changes yet. Read a change tracker's summary under Change trackers; the columns you "
                 "watch show here.")
         return
-    df = pd.DataFrame([{"day": r["at"][:10], "changes": r["n"], "what": f"{r['name']} · {r['change']}"} for r in rows])
-    _bars(df, "day", "changes", "what")
+    _bars([{"day": r["at"][:10], "changes": r["n"], "what": f"{r['name']} · {r['change']}"} for r in rows],
+          "day", "changes", "what", unit=_unit([r["at"] for r in rows]))
 
 
 # ---- Change trackers ----------------------------------------------------------------------------------
@@ -430,9 +502,8 @@ def tracker_card(cat: Catalogue, t: dict[str, Any]) -> None:
             st.caption(f"Keys affected are counted for the first {trackers.KEY_CAP:,} keys only.")
         days = trackers.daily(cat, k, picked or None, since)
         if days:
-            _bars(pd.DataFrame([{"day": d["day"], "changes": d["n"],
-                                 "column": labels.get(d["column"]) or d["column"]} for d in days]),
-                  "day", "changes", "column", height=240)
+            _bars([{"day": d["day"], "changes": d["n"], "column": labels.get(d["column"]) or d["column"]}
+                   for d in days], "day", "changes", "column", unit=_unit([d["day"] for d in days]), height=240)
 
 
 def _read(cat: Catalogue, t: dict[str, Any], full: bool) -> None:
@@ -497,7 +568,7 @@ def item_history_box(cat: Catalogue, key: str, asset: dict) -> None:
             jumps = growth.jumps(cat, [key])
             pts = pd.DataFrame([{"at": j["at"][:19], "rows": j["to"], "label": f"{j['from']:,} → {j['to']:,}"}
                                 for j in jumps])
-            _line(df, "at", "rows", "item", height=180, points=pts)
+            _line(df, "at", "rows", "item", unit=_unit(df["at"], "auto"), height=180, points=pts)
     if asset["kind"] in ("table", "view", "data_file"):
         summary = trackers.table_summary(cat, key)
         for t in summary:
