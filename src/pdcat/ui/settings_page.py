@@ -121,6 +121,7 @@ def settings_page(cat: Catalogue) -> None:
                     st.rerun()
 
     features_section(cat)
+    ml_section(cat)
     hidden_section(cat)
 
     st.subheader("Notes")
@@ -333,6 +334,33 @@ def features_section(cat: Catalogue) -> None:
     st.caption("Optional packages: " + " · ".join(f"{'✅' if ok else '➖'} {n}" for n, ok in pkgs.items())
                + ". Missing ones are fine: the app falls back or skips that step. sqlglot reads SQL more exactly; "
                "pywin32 (Windows) reads Access databases; python-docx and pypdf read Word and PDF reference documents.")
+
+
+def ml_section(cat: Catalogue) -> None:
+    """How much each readiness signal counts towards an ML opportunity's score, and how much history is enough."""
+    from pdcat import mlopps
+    st.subheader("ML opportunities: readiness score")
+    st.caption("Each opportunity gets a readiness score out of 100 from six checks. A weight says how much a check "
+               "counts: 2 counts twice as much as 1, and 0 leaves it out. The defaults count the target and history "
+               "double, because without them there is nothing to learn from.")
+    w = mlopps.weights(cat)
+    with st.form("settings-ml"):
+        cols = st.columns(3)
+        new = {}
+        for i, (sig, label) in enumerate(mlopps.SIGNALS):
+            new[sig] = cols[i % 3].number_input(label, 0.0, 5.0, float(w[sig]), 0.5, key=f"mlw-{sig}",
+                                                help=mlopps.SIGNAL_HELP[sig])
+        months = st.number_input("History counts as enough from (months)", 1, 240, mlopps.min_months(cat), 1,
+                                 help="Seasonal patterns need two years or more.")
+        a, b = st.columns(2)
+        if a.form_submit_button("Save"):
+            cat.set_setting("ml_weights", {k: float(v) for k, v in new.items()})
+            cat.set_setting("ml_min_history_months", int(months))
+            st.toast("Saved")
+        if b.form_submit_button("Back to the defaults"):
+            cat.set_setting("ml_weights", {})
+            cat.set_setting("ml_min_history_months", mlopps.DEFAULT_MIN_MONTHS)
+            st.rerun()
 
 
 def hidden_section(cat: Catalogue) -> None:

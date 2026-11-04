@@ -44,6 +44,9 @@ GUIDE = {
                        "plus metrics found in code and reports to add.",
     "ML model features": "The inputs to your machine learning models: what each means, the models using it, the "
                          "script building it and the table and column it comes from.",
+    "ML opportunities": "Machine learning projects your data could support, from 12 supply chain recipes and your own "
+                        "ideas, with a readiness score, the tables and measures to use, and a pack for a data "
+                        "scientist.",
     "SAP links": "Tables and columns matched to SAP tables and fields, and what still uses APO.",
     "Company-wide keys": "Identifiers such as PlantID that tie data together across tables, with join hints and "
                          "checks against the master list.",

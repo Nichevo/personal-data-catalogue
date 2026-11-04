@@ -16,7 +16,7 @@ from typing import Any
 from .store import Catalogue, now
 
 INFO_FIELDS = ("purpose", "grain", "refresh", "lifecycle", "replaced_by", "trust", "owner", "sensitive",
-               "freshness_column", "copy_of", "relevance", "sap_name")
+               "freshness_column", "copy_of", "relevance", "sap_name", "table_type")
 REFRESH = ["", "daily", "weekly", "monthly", "quarterly", "ad hoc", "one-off"]
 LIFECYCLE = ["", "in use", "experimental", "deprecated", "retired"]
 TRUST = ["", "trusted", "caution", "do not use"]

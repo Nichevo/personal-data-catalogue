@@ -185,7 +185,11 @@ def overview_tab(cat: Catalogue, key: str, asset: dict, info: dict, mine: list) 
         st.markdown(f"**One row per:** {info['grain']}")
     if asset["description"]:
         st.markdown(asset["description"])
-    facts = [f"🔄 refreshed {info['refresh']}" if info.get("refresh") else "",
+    from pdcat.tabletypes import ICONS as TT_ICONS
+    from pdcat.tabletypes import LABELS as TT_LABELS
+    ttype = info.get("table_type") or ""
+    facts = [f"{TT_ICONS.get(ttype, '')} {TT_LABELS.get(ttype, ttype).lower()} table" if ttype else "",
+             f"🔄 refreshed {info['refresh']}" if info.get("refresh") else "",
              f"👤 owner {info['owner']}" if info.get("owner") else ""]
     if any(facts):
         st.caption(" · ".join(f for f in facts if f))
@@ -224,6 +228,9 @@ def overview_tab(cat: Catalogue, key: str, asset: dict, info: dict, mine: list) 
         from .item_boxes import backup_link_box
         backup_link_box(cat, key, asset)
     questions_box(cat, key)
+    if asset["kind"] in TABLE_LIKE:
+        from .mlopp_pages import opportunities_box
+        opportunities_box(cat, item_key=key)
 
 
 def data_tab(cat: Catalogue, key: str, asset: dict, columns: list, children: list) -> None:
@@ -415,10 +422,20 @@ def about_form(cat: Catalogue, key: str, asset: dict | None, info: dict) -> None
             sap = st.text_input("SAP: what this is in SAP", value=info.get("sap_name") or "",
                                 placeholder="e.g. MARC, or an extract of VBAP",
                                 help="The SAP table (or object) this holds or was extracted from")
+            ttype = info.get("table_type") or ""
+            if asset and asset.get("kind") in TABLE_LIKE:
+                from pdcat import tabletypes as TT
+                opts = ["", *TT.TYPES]
+                ttype = st.selectbox("Table type", opts, index=opts.index(ttype) if ttype in opts else 0,
+                                     format_func=lambda t: f"{TT.ICONS[t]} {TT.LABELS[t]}" if t else "Not set",
+                                     help="Snapshot: the same rows copied on each date (stock every day). "
+                                          "Transaction: one row per event (an order line). Dimension: one row "
+                                          "per thing (a material, a plant).")
             if st.form_submit_button("Save", type="primary"):
+                extra = {"table_type": ttype} if ttype != (info.get("table_type") or "") else {}
                 curation.set_item_info(cat, key, purpose=purpose, grain=grain, refresh=refresh, lifecycle=lifecycle,
                                        trust=trust, owner=owner, replaced_by=replaced_by,
-                                       freshness_column=freshness, sensitive=sensitive, sap_name=sap)
+                                       freshness_column=freshness, sensitive=sensitive, sap_name=sap, **extra)
                 st.toast("Saved")
                 st.rerun()
 

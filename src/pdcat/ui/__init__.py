@@ -33,6 +33,9 @@ def pages_for_key(key: str) -> Callable | None:
     if key.startswith("reg://"):
         from .register_pages import register_page
         return register_page
+    if key.startswith("mlo://"):
+        from .mlopp_pages import opportunity_page
+        return opportunity_page
     if key.startswith("bp://"):
         from .bproject_pages import bproject_page
         return bproject_page

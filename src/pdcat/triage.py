@@ -47,7 +47,7 @@ def _from_history(sig: str | None, yes: Counter, no: Counter, what: str) -> tupl
 
 def triage(cat: Catalogue, kind: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Copies of the rows with band, why and group added, likely first (then by score)."""
-    fn = {"sap": _sap, "metric": _metric}.get(kind, _generic)
+    fn = {"sap": _sap, "metric": _metric, "table_type": _table_type}.get(kind, _generic)
     out = [{**r, **dict(zip(("band", "why", "group"), fn_row, strict=True))} for r, fn_row in
            zip(rows, fn(cat, kind, rows), strict=True)]
     out.sort(key=lambda r: (BANDS.index(r["band"]), -(r.get("score") or 0)))
@@ -122,6 +122,16 @@ def _metric(cat: Catalogue, kind: str, rows: list[dict]) -> list[tuple[str, str,
         else:
             band, why = "check", "found in one place" if len(places) <= 1 else f"found in {len(places)} places"
         out.append((band, why, group))
+    return out
+
+
+def _table_type(cat: Catalogue, kind: str, rows: list[dict]) -> list[tuple[str, str, str]]:
+    """Table types carry their own band and reason (see tabletypes.guess), grouped by the type."""
+    out = []
+    for r in rows:
+        p = r.get("payload") or {}
+        out.append((p.get("band") if p.get("band") in BANDS else "check", p.get("why") or "",
+                    (p.get("type") or "").capitalize()))
     return out
 
 

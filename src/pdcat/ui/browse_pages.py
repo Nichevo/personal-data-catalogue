@@ -13,7 +13,7 @@ LIMIT = 2000
 
 
 def _browse(cat: Catalogue, name: str, kinds: tuple[str, ...], placeholder: str, group_by: str,
-            old: bool = False, hide: set[str] = frozenset()) -> None:
+            old: bool = False, hide: set[str] = frozenset(), only: set[str] | None = None) -> None:
     from pdcat import searchview as SV
 
     from .search import results_table
@@ -23,7 +23,8 @@ def _browse(cat: Catalogue, name: str, kinds: tuple[str, ...], placeholder: str,
     text = c1.text_input("Filter", placeholder=placeholder, key=f"browse-text-{tag}", label_visibility="collapsed")
     keep(f"browse-text-{tag}")
     group = c2.selectbox("Group by", SV.GROUP_BY, index=SV.GROUP_BY.index(group_by), key=f"browse-group-{tag}")
-    rows = [dict(r) for r in cat.search(text, kinds=kinds, limit=LIMIT, old_versions=old) if r["key"] not in hide]
+    rows = [dict(r) for r in cat.search(text, kinds=kinds, limit=LIMIT, old_versions=old) if r["key"] not in hide
+            and (only is None or r["key"] in only)]
     if not rows:
         st.info("No matches." if text else f"No {name.lower()} catalogued yet. Add them under ➕ Add → Sources.")
         return
@@ -60,13 +61,20 @@ def _old_box(key: str, what: str) -> bool:
 
 def tables_page(cat: Catalogue) -> None:
     page_title("Tables and datasets")
+    from pdcat import tabletypes as TT
+
     from .impact_pages import unused_switch
-    c1, c2 = st.columns([3, 1.3], vertical_alignment="center")
+    c1, c2, c3 = st.columns([3, 1.3, 1.3], vertical_alignment="center")
     c1.caption("Database tables and views, and the data files and file series in your folders. Pick a row to open it.")
     with c2:
         hide = unused_switch(cat, "sql", "browse-unused-sql")
+    ttype = c3.selectbox("Table type", ["", *TT.TYPES], key="browse-table-type", label_visibility="collapsed",
+                         format_func=lambda t: f"{TT.ICONS[t]} {TT.LABELS[t]} tables" if t else "Any table type",
+                         help="Snapshot, transaction or dimension, as set on each table's page (or accepted from "
+                              "a suggestion)")
+    only = {k for k, t in TT.all_types(cat).items() if t == ttype} if ttype else None
     _browse(cat, "Tables and datasets", ("table", "view", "data_file", "file_series"), "table, file or column word",
-            "Folder or database", hide=hide)
+            "Folder or database", hide=hide, only=only)
 
 
 def powerbi_page(cat: Catalogue) -> None:

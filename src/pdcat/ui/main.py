@@ -49,6 +49,7 @@ def sections() -> dict[str, dict[str, Page]]:
         lists,
         menu_guide,
         ml_pages,
+        mlopp_pages,
         office_pages,
         powerbi_map_page,
         scan_log,
@@ -71,6 +72,7 @@ def sections() -> dict[str, dict[str, Page]]:
         "📚 Knowledge": {"Knowledge": knowledge_pages.knowledge_page, "Business projects": bproject_pages.bprojects_page,
                         "Question library": knowledge_pages.questions_page,
                         "Metric glossary": knowledge_pages.metrics_page, "ML model features": ml_pages.features_page,
+                        "ML opportunities": mlopp_pages.ml_opportunities_page,
                         "SAP links": knowledge_pages.sap_page, "Company-wide keys": keys_pages.keys_page,
                         "Abbreviations": knowledge_pages.abbreviations_page},
         "📋 Review": {

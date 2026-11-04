@@ -46,8 +46,9 @@ def describe_columns_page(cat: Catalogue) -> None:
 
 def bulk_edit_page(cat: Catalogue) -> None:
     page_title("Edit many items")
-    st.caption("Fill in purpose, grain, refresh, status, trust and owner for many items at once, like a spreadsheet. "
-               "Only the rows you change are saved.")
+    from pdcat import tabletypes as TT
+    st.caption("Fill in purpose, grain, refresh, status, trust, owner and table type for many items at once, like a "
+               "spreadsheet. Only the rows you change are saved.")
     sources = [r[0] for r in cat.conn.execute("SELECT DISTINCT source FROM assets WHERE status = 'active' "
                                               "ORDER BY 1")]
     c1, c2, c3 = st.columns(3)
@@ -68,7 +69,7 @@ def bulk_edit_page(cat: Catalogue) -> None:
     if not rows:
         st.info("Nothing matches.")
         return
-    fields = ("purpose", "grain", "refresh", "lifecycle", "trust", "owner")
+    fields = ("purpose", "grain", "refresh", "lifecycle", "trust", "owner", "table_type")
     df = pd.DataFrame([{"key": r["key"], "item": r["name"], "kind": kind_label(r["kind"]),
                         **{f: info.get(r["key"], {}).get(f) or "" for f in fields}} for r in rows])
     edited = st.data_editor(
@@ -77,6 +78,8 @@ def bulk_edit_page(cat: Catalogue) -> None:
                        "refresh": st.column_config.SelectboxColumn(options=curation.REFRESH),
                        "lifecycle": st.column_config.SelectboxColumn("status", options=curation.LIFECYCLE),
                        "trust": st.column_config.SelectboxColumn(options=curation.TRUST),
+                       "table_type": st.column_config.SelectboxColumn("table type", options=["", *TT.TYPES],
+                                                                      help="Snapshot, transaction or dimension"),
                        "purpose": st.column_config.TextColumn(width="large")})
     if st.button("Save changes", type="primary"):
         n = save_bulk(cat, df, edited, fields)

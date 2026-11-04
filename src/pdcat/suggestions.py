@@ -22,6 +22,7 @@ KIND_LABELS = {
     "schedule": "Schedule matches", "series": "Files a script writes", "folder_role": "Folder roles",
     "join": "Usual joins", "check": "Checks from rules", "copilot": "From Copilot",
     "doc_definition": "Definitions in documents", "tracker_field": "Names from change trackers",
+    "table_type": "Table types",
 }
 
 # For each kind: what the suggestion is, and what Accept changes. Shown above each list and on each card.
@@ -68,6 +69,11 @@ KIND_HELP = {
     "tracker_field": ("A change tracker that calls a column by a friendlier name (its FieldName next to an SAP-coded "
                       "ColumnName).",
                       "saves that name as the column's business name, so it can be found by either name."),
+    "table_type": ("Whether a table is a snapshot (the same rows copied on each date), a transaction table (one row per "
+                   "event, such as an order line) or a dimension (one row per thing, such as a material), worked out "
+                   "from its name, columns and profiles.",
+                   "saves the type with the table. Tables can be filtered by type, and ML opportunities uses it to "
+                   "find where history is kept."),
 }
 
 
@@ -229,5 +235,6 @@ def _load_handlers() -> None:
         rulechecks,
         sapterms,
         tablepairs,
+        tabletypes,
         trackers,
     )
