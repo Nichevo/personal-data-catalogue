@@ -54,6 +54,7 @@ def sections() -> dict[str, dict[str, Page]]:
         scan_log,
         scanning,
         setup_page,
+        slow_sql_page,
         sources_extra,
         sql_pages,
         summary_pages,
@@ -80,6 +81,7 @@ def sections() -> dict[str, dict[str, Page]]:
             "Change tracking": change_pages.change_tracking_page,
             "Suggestions": groups_page.suggestions_page,
             "Gold standards": gold_pages.gold_page,
+            "Slow SQL": slow_sql_page.slow_sql_page,
             "Health": combined("Health", "How well the catalogue is described, and where problems gather.", {
                 "Coverage": curation_pages.coverage_page, "Issue hotspots": review_pages.hotspots_page}),
             "What's new": combined("What's new", "", {

@@ -56,6 +56,9 @@ GUIDE = {
                    "naming habits, checks and Copilot's answers.",
     "Gold standards": "Reports, measures and SQL you marked as the one to trust, and the copies, same-named measures "
                       "and look-alike queries that differ from them, with how.",
+    "Slow SQL": "SQL that may run slowly (SELECT *, functions on filtered columns, subqueries per row, OR across "
+                "columns, views on views, big tables read whole...), worst first by the size of the tables read, "
+                "or grouped by check. Nothing is run.",
     "Health": "How well documented the catalogue is (coverage) and where problems cluster (issue hotspots).",
     "Change tracking": "Every change in one list with filters, grouping and saved views; graphs of table growth, "
                        "files in folders, report changes and catalogue growth; and your change trackers, linked to "
