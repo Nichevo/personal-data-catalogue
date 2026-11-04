@@ -79,14 +79,20 @@ def scanning_page(cat: Catalogue) -> None:
                 st.caption(f"{p['table']} · {p['purpose']}")
                 st.code(p["query"], language="sql")
         sources = _sources(cat)
-        run = b4.button(f"▶️ Run {len(approved)} approved", type="primary", disabled=not approved or not sources,
+        cap = int(s["sql_max_tables_per_run"])
+        this_run = st.number_input("Tables this run", 1, 100_000, min(max(len(approved), 1), max(cap, 1)) if approved
+                                   else cap, key="tables-this-run",
+                                   help=f"How many approved tables this run may profile. The default on the Settings "
+                                        f"page is {cap}; this changes only this run. Queries still go one at a time "
+                                        f"with the usual pauses.")
+        run = b4.button(f"▶️ Run {min(len(approved), int(this_run))} approved", type="primary", disabled=not approved or not sources,
                         help=None if sources else "Start the app with `pdcat ui` so it can read your config.")
         if run:
             from pdcat.scan_sqlserver import run_queue
             cat.set_setting("sql_last_stop", None, quiet=True)
             box = st.status("Profiling…", expanded=True)
             st.button("⏹️ Stop", key="stop-run", help="Stops after the current query. Run again to carry on.")
-            result = run_queue(cat, sources, progress=box.write)
+            result = run_queue(cat, sources, progress=box.write, max_tables=int(this_run))
             if result["stopped"]:
                 cat.set_setting("sql_last_stop", result["stopped"], quiet=True)
             box.update(label=f"Profiled {result['done']} table(s), {result['failed']} failed, {result['left']} left",

@@ -187,6 +187,9 @@ one at a time, and every query is logged:
   per table, at the usual pace, and a time-out still stops the hunt.
 - **One table or database never stops the run.** A table that can't be read at all is marked *failed* with the
   server's message and the run moves on; a database that can't be reached fails only its own tables.
+- **Choose how many tables one run profiles.** A "Tables this run" box next to ▶️ Run on the SQL scanning page, and
+  `pdcat profile --queue --max 800`, let one run take more (or fewer) tables than the "Most tables profiled per run"
+  setting, without changing it. Queries still go one at a time with the usual pauses.
 - Nothing about this changes what is sent: still read-only `SELECT`s with `NOLOCK`, logged in the query log.
 
 To profile tables that failed before, approve them again on the SQL scanning page (✓ Approve all includes failed

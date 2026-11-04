@@ -226,8 +226,9 @@ def _type_label(c: dict[str, Any]) -> str:
 
 
 def profile_tables(cat: Catalogue, src: SqlServerSource, keys: list[str], progress=print,
-                   connector=None, pacer=None) -> dict[str, str]:
-    """Profile scanned tables/views on this server, at the controlled pace.
+                   connector=None, pacer=None, max_tables: int | None = None) -> dict[str, str]:
+    """Profile scanned tables/views on this server, at the controlled pace. `max_tables` overrides the
+    "Most tables profiled per run" setting for this run only.
 
     Counts and ranges come from one aggregate query: over the whole table, or
     over a TOP (N) sample when the table is bigger than the limit on the
@@ -243,6 +244,7 @@ def profile_tables(cat: Catalogue, src: SqlServerSource, keys: list[str], progre
     from .pacing import Pacer, PacingStopped, _is_timeout, set_queue_state, settings
 
     s = settings(cat)
+    limit = int(max_tables) if max_tables else int(s["sql_max_tables_per_run"])
     pacer = pacer or Pacer(cat, src.name)
     by_db: dict[str, list[dict[str, Any]]] = {}
     for key in keys:
@@ -271,8 +273,8 @@ def profile_tables(cat: Catalogue, src: SqlServerSource, keys: list[str], progre
             try:
                 cur = conn.cursor()
                 for asset in assets:
-                    if done >= int(s["sql_max_tables_per_run"]):
-                        raise PacingStopped(f"Reached the limit of {s['sql_max_tables_per_run']} tables for one run. "
+                    if done >= limit:
+                        raise PacingStopped(f"Reached the limit of {limit} tables for one run. "
                                             "The rest stay in the queue for next time.")
                     try:
                         _profile_one(cat, pacer, cur, asset, database, s, progress)
@@ -417,8 +419,10 @@ def _cols(part: list) -> str:
     return names[0] if len(names) == 1 else f"{len(names)} columns from {names[0]}"
 
 
-def run_queue(cat: Catalogue, sources: list[SqlServerSource], progress=print, connector=None) -> dict[str, Any]:
-    """Profile every approved table in the queue. Returns {"done", "failed", "stopped"}."""
+def run_queue(cat: Catalogue, sources: list[SqlServerSource], progress=print, connector=None,
+              max_tables: int | None = None) -> dict[str, Any]:
+    """Profile every approved table in the queue, up to `max_tables` (default: the setting) in this run.
+    Returns {"done", "failed", "stopped"}."""
     from .pacing import Pacer, PacingStopped, queue
     cat.set_setting("sql_stop_requested", False, quiet=True)
     approved = [q["asset_key"] for q in queue(cat, ("approved",))]
@@ -433,7 +437,12 @@ def run_queue(cat: Catalogue, sources: list[SqlServerSource], progress=print, co
             continue
         try:
             before = cat.conn.execute("SELECT COUNT(*) FROM profile_queue WHERE state = 'done'").fetchone()[0]
-            errors = profile_tables(cat, src, mine, progress, connector, Pacer(cat, src.name))
+            left = max_tables - result["done"] if max_tables else None
+            if left is not None and left <= 0:
+                result["stopped"] = (f"Reached the limit of {max_tables} tables for one run. "
+                                     "The rest stay in the queue for next time.")
+                break
+            errors = profile_tables(cat, src, mine, progress, connector, Pacer(cat, src.name), max_tables=left)
             result["failed"] += len(errors)
         except PacingStopped as e:
             result["stopped"] = str(e)

@@ -126,3 +126,13 @@ def test_safe_decoding_is_registered_on_the_connection():
     c = C()
     safe_decoding(c, Odbc)
     assert set(c.conv) == {1, 12, -1} and c.conv[12](b"\x9a") == "š"
+
+
+def test_a_run_can_take_more_tables_than_the_setting(catalogue, no_wait):
+    catalogue.set_setting("sql_max_tables_per_run", 1)
+    pacing.request_profiles(catalogue, [SALES, STORE], approve=True)
+    result = run_queue(catalogue, [SRC], progress=lambda *_: None, connector=lambda s, d: Conn(), max_tables=5)
+    assert result["done"] == 2 and result["stopped"] is None
+    pacing.request_profiles(catalogue, [SALES, STORE], approve=True)
+    result = run_queue(catalogue, [SRC], progress=lambda *_: None, connector=lambda s, d: Conn(), max_tables=1)
+    assert result["done"] == 1 and "limit of 1" in result["stopped"]
