@@ -172,6 +172,18 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.31
+
+**Copilot pack test questions work again.**
+
+- **Fixed:** the *Test questions* tab (and `test-questions.md` in the Copilot pack) failed with "Expecting value:
+  line 1 column 1" as soon as the catalogue had a declared or confirmed join. Join columns are kept as text such as
+  `PlantID, Material`, but the test questions tried to read them as JSON. They're now read as text (a JSON list
+  still works too).
+- **Sturdier:** each kind of test question (joins, metrics, column meanings, SQL scripts…) is built on its own. If
+  one kind can't be read it is left out with a short note on the tab and under *Left out of this pack*, and the rest
+  are still shown.
+
 ## New in version 2.30
 
 **ML opportunities are stricter and better informed: table profiles feed the checks, every check says why, and a

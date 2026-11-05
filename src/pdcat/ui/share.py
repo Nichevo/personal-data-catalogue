@@ -80,14 +80,22 @@ def _json(pack: dict) -> str:
     return json.dumps(pack, indent=1, ensure_ascii=False, default=str)
 
 
-@cached
 def _test_questions(cat: Catalogue) -> list[dict]:
+    qs, problems = _test_questions_and_notes(cat)
+    if problems:
+        st.caption("Some kinds of question were left out because something in them couldn't be read: "
+                   + "; ".join(problems))
+    return qs
+
+
+@cached
+def _test_questions_and_notes(cat: Catalogue) -> tuple[list[dict], list[str]]:
     from pdcat.aipack import test_questions
+    problems: list[str] = []
     try:
-        return test_questions(cat)
+        return test_questions(cat, problems=problems), problems
     except Exception as e:  # never let one odd item stop the Share page
-        st.warning(f"Test questions couldn't be built: {e}")
-        return []
+        return [], [f"{type(e).__name__}: {e}"]
 
 
 @cached
