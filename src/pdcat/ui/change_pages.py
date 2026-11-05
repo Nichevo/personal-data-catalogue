@@ -464,6 +464,9 @@ def tracker_card(cat: Catalogue, t: dict[str, Any]) -> None:
         made = trackers.made_by(cat, k)
         if made:
             st.caption("Made by " + ", ".join(m["name"] for m in made))
+        if s.get("link_error"):
+            st.warning(f"Couldn't suggest a table for this tracker last time ({s['link_error']}). Link it by hand "
+                       "below; the other trackers were still linked.")
         _links_box(cat, t)
         read_col, note_col = st.columns([1, 3])
         label = "🔄 Read change summary" if not t["read_at"] else "🔄 Read new changes"

@@ -187,9 +187,17 @@ def detect(cat: Catalogue, report: Report = quiet) -> int:
             if old.get("not_tracker"):
                 continue
             shape = {**_loads(old.get("shape")), **f["shape"]}
+            shape.pop("link_error", None)
+            try:        # one odd tracker must not stop the others being linked
+                cat.conn.execute("SAVEPOINT tracker_link")
+                _suggest_links(cat, key, f["asset"], shape, index, files, ts)
+                cat.conn.execute("RELEASE SAVEPOINT tracker_link")
+            except Exception as e:
+                cat.conn.execute("ROLLBACK TO SAVEPOINT tracker_link")
+                cat.conn.execute("RELEASE SAVEPOINT tracker_link")
+                shape["link_error"] = f"{type(e).__name__}: {e}"
             cat.conn.execute("INSERT INTO tracker_info (tracker_key, shape) VALUES (?, ?) ON CONFLICT(tracker_key) "
                              "DO UPDATE SET shape = excluded.shape", (key, json.dumps(shape)))
-            _suggest_links(cat, key, f["asset"], shape, index, files, ts)
         gone = [k for k in info if k not in found and not info[k].get("not_tracker") and k not in decided]
         for k in gone:
             cat.conn.execute("DELETE FROM tracker_info WHERE tracker_key = ?", (k,))
@@ -240,8 +248,9 @@ def _suggest_links(cat: Catalogue, key: str, asset: dict, shape: dict, index: di
                 d["score"] += 1
                 d["reasons"].append(f"{inside} of the {len(changed_cols)} columns it reports are in the table")
         if shape.get("layout") == "wide" and tcols:
-            mine = {c.lower() for c in cat.columns(key) if c["name"].lower() not in tcols}
-            share = len(tcols & {c["name"].lower() for c in cat.columns(key)}) / len(tcols)
+            own = {c["name"].lower() for c in cat.columns(key)}
+            mine = own - tcols
+            share = len(tcols & own) / len(tcols)
             if share >= 0.5:
                 d["score"] += 2
                 d["reasons"].append(f"has {share:.0%} of the table's columns" + (" plus change columns" if mine else ""))

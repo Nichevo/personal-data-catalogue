@@ -172,6 +172,18 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.32
+
+**Change trackers are linked to their tables again, and "Save and look again" works.**
+
+- **Fixed:** *Save and look again* on *Review › Change tracking › Change trackers* stopped with
+  "'sqlite3.Row' object has no attribute 'lower'". It happened whenever a tracker that copies whole rows (a history
+  or CDC-style table or file) matched a table. The same error ran after every scan and threw away every tracker's
+  table suggestions, which is why files like `ChangesX_TABLEPlant.csv` were found and shown but never linked.
+- **Sturdier:** if one tracker can't be matched to a table, the others are still linked. The odd one shows a short
+  note on its card so you can link it by hand.
+- After updating, press *Save and look again* once (or scan again) to get the link suggestions.
+
 ## New in version 2.31
 
 **Copilot pack test questions work again.**
