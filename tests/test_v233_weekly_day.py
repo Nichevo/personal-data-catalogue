@@ -1,5 +1,4 @@
 """Version 2.33: weekly profiling rules pinned to a day, a rule as your approval, and when each table is next due."""
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,11 +13,8 @@ SALES = "sql://warehouse/forecastdb/dbo.salesdaily"
 
 @pytest.fixture(autouse=True)
 def utc(monkeypatch):
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.delenv("TZ")
-    time.tzset()
+    """Days are local days; pin "local" to UTC so the dates below hold on any machine (works on Windows too)."""
+    monkeypatch.setattr(P, "_local", lambda t: t.astimezone(timezone.utc))
 
 
 def _asked(cat, when: str) -> None:

@@ -67,7 +67,7 @@ def next_due(rule: str, seen: str | None, day: int | None = None) -> datetime | 
         return None
     last = _parse(seen)
     if rule == "weekly" and day is not None:
-        local = last.astimezone()
+        local = _local(last)
         ahead = (day - local.weekday()) % 7 or 7
         start = (local + timedelta(days=ahead)).replace(hour=0, minute=0, second=0, microsecond=0)
         return start.astimezone(timezone.utc)
@@ -99,6 +99,11 @@ def due(cat: Catalogue, at: datetime | None = None) -> list[str]:
         if when is not None and when <= at:
             out.append(key)
     return sorted(out)
+
+
+def _local(t: datetime) -> datetime:
+    """This computer's time zone (the day a weekly rule is pinned to is a local day)."""
+    return t.astimezone()
 
 
 def _parse(ts: str) -> datetime:
@@ -155,4 +160,4 @@ def _due_label(rule_seen: tuple[str, str | None] | None, day: int | None, queued
         return "never" if rule_seen[0] == "never" else "done"
     if when <= datetime.now(timezone.utc):
         return "now"
-    return when.astimezone().strftime("%a %d %b")
+    return _local(when).strftime("%a %d %b")
