@@ -630,8 +630,10 @@ def profiling_page(cat: Catalogue) -> None:
     from pdcat import profilerules
     page_title("Profiling")
     st.caption("Pick the tables to profile and how often. A rule only adds a table to the queue when it's due "
-               "(checked after each scan); the queue still waits for your approval under SQL scanning, and runs at "
-               "the same careful pace. Every profile is kept in a compact form, so you can see how a column moved.")
+               "(checked after each scan); the queue waits for your approval under SQL scanning (unless you say "
+               "below that a rule is your approval), and runs at the same careful pace. Every profile is kept in a "
+               "compact form, so you can see how a column moved.")
+    _profiling_timing(cat, profilerules)
     rows = profilerules.profiling_list(cat)
     if not rows:
         st.info("No SQL Server tables scanned yet.")
@@ -648,12 +650,13 @@ def profiling_page(cat: Catalogue) -> None:
              and (not rule_f or (r["rule"] == "" if rule_f == "(none)" else r["rule"] == rule_f))]
     df = pd.DataFrame([{"table": r["name"], "database": r["database"], "rows": r["rows"], "used by code": r["used"],
                         "rule": profilerules.RULES.get(r["rule"], ""), "last profiled": r["last_profiled"],
-                        "profiles kept": r["profiles_kept"], "queue": r["queue"]} for r in shown])
+                        "next due": r["next_due"], "profiles kept": r["profiles_kept"], "queue": r["queue"]}
+                       for r in shown])
     st.caption(f"{len(shown):,} of {len(rows):,} tables. Tick rows, then pick a rule.")
     event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="multi-row",
                          key=selection_key("prof-table", [r["key"] for r in shown]))
     picked = [shown[i]["key"] for i in selected_rows(event, len(shown))]
-    b1, b2, b3 = st.columns([2, 1, 1])
+    b1, b2, b3, b4 = st.columns([2, 1, 1, 1])
     rule = b1.selectbox("Rule for the ticked tables", list(profilerules.RULES), format_func=profilerules.RULES.get,
                         key="prof-set")
     if b2.button(f"Set for {len(picked)}" if picked else "Set", disabled=not picked, key="prof-set-btn"):
@@ -662,6 +665,13 @@ def profiling_page(cat: Catalogue) -> None:
         st.rerun()
     if b3.button("Clear the rule", disabled=not picked, key="prof-clear"):
         profilerules.set_rule(cat, picked, None)
+        st.rerun()
+    if b4.button("Queue ticked now", disabled=not picked, key="prof-queue-now",
+                 help="Puts the ticked tables in the queue today, whatever their rule says. They still wait for your "
+                      "approval under SQL scanning. A weekly rule then counts from this profile."):
+        from pdcat.pacing import request_profiles
+        n = request_profiles(cat, picked)
+        st.toast(f"Queued {n}; approve them under SQL scanning" if n else "Already waiting in the queue")
         st.rerun()
     due = profilerules.due(cat)
     if due:
@@ -678,6 +688,33 @@ def profiling_page(cat: Catalogue) -> None:
             for i, d in enumerate(drift[:50]):
                 st.button(f"{names.get(d['asset_key'], d['asset_key'])} · {d['detail']} ({d['at'][:10]})",
                           key=f"prof-drift-{i}", on_click=go, args=(d["asset_key"],), type="tertiary")
+
+
+def _profiling_timing(cat: Catalogue, profilerules) -> None:
+    """When weekly rules come round, and whether a rule counts as your approval."""
+    day = profilerules.weekly_day(cat)
+    approves = profilerules.rule_approves(cat)
+    label = (f"Weekly on {profilerules.DAYS[day]}" if day is not None else "Weekly every 7 days") \
+        + (", a rule is your approval" if approves else ", approve under SQL scanning")
+    with st.expander(f"When rules run: {label}"):
+        options = [None, *range(7)]
+        pick = st.selectbox("Weekly rules are due", options, index=options.index(day), key="prof-weekday",
+                            format_func=lambda d: "7 days after the last profile" if d is None
+                            else f"every {profilerules.DAYS[d]}",
+                            help="Pinned to a day, a weekly table is due from the start of that day (this computer's "
+                                 "time), even if its last profile was fewer than 7 days ago. If no scan runs that "
+                                 "day, the next scan catches it up.")
+        ok = st.checkbox("A rule is my approval: tables with a rule go into the queue already approved",
+                         value=approves, key="prof-rule-approves",
+                         help="So the scheduled scan (Settings › Scan on a schedule), which runs `pdcat scan` then "
+                              "`pdcat profile --queue`, profiles them without you approving each week. Tables you "
+                              "queue by hand still wait for you.")
+        st.caption("A run profiles at most the 'Most tables profiled per run' in Settings (default 25). If more "
+                   "tables come due on the same day, the rest stay approved and go in the next run.")
+        if pick != day or ok != approves:
+            cat.set_setting(profilerules.WEEKLY_DAY, pick)
+            cat.set_setting(profilerules.RULE_APPROVES, ok)
+            st.rerun()
 
 
 # ---- Settings › Database size -------------------------------------------------------------------------
