@@ -156,6 +156,10 @@ def schedule_section(cat: Catalogue) -> None:
         st.caption("Windows only: creates a weekly Task Scheduler task that runs `pdcat scan` and then "
                    "`pdcat profile --queue`. On this machine, use cron to run those two commands.")
         return
+    from pdcat import profilerules
+    if profilerules.rules(cat) and not profilerules.rule_approves(cat):
+        st.caption("Tables with a profiling rule are queued by the scheduled scan but wait for your approval. To have "
+                   "it profile them too, tick *A rule is my approval* on Add › Sources › Profiling.")
     state = T.status()
     if state:
         worked = {True: "✅ worked", False: f"❌ failed (code {state['last_result']})", None: "not run yet"}[

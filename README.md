@@ -172,6 +172,24 @@ one at a time, and every query is logged:
 - **Get started page** and an optional **no-install Windows build** for colleagues who
   don't use Python.
 
+## New in version 2.33
+
+**Weekly profiling can run on a set day, and the scheduled scan can profile those tables for you.**
+
+- **Weekly on a day:** on *Add › Sources › Profiling*, open *When rules run* and pick a day, e.g. *every Monday*.
+  A weekly table is then due from the start of that day (this computer's time), even if its last profile was
+  fewer than 7 days ago, so the weeks line up from the first Monday. If no scan runs that day, the next scan
+  catches it up. Left as *7 days after the last profile*, weekly rules work as before.
+- **A rule is my approval** (off by default): tables with a rule go into the queue already approved. The weekly
+  scheduled scan (*Settings › Scan on a schedule*) runs `pdcat scan` then `pdcat profile --queue`, so with this on
+  it profiles them without you approving each week. Tables you queue by hand still wait for you. A run still
+  profiles at most *Most tables profiled per run* (default 25); the rest stay approved for the next run.
+- **Next due** column on the Profiling list: *now*, *in the queue*, or the date the table comes due.
+- **Queue ticked now** puts the ticked tables in the queue today, whatever their rule says (they still wait
+  for your approval).
+
+Nothing new runs a query by itself, and no new libraries are needed.
+
 ## New in version 2.32
 
 **Change trackers are linked to their tables again, and "Save and look again" works.**
